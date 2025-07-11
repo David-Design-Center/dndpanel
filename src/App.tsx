@@ -24,6 +24,8 @@ const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Shipments = lazy(() => import('./pages/Shipments'));
 const Calendar = lazy(() => import('./pages/Calendar'));
 const MicrosoftAuthRedirect = lazy(() => import('./pages/MicrosoftAuthRedirect'));
+const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
+const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 
 // Protected route component
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -57,6 +59,11 @@ function App() {
       <Routes>
         <Route path="/auth" element={<Auth />} />
         <Route path="/microsoft-auth-redirect" element={<MicrosoftAuthRedirect />} />
+        
+        {/* Public routes - accessible without authentication */}
+        <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+        <Route path="/terms-of-service" element={<TermsOfService />} />
+        
         <Route
           path="/"
           element={

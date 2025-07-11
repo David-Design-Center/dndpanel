@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Lock } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import Footer from '../components/common/Footer';
 
 function Auth() {
   const [email, setEmail] = useState('');
@@ -124,6 +125,8 @@ function Auth() {
           </div>
         </div>
       </div>
+      
+      <Footer className="mt-8" />
     </div>
   );
 }

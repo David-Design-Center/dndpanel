@@ -3,6 +3,8 @@ import LabelManager from '../components/common/LabelManager';
 import SignatureManager from '../components/common/SignatureManager';
 import { useAuth } from '../contexts/AuthContext';
 import { useProfile } from '../contexts/ProfileContext';
+import { Link } from 'react-router-dom';
+import { FileText, Shield } from 'lucide-react';
 
 function Settings() {
   const { isGmailSignedIn, signInGmail, signOutGmail } = useAuth();
