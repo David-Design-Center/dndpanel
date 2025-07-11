@@ -80,7 +80,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const { data, error } = await supabase.functions.invoke('refresh-gmail-token', {
         body: {
-          refresh_token: refreshToken,
+          refreshToken: refreshToken,
           profileId: profileId
         }
       });
