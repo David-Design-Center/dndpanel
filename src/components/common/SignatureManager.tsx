@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useProfile } from '../../contexts/ProfileContext';
 import RichTextEditor from './RichTextEditor';
 import { Button } from '../ui/button';
@@ -73,23 +73,35 @@ function SignatureManager() {
 
   // Save signature to database
   const handleSave = async () => {
-    if (!currentProfile) return;
+    if (!currentProfile) {
+      setError('No profile selected');
+      return;
+    }
 
     try {
       setIsSaving(true);
       setError(null);
+      setSuccess(null);
+      
+      console.log('SignatureManager: Attempting to save signature for profile:', currentProfile.name, currentProfile.id);
+      console.log('SignatureManager: Signature content length:', signature.length);
+      
+      // Test if we can read the profile first
+      console.log('SignatureManager: Testing profile read access...');
       
       const success = await updateProfileSignature(currentProfile.id, signature);
       
       if (success) {
         setSuccess('Signature saved successfully!');
+        console.log('SignatureManager: Signature saved successfully');
         setTimeout(() => setSuccess(null), 3000);
       } else {
-        throw new Error('Failed to save signature');
+        throw new Error('Failed to save signature - updateProfileSignature returned false');
       }
     } catch (err) {
-      console.error('Error saving signature:', err);
-      setError('Failed to save signature. Please try again.');
+      console.error('SignatureManager: Error saving signature:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to save signature. Please try again.';
+      setError(errorMessage);
     } finally {
       setIsSaving(false);
     }
@@ -163,9 +175,6 @@ function SignatureManager() {
             disabled={isSaving}
           />
         </div>
-        <p className="mt-2 text-xs text-gray-500">
-          <strong>HTML Support:</strong> You can use HTML tags, including iframe embeds from Google Drive or other sources.
-        </p>
       </div>
 
       <div className="flex justify-end">

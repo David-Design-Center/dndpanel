@@ -1,12 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthContext';
 import { Profile } from '../types';
-
-// Initialize Supabase client
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseKey);
 
 interface ProfileContextType {
   profiles: Profile[];
@@ -169,17 +164,25 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     signature: string
   ): Promise<boolean> => {
     try {
-      console.log('Updating signature for profile:', profileId);
-      const { error } = await supabase
+      console.log('ProfileContext: Updating signature for profile:', profileId);
+      console.log('ProfileContext: Signature content preview:', signature.substring(0, 100) + '...');
+      console.log('ProfileContext: User authenticated:', !!user);
+      console.log('ProfileContext: Current profile:', currentProfile?.name);
+      
+      const { data, error } = await supabase
         .from('profiles')
         .update({
           signature: signature
         })
-        .eq('id', profileId);
+        .eq('id', profileId)
+        .select();
 
       if (error) {
+        console.error('ProfileContext: Supabase error:', error);
         throw error;
       }
+
+      console.log('ProfileContext: Supabase update response:', data);
 
       // Update the profiles array
       setProfiles(prevProfiles => 
@@ -201,10 +204,10 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
         } : null);
       }
 
-      console.log('Successfully updated signature');
+      console.log('ProfileContext: Successfully updated signature in state');
       return true;
     } catch (err) {
-      console.error('Error updating profile signature:', err);
+      console.error('ProfileContext: Error updating profile signature:', err);
       setError(err instanceof Error ? err.message : 'Unknown error updating signature');
       return false;
     }

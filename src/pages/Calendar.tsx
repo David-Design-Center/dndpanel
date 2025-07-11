@@ -696,8 +696,8 @@ function Calendar() {
     return (
       <div className="fade-in h-full flex flex-col">
         <div className="flex items-center mb-6">
-          <div className="mr-3 p-2 bg-blue-100 rounded-full">
-            <CalendarIcon className="w-5 h-5 text-blue-600" />
+          <div className="mr-3 p-2 bg-purple-100 rounded-full">
+            <CalendarIcon className="w-5 h-5 text-purple-600" />
           </div>
           <h1 className="text-2xl font-semibold text-gray-800">Calendar</h1>
         </div>
@@ -729,12 +729,6 @@ function Calendar() {
               )}
               Sign in with Microsoft
             </Button>
-
-            <div className="mt-6 text-xs text-gray-500">
-              <p>✅ Full read/write access to your calendar</p>
-              <p>✅ Secure OAuth2 authentication</p>
-              <p>✅ No passwords stored</p>
-            </div>
           </div>
         </div>
       </div>

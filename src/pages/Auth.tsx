@@ -119,8 +119,7 @@ function Auth() {
 
           <div className="mt-6 text-center">
             <p className="text-xs text-gray-500">
-              🔒 This application is restricted to authorized users only.<br/>
-              You must have an account on Supabase and be in the allowed users list.
+              This application is restricted to authorized users only.<br/>
             </p>
           </div>
         </div>

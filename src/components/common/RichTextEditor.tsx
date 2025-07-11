@@ -11,7 +11,8 @@ import {
   AlignRight,
   Highlighter,
   ChevronDown,
-  Image
+  Image,
+  FileSignature
 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Toggle } from '../ui/toggle';
@@ -24,6 +25,8 @@ interface RichTextEditorProps {
   className?: string;
   minHeight?: string;
   disabled?: boolean;
+  signature?: string;
+  showSignatureButton?: boolean;
 }
 
 const RichTextEditor: React.FC<RichTextEditorProps> = ({
@@ -32,7 +35,9 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
   placeholder = "Compose your message...",
   className,
   minHeight = "200px",
-  disabled = false
+  disabled = false,
+  signature = '',
+  showSignatureButton = false
 }) => {
   const editorRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -163,6 +168,44 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
       executeCommand('createLink', url);
     }
   }, [disabled, executeCommand]);
+
+  // Handle signature insertion
+  const insertSignature = useCallback(() => {
+    if (disabled || !signature) return;
+    
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    // Insert signature at cursor position or at the end
+    const selection = window.getSelection();
+    if (selection && selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      range.deleteContents();
+      
+      // Create a temporary div to parse the signature HTML
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = signature;
+      
+      // Insert the signature content
+      const fragment = document.createDocumentFragment();
+      while (tempDiv.firstChild) {
+        fragment.appendChild(tempDiv.firstChild);
+      }
+      
+      range.insertNode(fragment);
+      
+      // Move cursor to end of inserted content
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    } else {
+      // If no selection, append to the end
+      editor.innerHTML += signature;
+    }
+    
+    // Trigger change event
+    handleInput();
+  }, [disabled, signature, handleInput]);
 
   // Gmail-compatible image processing - unified with email sending logic
   const createGmailCompatibleImage = useCallback((imageSrc: string, fileName: string, sizeValue: string) => {
@@ -564,6 +607,21 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
           >
             <Link size={14} />
           </Button>
+          
+          {/* Signature Button */}
+          {showSignatureButton && signature && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={insertSignature}
+              disabled={disabled}
+              title="Insert Signature"
+              className="h-8 px-2"
+            >
+              <FileSignature size={14} />
+            </Button>
+          )}
           
           {/* Image with Size Picker */}
           <div className="relative image-size-picker">

@@ -75,8 +75,11 @@ export default {
   				border: 'hsl(var(--sidebar-border))',
   				ring: 'hsl(var(--sidebar-ring))'
   			}
-  		},
-  		spacing: {
+		},
+		fontFamily: {
+			sans: ['Urbanist', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'sans-serif'],
+		},
+		spacing: {
   			'18': '4.5rem'
   		},
   		animation: {

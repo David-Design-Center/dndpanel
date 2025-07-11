@@ -1,10 +1,6 @@
-import EnvironmentConfig from '../components/common/EnvironmentConfig';
-import LabelManager from '../components/common/LabelManager';
 import SignatureManager from '../components/common/SignatureManager';
 import { useAuth } from '../contexts/AuthContext';
 import { useProfile } from '../contexts/ProfileContext';
-import { Link } from 'react-router-dom';
-import { FileText, Shield } from 'lucide-react';
 
 function Settings() {
   const { isGmailSignedIn, signInGmail, signOutGmail } = useAuth();
@@ -46,20 +42,6 @@ function Settings() {
       
       <div className="space-y-6">
         <div className="bg-white p-4 rounded-lg shadow-sm">
-          <h2 className="text-lg font-semibold mb-4">Gmail Connection</h2>
-          
-          {currentProfile && (
-            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700">
-              <p>
-                <strong>Active Profile:</strong> {currentProfile.name}
-              </p>
-              <p className="text-xs mt-1">
-                Gmail connection is managed per profile using Authorization Code Flow with refresh tokens. 
-                Each staff member can connect their own Gmail account securely.
-              </p>
-            </div>
-          )}
-          
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center">
               <div className={`w-3 h-3 rounded-full mr-2 ${isGmailSignedIn ? 'bg-green-500' : 'bg-red-500'}`}></div>
@@ -95,24 +77,10 @@ function Settings() {
                 ? `Connect ${currentProfile.name}'s Gmail account to view and send emails directly from this app.`
                 : 'Please select a profile first, then connect to Gmail.'}
           </p>
-          
-          <div className="mt-4 p-3 bg-yellow-50 border border-yellow-100 rounded text-sm text-yellow-700">
-            <p>
-              <strong>Multi-Account Setup:</strong> Each profile can have its own Gmail connection. 
-              When you switch profiles, the Gmail connection will automatically change to match the selected profile's account.
-            </p>
-          </div>
         </div>
         
         {/* Email Signature Manager */}
         <SignatureManager />
-        
-        {/* Gmail Labels Management */}
-        {isGmailSignedIn && (
-          <LabelManager />
-        )}
-        
-        <EnvironmentConfig />
       </div>
     </div>
   );
