@@ -48,6 +48,11 @@ export interface GmailLabel {
   threadsUnread?: number;
 }
 
+export interface OutOfOfficeSettings {
+  forwardToEmail: string;
+  autoReplyMessage: string;
+}
+
 export interface Profile {
   id: string;
   name: string;
@@ -57,6 +62,7 @@ export interface Profile {
   gmail_refresh_token?: string;
   gmail_token_expiry?: string;
   signature?: string;
+  out_of_office_settings?: OutOfOfficeSettings;
 }
 
 // Order-related types
@@ -163,4 +169,12 @@ export interface GeneralDocument {
   file_name: string;
   document_url: string;
   uploaded_at: string;
+}
+
+// Contact-related types
+export interface Contact {
+  name: string;
+  email: string;
+  isFrequentlyContacted?: boolean;
+  photoUrl?: string;
 }

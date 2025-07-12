@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Inbox, Send, Folder, FileWarning, Trash, MailPlus, AlertCircle, ChevronDown, ChevronRight, Clipboard, FileText, Settings, Tag, Loader2, BarChart3, Package, Calendar, Search, X, Plus } from 'lucide-react';
+import { Inbox, Send, Folder, FileWarning, Trash, MailPlus, AlertCircle, ChevronDown, ChevronRight, Clipboard, FileText, Settings, Tag, Loader2, BarChart3, Package, Calendar, Search, X, Plus, LogOut } from 'lucide-react';
 import { useLocation, Link } from 'react-router-dom';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -7,6 +7,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import ProfileSelector from './ProfileSelector';
 import { useLabel } from '../contexts/LabelContext';
 import { useProfile } from '../contexts/ProfileContext';
+import { useOutOfOffice } from '../contexts/OutOfOfficeContext';
+import { Toggle } from './ui/liquid-toggle';
 
 interface SidebarProps {
   onCompose: () => void;
@@ -20,7 +22,8 @@ function Sidebar({ onCompose }: SidebarProps) {
   const [isCreateLabelOpen, setIsCreateLabelOpen] = useState(false);
   const [newLabelName, setNewLabelName] = useState('');
   const { labels, loadingLabels, addLabel, isAddingLabel, addLabelError } = useLabel();
-  const { currentProfile } = useProfile();
+  const { currentProfile, clearProfile } = useProfile();
+  const { isOutOfOffice, setOutOfOffice } = useOutOfOffice();
   
   // Filter and clean labels based on search
   const filteredLabels = useMemo(() => {
@@ -116,6 +119,13 @@ function Sidebar({ onCompose }: SidebarProps) {
         {/* Profile Selector */}
         <div className="px-6 mb-6">
           <ProfileSelector />
+          <button
+            onClick={clearProfile}
+            className="w-full mt-2 flex items-center justify-center px-3 py-2 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+          >
+            <LogOut size={14} className="mr-2" />
+            <span>Switch Profile</span>
+          </button>
         </div>
             
         <nav className="flex-1 overflow-y-auto px-4">
@@ -361,6 +371,36 @@ function Sidebar({ onCompose }: SidebarProps) {
             </Link>
           </div>
         </nav>
+        
+        {/* Out of Office Toggle - For David and Marti */}
+        {(currentProfile?.name === 'David' || currentProfile?.name === 'Marti') && (
+          <div className="p-4">
+            <div className="p-2 bg-white rounded-md border border-gray-200 shadow-sm">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-medium text-gray-700">Status</span>
+                <Toggle
+                  checked={isOutOfOffice}
+                  onCheckedChange={setOutOfOffice}
+                  variant="warning"
+                  className="scale-75"
+                />
+              </div>
+              <div className="text-xs text-gray-500">
+                {isOutOfOffice ? (
+                  <div className="flex items-center text-blue-600">
+                    <div className="w-1.5 h-1.5 bg-blue-500 rounded-full mr-1.5 animate-pulse"></div>
+                    Out of Office
+                  </div>
+                ) : (
+                  <div className="flex items-center text-green-600">
+                    <div className="w-1.5 h-1.5 bg-green-500 rounded-full mr-1.5"></div>
+                    Active
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
         
         {/* Create Label Modal */}
         {isCreateLabelOpen && (

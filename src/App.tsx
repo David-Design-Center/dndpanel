@@ -4,6 +4,7 @@ import { useSecurity } from './contexts/SecurityContext';
 import Loading from './components/common/Loading';
 import { initSecurityMeasures } from './utils/security';
 import { SECURITY_CONFIG } from './config/security';
+import { GooeyFilter } from './components/ui/liquid-toggle';
 
 // Lazy load components
 const Auth = lazy(() => import('./pages/Auth'));
@@ -55,44 +56,47 @@ function App() {
   // when isDataLoadingAllowed becomes true
 
   return (
-    <Suspense fallback={<Loading />}>
-      <Routes>
-        <Route path="/auth" element={<Auth />} />
-        <Route path="/microsoft-auth-redirect" element={<MicrosoftAuthRedirect />} />
-        
-        {/* Public routes - accessible without authentication */}
-        <Route path="/privacy-policy" element={<PrivacyPolicy />} />
-        <Route path="/terms-of-service" element={<TermsOfService />} />
-        
-        <Route
-          path="/"
-          element={
-            <ProtectedRoute>
-              <Layout />
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<Navigate to="/inbox" replace />} />
-          <Route path="inbox" element={<Inbox />} />
-          <Route path="unread" element={<Unread />} />
-          <Route path="sent" element={<Sent />} />
-          <Route path="drafts" element={<Drafts />} />
-          <Route path="trash" element={<Trash />} />
-          <Route path="email/:id" element={<ViewEmail />} />
-          <Route path="compose" element={<Compose />} />
-          <Route path="settings" element={<Settings />} />
-          <Route path="orders" element={<Orders />} />
-          <Route path="create-price-request" element={<CreatePriceRequest />} />
-          <Route path="create-customer-order" element={<CreateCustomerOrder />} />
-          <Route path="invoice-generator" element={<InvoiceGenerator />} />
-          <Route path="invoice-generator/:orderId" element={<InvoiceGenerator />} />
-          <Route path="invoice/:orderId" element={<InvoiceGenerator />} />
-          <Route path="dashboard" element={<Dashboard />} />
-          <Route path="shipments" element={<Shipments />} />
-          <Route path="calendar" element={<Calendar />} />
-        </Route>
-      </Routes>
-    </Suspense>
+    <>
+      <GooeyFilter />
+      <Suspense fallback={<Loading />}>
+        <Routes>
+          <Route path="/auth" element={<Auth />} />
+          <Route path="/microsoft-auth-redirect" element={<MicrosoftAuthRedirect />} />
+          
+          {/* Public routes - accessible without authentication */}
+          <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+          <Route path="/terms-of-service" element={<TermsOfService />} />
+          
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <Layout />
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<Navigate to="/inbox" replace />} />
+            <Route path="inbox" element={<Inbox />} />
+            <Route path="unread" element={<Unread />} />
+            <Route path="sent" element={<Sent />} />
+            <Route path="drafts" element={<Drafts />} />
+            <Route path="trash" element={<Trash />} />
+            <Route path="email/:id" element={<ViewEmail />} />
+            <Route path="compose" element={<Compose />} />
+            <Route path="settings" element={<Settings />} />
+            <Route path="orders" element={<Orders />} />
+            <Route path="create-price-request" element={<CreatePriceRequest />} />
+            <Route path="create-customer-order" element={<CreateCustomerOrder />} />
+            <Route path="invoice-generator" element={<InvoiceGenerator />} />
+            <Route path="invoice-generator/:orderId" element={<InvoiceGenerator />} />
+            <Route path="invoice/:orderId" element={<InvoiceGenerator />} />
+            <Route path="dashboard" element={<Dashboard />} />
+            <Route path="shipments" element={<Shipments />} />
+            <Route path="calendar" element={<Calendar />} />
+          </Route>
+        </Routes>
+      </Suspense>
+    </>
   );
 }
 

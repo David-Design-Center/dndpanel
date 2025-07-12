@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Reply, Trash, Paperclip, Tag, ChevronDown } from 'lucide-react';
+import { ArrowLeft, Reply, Trash, Paperclip, Tag, ChevronDown, Forward } from 'lucide-react';
 import { formatDistanceToNow, parseISO, format } from 'date-fns';
 import { getEmailById, getAttachmentDownloadUrl, getEmailByThreadId, getThreadEmails, markEmailAsTrash, applyLabelsToEmail } from '../services/emailService';
 import { Email } from '../types';
@@ -106,11 +106,11 @@ const processThreadMessages = async (
   
   console.log(`✨ Processing ${threadEmails.length} pre-separated Gmail messages`);
   
-  // Sort by date (oldest to newest for chronological display)
+  // Sort by date (newest to oldest - newest emails at the top)
   const sortedEmails = [...threadEmails].sort((a, b) => {
     const aTime = new Date(a.date).getTime();
     const bTime = new Date(b.date).getTime();
-    return aTime - bTime;
+    return bTime - aTime; // Reversed: newest first
   });
   
   // Clean quoted content from each message (Gmail already separated the messages for us)
@@ -179,6 +179,37 @@ const getSenderColor = (email: string): string => {
   // Use the hash to pick a color consistently
   const colorIndex = Math.abs(hash) % colors.length;
   return colors[colorIndex];
+};
+
+// Function to extract preview text from HTML content
+const extractPreviewText = (html: string, maxLength: number = 120): string => {
+  if (!html) return 'No content available';
+  
+  try {
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = html;
+    
+    // Remove quoted content for preview
+    const quotedElements = tempDiv.querySelectorAll('.gmail_quote, blockquote, [class*="quote"]');
+    quotedElements.forEach(el => el.remove());
+    
+    // Remove script and style tags
+    const scriptElements = tempDiv.querySelectorAll('script, style');
+    scriptElements.forEach(el => el.remove());
+    
+    const textContent = tempDiv.textContent || tempDiv.innerText || '';
+    const cleanText = textContent.replace(/\s+/g, ' ').trim();
+    
+    if (!cleanText || cleanText.length === 0) {
+      return 'No text content available';
+    }
+    
+    if (cleanText.length <= maxLength) return cleanText;
+    return cleanText.substring(0, maxLength).trim() + '...';
+  } catch (error) {
+    console.warn('Error extracting preview text:', error);
+    return 'Preview unavailable';
+  }
 };
 
 // Component for rendering email content in an iframe for maximum isolation
@@ -402,6 +433,7 @@ function ViewEmail() {
   const [deleting, setDeleting] = useState(false);
   const [labelDropdownOpen, setLabelDropdownOpen] = useState(false);
   const [isApplyingLabel, setIsApplyingLabel] = useState<string | null>(null);
+  const [expandedMessages, setExpandedMessages] = useState<Set<string>>(new Set());
   const [previewFile, setPreviewFile] = useState<{
     attachment: NonNullable<Email['attachments']>[0];
     emailId: string;
@@ -510,6 +542,12 @@ function ViewEmail() {
       
       console.log(`✅ Setting processed messages: ${processed.length} items`);
       setProcessedThreadMessages(processed);
+      
+      // Auto-expand the first (newest/top) message after processing
+      if (processed.length > 0) {
+        console.log(`🔍 Auto-expanding first message: ${processed[0].id}`);
+        setExpandedMessages(new Set([processed[0].id]));
+      }
     } catch (error) {
       console.error('Error processing thread messages:', error);
     } finally {
@@ -544,6 +582,19 @@ function ViewEmail() {
     } catch (error) {
       console.error('Error fetching thread emails:', error);
     }
+  };
+
+  // Function to toggle message expansion
+  const toggleMessageExpansion = (messageId: string) => {
+    setExpandedMessages(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(messageId)) {
+        newSet.delete(messageId);
+      } else {
+        newSet.add(messageId);
+      }
+      return newSet;
+    });
   };
 
   // Function to handle applying a label
@@ -627,6 +678,61 @@ function ViewEmail() {
     });
     
     return uniqueAttachments;
+  };
+
+  // Function to handle replying to a specific message
+  const handleReplyToMessage = (threadMessage: Email) => {
+    // Create a reply subject with "Re: " prefix if it doesn't already have it
+    const subject = threadMessage.subject.startsWith('Re: ') ? threadMessage.subject : `Re: ${threadMessage.subject}`;
+    
+    // Format the original email for the reply
+    const formattedDate = format(parseISO(threadMessage.date), 'PPpp');
+    const quotedBody = `
+<br><br>
+<div style="padding-left: 1em; margin-left: 1em; border-left: 2px solid #ccc;">
+  <p>On ${formattedDate}, ${threadMessage.from.name} <${threadMessage.from.email}> wrote:</p>
+  ${threadMessage.body}
+</div>
+`;
+    
+    // Navigate to compose with prefilled data including threadId
+    navigate('/compose', { 
+      state: { 
+        to: threadMessage.from.email,
+        subject: subject,
+        replyToId: threadMessage.id,
+        threadId: threadMessage.threadId, // Pass the threadId for thread display
+        originalBody: quotedBody
+      } 
+    });
+  };
+
+  // Function to handle forwarding a specific message
+  const handleForwardMessage = (threadMessage: Email) => {
+    // Create a forward subject with "Fwd: " prefix
+    const subject = threadMessage.subject.startsWith('Fwd: ') ? threadMessage.subject : `Fwd: ${threadMessage.subject}`;
+    
+    // Format the original email for forwarding
+    const formattedDate = format(parseISO(threadMessage.date), 'PPpp');
+    const forwardedBody = `
+<br><br>
+---------- Forwarded message ---------<br>
+From: ${threadMessage.from.name} <${threadMessage.from.email}><br>
+Date: ${formattedDate}<br>
+Subject: ${threadMessage.subject}<br>
+To: ${threadMessage.to?.map(t => `${t.name} <${t.email}>`).join(', ') || 'Undisclosed recipients'}<br>
+<br>
+${threadMessage.body}
+`;
+    
+    // Navigate to compose with prefilled data for forwarding
+    navigate('/compose', { 
+      state: { 
+        subject: subject,
+        originalBody: forwardedBody,
+        attachments: threadMessage.attachments // Include attachments when forwarding
+      } 
+    });
   };
 
   const handleReply = () => {
@@ -864,126 +970,110 @@ function ViewEmail() {
       </div>
 
       {/* Thread Messages */}
-      <div className="space-y-2">
-        {allThreadMessages.map((threadMessage) => {
-          // Start with all messages collapsed for faster loading
-          const isLatestMessage = false; // Changed: collapse all messages by default
+      <div className="space-y-3">
+        {allThreadMessages.map((threadMessage, index) => {
+          const previewText = extractPreviewText(threadMessage.body, 120);
+          const isLastMessage = index === allThreadMessages.length - 1;
+          const isExpanded = expandedMessages.has(threadMessage.id);
           
-          // Format the title for the collapsible section
-          const titleContent = (
-            <div className="flex items-center w-full">
-              <div className={`h-6 w-6 rounded-full bg-gradient-to-br ${getSenderColor(threadMessage.from.email)} flex items-center justify-center text-white text-xs font-semibold shadow-sm`}>
-                {getProfileInitial(threadMessage.from.name, threadMessage.from.email)}
-              </div>
-              <div className="ml-2 flex-1 min-w-0">
-                <div className="flex justify-between items-center">
-                  <p className="text-xs font-medium text-gray-900 truncate">{threadMessage.from.name}</p>
-                  <span className="text-xs text-gray-500" title={format(parseISO(threadMessage.date), 'PPpp')}>
-                    {formatDistanceToNow(parseISO(threadMessage.date), { addSuffix: true })}
-                  </span>
-                </div>
-                <p className="text-xs text-gray-600 truncate">{threadMessage.from.email}</p>
-              </div>
-              {/* Attachment indicator */}
-              {threadMessage.attachments && threadMessage.attachments.filter(isRelevantAttachment).length > 0 && (
-                <div className="ml-1.5 flex items-center text-xs text-blue-600 bg-blue-100 px-1 py-0.5 rounded-full">
-                  <Paperclip size={8} className="mr-0.5" />
-                  {threadMessage.attachments.filter(isRelevantAttachment).length}
-                </div>
-              )}
-            </div>
-          );
+          console.log(`Message ${index + 1} preview:`, previewText); // Debug log
           
           return (
-            <CollapsibleSection 
+            <div 
               key={threadMessage.id} 
-              title={titleContent}
-              defaultExpanded={isLatestMessage} 
-              className="mb-2 overflow-hidden hover:shadow-md transition-shadow border-gray-300 shadow-sm"
+              className={`bg-white rounded-lg border hover:shadow-md transition-all duration-200 ${
+                isLastMessage ? 'border-blue-200 shadow-sm' : 'border-gray-200'
+              }`}
             >
-              <div className="bg-white rounded-b-lg overflow-hidden transition-all">
-                {/* To/Recipient Information */}
-                <div className="flex items-center mb-1.5 text-xs text-gray-600 px-2 pt-1.5">
-                  <span className="mr-1.5">To:</span>
-                  <div className="flex items-center">
-                    {threadMessage.to && threadMessage.to.length > 0 ? (
-                      <>
-                        <div className={`h-3 w-3 rounded-full bg-gradient-to-br ${getSenderColor(threadMessage.to[0]?.email || 'default')} flex items-center justify-center text-white text-xs font-semibold`}>
-                          {getProfileInitial(threadMessage.to[0]?.name || '', threadMessage.to[0]?.email || '')}
+              <div className="p-4">
+                <div className="flex items-start space-x-3">
+                  {/* Avatar/Bubble */}
+                  <div className={`h-10 w-10 rounded-full bg-gradient-to-br ${getSenderColor(threadMessage.from.email)} flex items-center justify-center text-white text-sm font-semibold shadow-sm flex-shrink-0`}>
+                    {getProfileInitial(threadMessage.from.name, threadMessage.from.email)}
+                  </div>
+                  
+                  {/* Message Content */}
+                  <div className="flex-1 min-w-0">
+                    {/* Header with sender and date */}
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-sm font-medium text-gray-900">
+                          {threadMessage.from.name || threadMessage.from.email}
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          &lt;{threadMessage.from.email}&gt;
+                        </span>
+                      </div>
+                      <span className="text-xs text-gray-500 flex-shrink-0" title={format(parseISO(threadMessage.date), 'PPpp')}>
+                        {formatDistanceToNow(parseISO(threadMessage.date), { addSuffix: true })}
+                      </span>
+                    </div>
+                    
+                    {/* Message Preview or Full Content */}
+                    <div className="cursor-pointer" onClick={() => toggleMessageExpansion(threadMessage.id)}>
+                      {isExpanded ? (
+                        <div className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+                          <IframeEmailRenderer 
+                            html={threadMessage.body} 
+                            attachments={threadMessage.attachments}
+                            className="w-full"
+                          />
                         </div>
-                        <span className="ml-1.5 font-medium truncate text-xs">{threadMessage.to[0]?.email}</span>
-                        {threadMessage.to.length > 1 && (
-                          <span className="ml-1.5 text-gray-500">+{threadMessage.to.length - 1} more</span>
-                        )}
-                      </>
-                    ) : (
-                      <span className="font-medium text-gray-500">Unknown recipient</span>
+                      ) : (
+                        <div className="text-sm text-gray-600 leading-relaxed mb-2 hover:text-gray-800 transition-colors">
+                          {previewText}
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* Toggle Button and Action Buttons */}
+                    <div className="flex items-center justify-between mt-2">
+                      <button 
+                        onClick={() => toggleMessageExpansion(threadMessage.id)}
+                        className="text-xs text-blue-600 hover:text-blue-800"
+                      >
+                        {isExpanded ? 'Show less' : 'Show more'}
+                      </button>
+                      
+                      {/* Message Action Buttons */}
+                      <div className="flex items-center space-x-2">
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleReplyToMessage(threadMessage);
+                          }}
+                          className="flex items-center px-2 py-1 text-xs text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                          title="Reply to this message"
+                        >
+                          <Reply size={12} className="mr-1" />
+                          Reply
+                        </button>
+                        
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleForwardMessage(threadMessage);
+                          }}
+                          className="flex items-center px-2 py-1 text-xs text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                          title="Forward this message"
+                        >
+                          <Forward size={12} className="mr-1" />
+                          Forward
+                        </button>
+                      </div>
+                    </div>
+                    
+                    {/* Attachment indicator */}
+                    {threadMessage.attachments && threadMessage.attachments.filter(isRelevantAttachment).length > 0 && (
+                      <div className="flex items-center text-xs text-blue-600 mt-2">
+                        <Paperclip size={12} className="mr-1" />
+                        {threadMessage.attachments.filter(isRelevantAttachment).length} attachment{threadMessage.attachments.filter(isRelevantAttachment).length > 1 ? 's' : ''}
+                      </div>
                     )}
                   </div>
                 </div>
-                
-                {/* Email Body */}
-                <div className="px-2 pb-2">
-                  <div className="border border-gray-200 rounded-lg overflow-hidden">
-                    <IframeEmailRenderer 
-                      html={threadMessage.body} 
-                      className="w-full"
-                      attachments={threadMessage.attachments}
-                    />
-                  </div>
-                  
-                  {/* Attachments for individual messages */}
-                  {threadMessage.attachments && threadMessage.attachments.filter(isRelevantAttachment).length > 0 && (
-                    <div className="mt-2 border-t border-gray-200 pt-2">
-                      <h4 className="text-xs font-semibold text-gray-700 mb-1.5 flex items-center">
-                        <Paperclip size={10} className="mr-1" />
-                        Attachments ({threadMessage.attachments.filter(isRelevantAttachment).length})
-                      </h4>
-                      <div className="grid grid-cols-1 gap-1.5">
-                        {threadMessage.attachments.filter(isRelevantAttachment).map((attachment, attachIndex) => (
-                          <div key={attachIndex} className="flex items-center p-2 border border-gray-200 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors">
-                            <div className="flex-shrink-0 mr-2">
-                              <FileThumbnail
-                                attachment={attachment}
-                                emailId={threadMessage.id}
-                                size="small"
-                                showPreviewButton={true}
-                                onPreviewClick={() => setPreviewFile({ attachment, emailId: threadMessage.id })}
-                              />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-medium text-gray-900 truncate">{attachment.name}</p>
-                              <p className="text-xs text-gray-500">
-                                {(attachment.size / 1000).toFixed(0)} KB
-                                {attachment.mimeType !== 'application/octet-stream' && (
-                                  <span className="ml-1">• {attachment.mimeType.split('/')[1].toUpperCase()}</span>
-                                )}
-                              </p>
-                            </div>
-                            <div className="flex items-center space-x-1">
-                              <button 
-                                onClick={() => setPreviewFile({ attachment, emailId: threadMessage.id })}
-                                className="px-1.5 py-0.5 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
-                                title="Preview file"
-                              >
-                                Preview
-                              </button>
-                              <button 
-                                onClick={() => handleDownloadAttachment(attachment, threadMessage.id)}
-                                className="px-2 py-0.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-                                disabled={downloadingAttachment === attachment.name}
-                              >
-                                {downloadingAttachment === attachment.name ? 'Downloading...' : 'Download'}
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
               </div>
-            </CollapsibleSection>
+            </div>
           );
         })}
       </div>

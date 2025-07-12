@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthContext';
 import { Profile } from '../types';
+import { devLog } from '../utils/logging';
 
 interface ProfileContextType {
   profiles: Profile[];
@@ -11,9 +12,11 @@ interface ProfileContextType {
     profileId: string,
     signature: string
   ) => Promise<boolean>;
+  clearProfile: () => void;
   isLoading: boolean;
   error: string | null;
   fetchProfiles: () => Promise<void>;
+  fetchFullProfile: (id: string) => Promise<Profile | null>;
 }
 
 export const ProfileContext = createContext<ProfileContextType | undefined>(undefined);
@@ -27,6 +30,9 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
   // Track authentication state directly with Supabase
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [authLoading, setAuthLoading] = useState(true);
+  
+  // Prevent infinite retry loops
+  const [isInitializing, setIsInitializing] = useState(false);
 
   // Get authentication context and Gmail functions
   const { user, initGmail } = useAuth();
@@ -34,7 +40,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
   const fetchProfiles = async () => {
     // Only fetch profiles if user is authenticated
     if (!user) {
-      console.log('fetchProfiles: User not authenticated');
+      devLog.debug('ProfileContext: No user, skipping profile fetch');
       return;
     }
 
@@ -42,118 +48,138 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
       setIsLoading(true);
       setError(null);
       
-      console.log('fetchProfiles: Starting to fetch profiles from Supabase...');
+      devLog.debug('fetchProfiles: Fetching profiles...');
       
       const { data, error } = await supabase
         .from('profiles')
-        .select('*')
+        .select('id, name')
         .order('name');
       
       if (error) {
         throw error;
       }
       
-      console.log('fetchProfiles: Profiles fetched from Supabase:', data);
-      setProfiles(data);
+      devLog.debug(`fetchProfiles: Loaded ${data?.length || 0} profiles`);
+      setProfiles(data || []);
       
-      // Load the last selected profile from localStorage if available
-      const savedProfileId = localStorage.getItem('currentProfileId');
-      console.log('fetchProfiles: Saved profile ID from localStorage:', savedProfileId);
-      
-      let profileToAutoInit = null;
-      
-      if (savedProfileId && data.length > 0) {
-        const savedProfile = data.find(profile => profile.id === savedProfileId);
-        console.log('fetchProfiles: Found saved profile:', savedProfile);
-        
-        if (savedProfile) {
-          setCurrentProfile(savedProfile);
-          profileToAutoInit = savedProfile;
-          console.log('fetchProfiles: Set current profile to saved profile:', savedProfile);
+      // Try to restore previously selected profile from sessionStorage
+      const savedProfileId = sessionStorage.getItem('currentProfileId');
+      if (savedProfileId && data) {
+        const savedProfileExists = data.find(p => p.id === savedProfileId);
+        if (savedProfileExists) {
+          devLog.info('Found saved profile ID, fetching full profile data...');
+          const fullProfile = await fetchFullProfile(savedProfileId);
+          if (fullProfile) {
+            devLog.info('Restoring previously selected profile:', fullProfile.name);
+            setCurrentProfile(fullProfile);
+            
+            // Initialize Gmail if the profile has tokens, but handle failures gracefully
+            if (fullProfile.gmail_access_token || fullProfile.gmail_refresh_token) {
+              try {
+                await initGmail(fullProfile);
+                devLog.debug('Gmail initialized for restored profile');
+              } catch (err) {
+                devLog.debug('Gmail initialization failed for restored profile, clearing invalid tokens:', err);
+                // If Gmail init fails, clear the profile to prevent infinite retry
+                // This forces the user to re-authenticate with Gmail
+                setCurrentProfile(null);
+                sessionStorage.removeItem('currentProfileId');
+                setError('Gmail authentication expired. Please select your profile again.');
+                return;
+              }
+            }
+          } else {
+            devLog.debug('Failed to fetch full profile data, clearing sessionStorage');
+            sessionStorage.removeItem('currentProfileId');
+            setCurrentProfile(null);
+          }
         } else {
-          // If saved profile not found, select the first profile
-          setCurrentProfile(data[0]);
-          profileToAutoInit = data[0];
-          localStorage.setItem('currentProfileId', data[0].id);
-          console.log('fetchProfiles: Saved profile not found, set current profile to first profile:', data[0]);
+          devLog.debug('Saved profile ID not found in current profiles, clearing sessionStorage');
+          sessionStorage.removeItem('currentProfileId');
+          setCurrentProfile(null);
         }
-      } else if (data.length > 0) {
-        // If no saved profile, select the first profile
-        setCurrentProfile(data[0]);
-        profileToAutoInit = data[0];
-        localStorage.setItem('currentProfileId', data[0].id);
-        console.log('fetchProfiles: No saved profile, set current profile to first profile:', data[0]);
       } else {
-        console.log('fetchProfiles: No profiles found in database');
-      }
-      
-      // Automatically initialize Gmail if the selected profile has tokens
-      if (profileToAutoInit && (profileToAutoInit.gmail_access_token || profileToAutoInit.gmail_refresh_token)) {
-        console.log('fetchProfiles: Auto-initializing Gmail for profile:', profileToAutoInit.name);
-        try {
-          await initGmail(profileToAutoInit);
-          console.log('fetchProfiles: Gmail auto-initialization completed for profile:', profileToAutoInit.name);
-        } catch (gmailError) {
-          console.error('fetchProfiles: Error auto-initializing Gmail for profile:', gmailError);
-          // Don't fail profile loading if Gmail init fails
-        }
-      } else if (profileToAutoInit) {
-        console.log('fetchProfiles: Profile has no Gmail tokens, skipping auto-initialization');
+        devLog.info('No saved profile found - user must choose a profile');
+        setCurrentProfile(null);
       }
     } catch (err) {
-      console.error('fetchProfiles: Error fetching profiles:', err);
+      devLog.error('fetchProfiles: Error fetching profiles:', err);
       setError(err instanceof Error ? err.message : 'Unknown error fetching profiles');
     } finally {
       setIsLoading(false);
     }
   };
 
+  const fetchFullProfile = async (id: string): Promise<Profile | null> => {
+    try {
+      devLog.debug('fetchFullProfile: Fetching full profile data for ID:', id);
+      
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', id)
+        .single();
+      
+      if (error) {
+        devLog.error('fetchFullProfile: Error fetching full profile:', error);
+        return null;
+      }
+      
+      devLog.debug('fetchFullProfile: Successfully fetched full profile data');
+      return data as Profile;
+    } catch (err) {
+      devLog.error('fetchFullProfile: Error fetching full profile:', err);
+      return null;
+    }
+  };
+
   const selectProfile = async (id: string, passcode?: string): Promise<boolean> => {
     try {
-      console.log('selectProfile: Attempting to select profile with ID:', id);
-      console.log('selectProfile: Available profiles:', profiles);
+      devLog.debug('selectProfile: Attempting to select profile with ID:', id);
       
-      const profileToSelect = profiles.find(profile => profile.id === id);
+      // Fetch the full profile data with all fields including passcode
+      const profileToSelect = await fetchFullProfile(id);
       
       if (!profileToSelect) {
-        console.error('selectProfile: Profile not found with ID:', id);
+        devLog.error('selectProfile: Profile not found with ID:', id);
         setError('Profile not found');
         return false;
       }
       
-      console.log('selectProfile: Found profile to select:', profileToSelect);
+      devLog.debug('selectProfile: Found profile to select:', profileToSelect.name);
       
       // Check if profile requires a passcode
       if (profileToSelect.passcode && profileToSelect.passcode !== passcode) {
-        console.error('selectProfile: Invalid passcode for profile:', profileToSelect.name);
+        devLog.debug('selectProfile: Invalid passcode for profile:', profileToSelect.name);
         setError('Invalid passcode');
         return false;
       }
       
       setCurrentProfile(profileToSelect);
-      localStorage.setItem('currentProfileId', id);
+      sessionStorage.setItem('currentProfileId', id);
       setError(null);
       
-      console.log('selectProfile: Successfully selected profile:', profileToSelect);
-      console.log('selectProfile: Updated localStorage with profile ID:', id);
+      devLog.info('selectProfile: Successfully selected profile:', profileToSelect.name);
       
       // Automatically initialize Gmail if profile has tokens
       if (profileToSelect.gmail_access_token || profileToSelect.gmail_refresh_token) {
-        console.log('selectProfile: Profile has Gmail tokens, initializing Gmail connection...');
+        devLog.debug('selectProfile: Profile has Gmail tokens, initializing Gmail connection...');
         try {
           await initGmail(profileToSelect);
-          console.log('selectProfile: Gmail initialization completed for profile:', profileToSelect.name);
+          devLog.debug('selectProfile: Gmail initialization completed for profile:', profileToSelect.name);
         } catch (gmailError) {
-          console.error('selectProfile: Error initializing Gmail for profile:', gmailError);
-          // Don't fail profile selection if Gmail init fails
+          devLog.debug('selectProfile: Error initializing Gmail for profile:', gmailError);
+          // Set a user-friendly error message but don't fail the profile selection
+          setError('Gmail authentication failed. You may need to reconnect Gmail for this profile.');
+          // Don't fail profile selection - user can still access the app
         }
       } else {
-        console.log('selectProfile: Profile has no Gmail tokens, skipping Gmail initialization');
+        devLog.debug('selectProfile: Profile has no Gmail tokens, skipping Gmail initialization');
       }
       
       return true;
     } catch (err) {
-      console.error('selectProfile: Error selecting profile:', err);
+      devLog.error('selectProfile: Error selecting profile:', err);
       setError(err instanceof Error ? err.message : 'Unknown error selecting profile');
       return false;
     }
@@ -164,12 +190,9 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     signature: string
   ): Promise<boolean> => {
     try {
-      console.log('ProfileContext: Updating signature for profile:', profileId);
-      console.log('ProfileContext: Signature content preview:', signature.substring(0, 100) + '...');
-      console.log('ProfileContext: User authenticated:', !!user);
-      console.log('ProfileContext: Current profile:', currentProfile?.name);
+      devLog.debug('ProfileContext: Updating signature for profile:', profileId);
       
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from('profiles')
         .update({
           signature: signature
@@ -178,11 +201,11 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
         .select();
 
       if (error) {
-        console.error('ProfileContext: Supabase error:', error);
+        devLog.error('ProfileContext: Supabase error:', error);
         throw error;
       }
 
-      console.log('ProfileContext: Supabase update response:', data);
+      devLog.debug('ProfileContext: Signature update successful');
 
       // Update the profiles array
       setProfiles(prevProfiles => 
@@ -204,42 +227,62 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
         } : null);
       }
 
-      console.log('ProfileContext: Successfully updated signature in state');
+      devLog.debug('ProfileContext: Successfully updated signature in state');
       return true;
     } catch (err) {
-      console.error('ProfileContext: Error updating profile signature:', err);
+      devLog.error('ProfileContext: Error updating profile signature:', err);
       setError(err instanceof Error ? err.message : 'Unknown error updating signature');
       return false;
     }
+  };
+
+  const clearProfile = () => {
+    devLog.debug('ProfileContext: Clearing current profile');
+    setCurrentProfile(null);
+    sessionStorage.removeItem('selectedProfileId');
+    sessionStorage.removeItem('currentProfileId');
+    setError(null);
   };
 
   // Check authentication status on mount and listen for auth changes
   useEffect(() => {
     async function initializeProfiles() {
       if (!user) {
-        console.log('ProfileContext: User not authenticated');
+        devLog.debug('ProfileContext: User not authenticated');
         setProfiles([]);
         setCurrentProfile(null);
         setIsLoading(false);
         return;
       }
 
-      // Check authentication via Supabase directly
-      const { data } = await supabase.auth.getSession();
-      const authenticated = !!data.session;
-      
-      console.log('ProfileContext: Authentication check completed, authenticated =', authenticated);
-      setIsAuthenticated(authenticated);
-      setAuthLoading(false);
+      // Prevent multiple simultaneous initializations
+      if (isInitializing) {
+        devLog.debug('ProfileContext: Already initializing, skipping...');
+        return;
+      }
 
-      if (authenticated) {
-        console.log('ProfileContext: Authenticated, fetching profiles');
-        fetchProfiles();
-      } else {
-        console.log('ProfileContext: Not authenticated, clearing profiles');
-        setProfiles([]);
-        setCurrentProfile(null);
-        setIsLoading(false);
+      setIsInitializing(true);
+
+      try {
+        // Check authentication via Supabase directly
+        const { data } = await supabase.auth.getSession();
+        const authenticated = !!data.session;
+        
+        devLog.debug('ProfileContext: Authentication check completed, authenticated =', authenticated);
+        setIsAuthenticated(authenticated);
+        setAuthLoading(false);
+
+        if (authenticated) {
+          devLog.debug('ProfileContext: Authenticated, fetching profiles');
+          await fetchProfiles();
+        } else {
+          devLog.debug('ProfileContext: Not authenticated, clearing profiles');
+          setProfiles([]);
+          setCurrentProfile(null);
+          setIsLoading(false);
+        }
+      } finally {
+        setIsInitializing(false);
       }
     }
 
@@ -248,7 +291,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     // Set up an auth state listener to detect changes to authentication
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
-        console.log('ProfileContext: Auth state changed:', event);
+        devLog.debug('ProfileContext: Auth state changed:', event);
         setIsAuthenticated(!!session);
 
         // If the user signed out, clear profiles
@@ -265,19 +308,19 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
 
   // DEBUG: Log currentProfile changes
   useEffect(() => {
-    console.log('ProfileContext: currentProfile changed to:', currentProfile);
+    devLog.debug('ProfileContext: currentProfile changed to:', currentProfile?.name || 'none');
   }, [currentProfile]);
 
   // DEBUG: Log auth state changes
   useEffect(() => {
-    console.log('ProfileContext: Auth state - authLoading:', authLoading, 'isAuthenticated:', isAuthenticated);
+    devLog.debug('ProfileContext: Auth state - authLoading:', authLoading, 'isAuthenticated:', isAuthenticated);
   }, [authLoading, isAuthenticated]);
 
   // Listen for Gmail token updates from AuthContext
   useEffect(() => {
     const handleGmailTokensUpdated = (event: CustomEvent) => {
       const { profileId, gmailAccessToken, gmailRefreshToken, gmailTokenExpiry } = event.detail;
-      console.log('ProfileContext: Received Gmail tokens update for profile:', profileId);
+      devLog.debug('ProfileContext: Received Gmail tokens update for profile:', profileId);
       
       // Update the profiles array
       setProfiles(prevProfiles => 
@@ -318,7 +361,9 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     updateProfileSignature,
     isLoading,
     error,
-    fetchProfiles
+    fetchProfiles,
+    fetchFullProfile,
+    clearProfile
   };
 
   return <ProfileContext.Provider value={value}>{children}</ProfileContext.Provider>;

@@ -4,6 +4,7 @@ import { fetchGmailLabels, createGmailLabel, updateGmailLabel, deleteGmailLabel 
 import { useAuth } from './AuthContext';
 import { useProfile } from './ProfileContext';
 import { useSecurity } from './SecurityContext';
+import { securityLog, devLog } from '../utils/logging';
 
 interface LabelContextType {
   labels: GmailLabel[];
@@ -40,7 +41,7 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
   const refreshLabels = async () => {
     // SECURITY: Block label refresh if data loading is not allowed
     if (!isDataLoadingAllowed) {
-      console.log('refreshLabels: Blocked by security policy');
+      securityLog.block('Label refresh blocked by security policy');
       setLabels([]);
       setLoadingLabels(false);
       setError(null);
@@ -49,7 +50,7 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
 
     // Only fetch labels if Gmail is signed in, API is ready, AND we have a current profile
     if (!isGmailSignedIn || !isGmailApiReady || !currentProfile) {
-      console.log(`Skipping label refresh - isGmailSignedIn: ${isGmailSignedIn}, isGmailApiReady: ${isGmailApiReady}, currentProfile: ${currentProfile?.name || 'none'}`);
+      devLog.debug(`Skipping label refresh - Gmail not ready or no profile selected`);
       setLabels([]);
       setLoadingLabels(false);
       setError(null);
@@ -163,7 +164,7 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
   // Refresh labels when Gmail API becomes ready OR when the current profile changes
   // This ensures we only fetch labels when the API is properly configured for the current profile
   useEffect(() => {
-    console.log(`Label refresh triggered - isGmailSignedIn: ${isGmailSignedIn}, isGmailApiReady: ${isGmailApiReady}, currentProfile: ${currentProfile?.name || 'none'}`);
+    devLog.debug(`Label refresh triggered`);
     refreshLabels();
   }, [isGmailSignedIn, isGmailApiReady, currentProfile?.id, isDataLoadingAllowed]); // Depend on security policy
 

@@ -55,7 +55,7 @@ export interface PaginatedEmailResponse {
 }
 
 // Configuration options
-const SCOPES = 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.labels';
+const SCOPES = 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.labels https://www.googleapis.com/auth/contacts.readonly';
 const API_KEY = import.meta.env.VITE_GAPI_API_KEY || '';
 const CLIENT_ID = import.meta.env.VITE_GAPI_CLIENT_ID || '';
 const DISCOVERY_DOCS = ['https://www.googleapis.com/discovery/v1/apis/gmail/v1/rest'];
@@ -103,6 +103,7 @@ export const initGapiClient = async (): Promise<void> => {
           scope: SCOPES,
           ux_mode: 'popup',
           redirect_uri: window.location.origin,
+          access_type: 'offline',
           callback: (response: any) => {
             if (response.error) {
               console.error('Code client error:', response.error);
@@ -251,7 +252,8 @@ export const signInToGmail = async (): Promise<{ access_token: string; expires_i
       // Request access token
       tokenClient.requestAccessToken({ 
         prompt: 'consent',
-        include_granted_scopes: true 
+        include_granted_scopes: true,
+        access_type: 'offline'
       });
     }
   });
@@ -2051,5 +2053,58 @@ export const getGmailUserProfile = async (): Promise<{ name: string; email: stri
   } catch (error) {
     console.error('Error fetching Gmail user profile:', error);
     return null;
+  }
+};
+
+/**
+ * Fetch frequently contacted people and my contacts from Google People API
+ */
+export const fetchPeopleConnections = async (): Promise<any[]> => {
+  try {
+    if (!isGmailSignedIn()) {
+      throw new Error('Not signed in to Gmail');
+    }
+
+    console.log('Fetching people connections...');
+    
+    const response = await window.gapi.client.request({
+      path: 'https://people.googleapis.com/v1/people/me/connections',
+      params: {
+        personFields: 'names,emailAddresses,photos,metadata',
+        pageSize: 1000,
+        sortOrder: 'LAST_MODIFIED_DESCENDING'
+      }
+    });
+
+    return response.result.connections || [];
+  } catch (error) {
+    console.error('Error fetching people connections:', error);
+    throw error;
+  }
+};
+
+/**
+ * Fetch other contacts from Google People API
+ */
+export const fetchOtherContacts = async (): Promise<any[]> => {
+  try {
+    if (!isGmailSignedIn()) {
+      throw new Error('Not signed in to Gmail');
+    }
+
+    console.log('Fetching other contacts...');
+    
+    const response = await window.gapi.client.request({
+      path: 'https://people.googleapis.com/v1/otherContacts',
+      params: {
+        personFields: 'names,emailAddresses,photos',
+        pageSize: 1000
+      }
+    });
+
+    return response.result.otherContacts || [];
+  } catch (error) {
+    console.error('Error fetching other contacts:', error);
+    throw error;
   }
 };

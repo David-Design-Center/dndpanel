@@ -1,17 +1,25 @@
 import { Outlet, useNavigate } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import { useAuth } from '../contexts/AuthContext';
+import { useProfile } from '../contexts/ProfileContext';
+import ProfileSelectionScreen from './ProfileSelectionScreen';
 
 function Layout() {
   const { loading } = useAuth();
+  const { currentProfile, isLoading: profileLoading } = useProfile();
   const navigate = useNavigate();
 
-  if (loading) {
+  if (loading || profileLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary-500"></div>
       </div>
     );
+  }
+
+  // If no profile is selected, show profile selection screen
+  if (!currentProfile) {
+    return <ProfileSelectionScreen />;
   }
 
   const handleCompose = () => {

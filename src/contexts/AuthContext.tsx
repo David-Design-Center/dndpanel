@@ -4,10 +4,17 @@ import { User, Session } from '../types';
 import { initGapiClient, isGmailSignedIn as checkGmailSignedIn, signInToGmail, signOutFromGmail, setAccessToken } from '../integrations/gapiService';
 import { SECURITY_CONFIG } from '../config/security';
 
-// Initialize Supabase client
+// Initialize Supabase client with persistent session storage
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://your-project-url.supabase.co';
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'your-anon-key';
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabase = createClient(supabaseUrl, supabaseKey, {
+  auth: {
+    storage: window.localStorage,
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: true
+  }
+});
 
 interface AuthContextType {
   user: User | null;
@@ -76,14 +83,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refreshGmailToken = useCallback(async (profileId: string, refreshToken: string): Promise<boolean> => {
     console.log('Refreshing Gmail token for profile:', profileId);
+    console.log('Refresh token available:', !!refreshToken);
     
     try {
-      const { data, error } = await supabase.functions.invoke('refresh-gmail-token', {
-        body: {
-          refreshToken: refreshToken,
-          profileId: profileId
-        }
+      const requestBody = {
+        refreshToken: refreshToken,
+        profileId: profileId
+      };
+      
+      console.log('Sending request to refresh-gmail-token function:', { 
+        profileId, 
+        hasRefreshToken: !!refreshToken 
       });
+
+      const { data, error } = await supabase.functions.invoke('refresh-gmail-token', {
+        body: requestBody
+      });
+
+      console.log('Function response:', { data, error });
 
       if (error) {
         console.error('Error calling refresh token function:', error);
@@ -326,16 +343,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
     setIsGmailApiReady(false); // Mark API as not ready during initialization
     try {
-      // Check active session
+      // Check active session - this will automatically restore from localStorage
       const { data, error } = await supabase.auth.getSession();
       
       if (error) {
-        throw error;
+        console.error('Error getting session:', error);
+        // Don't throw error - user can still sign in manually
       }
       
       if (data?.session) {
+        console.log('Found existing session, user is authenticated');
         setSession(data.session as unknown as Session);
         setUser(data.session.user as unknown as User);
+      } else {
+        console.log('No existing session found');
       }
     } catch (error) {
       console.error('Error initializing auth:', error);
@@ -344,10 +365,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // Set up auth state listener (runs once on mount)
+  // Set up auth state listener and initialize auth (runs once on mount)
   useEffect(() => {
+    // Initialize auth on app start
+    initializeAuth();
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
+      (event, session) => {
+        console.log('Auth state change event:', event);
         setSession(session as unknown as Session);
         setUser(session?.user as unknown as User || null);
         
@@ -374,7 +399,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       subscription.unsubscribe();
     };
-  }, []);
+  }, [initializeAuth]);
 
   const signUp = async (email: string, password: string) => {
     setLoading(true);

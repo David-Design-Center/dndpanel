@@ -1,5 +1,6 @@
 import { Email } from '../types';
 import { format } from 'date-fns';
+import { supabase } from '../lib/supabase';
 import { 
   fetchGmailMessages, 
   sendGmailMessage, 
@@ -15,6 +16,217 @@ import {
   applyGmailLabels,
   getGmailUserProfile
 } from '../integrations/gapiService';
+
+// Auto-reply functionality for out-of-office
+const processedSenders = new Set<string>(); // Track senders we've already replied to
+const pendingSenders = new Set<string>(); // Track senders currently being processed
+// Note: Rate limiting features disabled during emergency patch
+
+// Function to get out-of-office settings from Supabase
+const getOutOfOfficeSettings = async (profileName: string) => {
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('out_of_office_settings')
+      .eq('name', profileName)
+      .single();
+
+    if (error) {
+      console.error('Error fetching out-of-office settings:', error);
+    } else if (data?.out_of_office_settings && 
+               typeof data.out_of_office_settings === 'object' &&
+               data.out_of_office_settings.forwardToEmail) {
+      return data.out_of_office_settings;
+    }
+  } catch (error) {
+    console.error('Error loading out-of-office settings:', error);
+  }
+  
+  const defaults: { [key: string]: { forwardToEmail: string; autoReplyMessage: string } } = {
+    'David': {
+      forwardToEmail: 'martisuvorov12@gmail.com',
+      autoReplyMessage: `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+          <p>Hi,</p>
+          <p>I'm out of office currently. I forwarded your message to my associate.</p>
+          <p>Thank you, have a blessed day.</p>
+          <br>
+          <p>David</p>
+        </div>
+      `.trim()
+    },
+    'Marti': {
+      forwardToEmail: 'martisuvorov12@gmail.com',
+      autoReplyMessage: `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+          <p>Hi,</p>
+          <p>I'm out of office currently. I forwarded your message to my colleague.</p>
+          <p>Thank you for your understanding.</p>
+          <br>
+          <p>Marti</p>
+        </div>
+      `.trim()
+    }
+  };
+  
+  return defaults[profileName] || {
+    forwardToEmail: '',
+    autoReplyMessage: `
+      <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+        <p>Hi,</p>
+        <p>I'm out of office currently.</p>
+        <p>Thank you for your understanding.</p>
+      </div>
+    `.trim()
+  };
+};
+
+export const checkAndSendAutoReply = async (email: Email): Promise<void> => {
+  const senderEmail = email.from.email.toLowerCase();
+  
+  // CRITICAL FIX: Immediate atomic check and lock
+  if (senderEmail === 'me@example.com' || 
+      senderEmail.includes('david') || 
+      senderEmail.includes('marti') ||
+      processedSenders.has(senderEmail) ||
+      pendingSenders.has(senderEmail)) {
+    return;
+  }
+  
+  // CRITICAL FIX: Mark as pending IMMEDIATELY to prevent race conditions
+  pendingSenders.add(senderEmail);
+  
+  try {
+    // Get out-of-office statuses from localStorage
+    const outOfOfficeStatuses = localStorage.getItem('outOfOfficeStatuses');
+    const statuses = outOfOfficeStatuses ? JSON.parse(outOfOfficeStatuses) : {};
+    
+    // Check if David or Marti is out of office
+    const isDavidOutOfOffice = statuses['David'] || false;
+    const isMartiOutOfOffice = statuses['Marti'] || false;
+    
+    if (!isDavidOutOfOffice && !isMartiOutOfOffice) {
+      return; // Neither David nor Marti is out of office, no auto-reply needed
+    }
+    
+    // Don't auto-reply to automated emails, newsletters, etc.
+    const automatedIndicators = [
+      'noreply', 'no-reply', 'donotreply', 'notifications', 'newsletter',
+      'support', 'automated', 'system', 'admin', 'info@', 'help@'
+    ];
+    
+    if (automatedIndicators.some(indicator => senderEmail.includes(indicator))) {
+      return;
+    }
+    
+    // Determine who is out of office and get their settings
+    let outOfOfficePerson = '';
+    let autoReplyMessage = '';
+    let davidSettings = null;
+    let martiSettings = null;
+    
+    if (isDavidOutOfOffice) {
+      davidSettings = await getOutOfOfficeSettings('David');
+    }
+    if (isMartiOutOfOffice) {
+      martiSettings = await getOutOfOfficeSettings('Marti');
+    }
+    
+    if (isDavidOutOfOffice && isMartiOutOfOffice) {
+      outOfOfficePerson = 'David and Marti';
+      autoReplyMessage = `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+          <p>Hi,</p>
+          <p>We are both out of office currently. Your message has been received and we will respond when we return.</p>
+          <p>Thank you, have a blessed day.</p>
+          <br>
+          <p>David & Marti</p>
+        </div>
+      `;
+    } else if (isDavidOutOfOffice && davidSettings) {
+      outOfOfficePerson = 'David';
+      autoReplyMessage = davidSettings.autoReplyMessage;
+    } else if (isMartiOutOfOffice && martiSettings) {
+      outOfOfficePerson = 'Marti';
+      autoReplyMessage = martiSettings.autoReplyMessage;
+    }
+    
+    console.log(`🏖️ ${outOfOfficePerson} is out of office, sending auto-reply to: ${senderEmail}`);
+    
+    // Send auto-reply
+    const autoReplySubject = `Re: ${email.subject}`;
+    
+    // Send the auto-reply
+    await sendGmailMessage(
+      senderEmail,
+      '', // no CC
+      autoReplySubject,
+      autoReplyMessage,
+      [], // no attachments
+      email.threadId // reply in the same thread
+    );
+    
+    // Forward the original email to the appropriate person using configurable settings
+    let forwardToEmail = '';
+    let forwardToName = '';
+    
+    if (isDavidOutOfOffice && !isMartiOutOfOffice && davidSettings) {
+      // David is out, forward to configured email (likely Marti)
+      forwardToEmail = davidSettings.forwardToEmail;
+      forwardToName = 'Marti';
+    } else if (isMartiOutOfOffice && !isDavidOutOfOffice && martiSettings) {
+      // Marti is out, forward to configured email (likely David)
+      forwardToEmail = martiSettings.forwardToEmail;
+      forwardToName = 'David';
+    }
+    // If both are out of office, don't forward (no one to forward to)
+    
+    if (forwardToEmail) {
+      const forwardSubject = `Fwd: ${email.subject}`;
+      const forwardBody = `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+          <p>---------- Forwarded message ----------</p>
+          <p><strong>From:</strong> ${email.from.name} &lt;${email.from.email}&gt;</p>
+          <p><strong>Date:</strong> ${new Date(email.date).toLocaleString()}</p>
+          <p><strong>Subject:</strong> ${email.subject}</p>
+          <p><strong>To:</strong> ${outOfOfficePerson}</p>
+          <br>
+          ${email.body}
+        </div>
+      `;
+      
+      // Forward to the appropriate person
+      await sendGmailMessage(
+        forwardToEmail,
+        '', // no CC
+        forwardSubject,
+        forwardBody,
+        [], // no attachments for now - could include original attachments if needed
+        undefined // new conversation for forwarded email
+      );
+      
+      console.log(`📧 Email forwarded to ${forwardToName} (${forwardToEmail})`);
+    }
+    
+    // CRITICAL FIX: Only mark as processed AFTER successful completion
+    processedSenders.add(senderEmail);
+    console.log(`✅ Auto-reply sent for ${outOfOfficePerson} to: ${senderEmail}`);
+    
+  } catch (error) {
+    console.error('❌ Error processing auto-reply for', senderEmail, ':', error);
+    // CRITICAL FIX: Do NOT mark as processed on error to allow retry later
+  } finally {
+    // CRITICAL FIX: Always remove from pending, regardless of success/failure
+    pendingSenders.delete(senderEmail);
+  }
+};
+
+// Clear processed senders when switching out-of-office status
+export const clearAutoReplyCache = (): void => {
+  processedSenders.clear();
+  pendingSenders.clear();
+  console.log('🧹 Auto-reply cache cleared (both processed and pending)');
+};
 
 // Cache for emails to reduce API calls
 const emailCache: {
@@ -233,6 +445,24 @@ export const getEmails = async (
             };
           }
         });
+        
+        // Check for auto-reply on new unread emails (only for inbox queries)
+        if (query.includes('in:inbox') && !pageToken) {
+          const unreadEmails = gmailResponse.emails.filter(email => !email.isRead);
+          
+          // 🚨 EMERGENCY DISABLE - Auto-reply disabled due to critical bug
+          console.log('🚨 EMERGENCY: Auto-reply functionality DISABLED due to mass email incident');
+          console.log(`Would have processed ${unreadEmails.length} unread emails, but auto-reply is disabled for safety`);
+          
+          // ORIGINAL CODE (DISABLED):
+          // for (const email of unreadEmails) {
+          //   try {
+          //     await checkAndSendAutoReply(email);
+          //   } catch (error) {
+          //     console.error('Auto-reply check failed for email:', email.id, error);
+          //   }
+          // }
+        }
       }
       
       return {

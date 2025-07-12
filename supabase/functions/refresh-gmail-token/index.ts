@@ -14,7 +14,10 @@ serve(async (req) => {
   try {
     const { refreshToken, profileId } = await req.json()
     
+    console.log('Received request body:', { refreshToken: refreshToken ? '***' : null, profileId })
+    
     if (!refreshToken) {
+      console.error('Missing refresh token in request')
       return new Response(
         JSON.stringify({ error: 'Refresh token is required' }),
         { 
@@ -28,6 +31,11 @@ serve(async (req) => {
     const clientId = Deno.env.get('GAPI_CLIENT_ID')
     const clientSecret = Deno.env.get('GAPI_CLIENT_SECRET')
     
+    console.log('Environment check:', { 
+      clientId: clientId ? '***' : 'MISSING', 
+      clientSecret: clientSecret ? '***' : 'MISSING' 
+    })
+    
     if (!clientId || !clientSecret) {
       console.error('Missing GAPI_CLIENT_ID or GAPI_CLIENT_SECRET environment variables')
       return new Response(
@@ -40,6 +48,7 @@ serve(async (req) => {
     }
 
     // Call Google's token endpoint to refresh the access token
+    console.log('Calling Google token endpoint...')
     const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: {
@@ -53,11 +62,17 @@ serve(async (req) => {
       }),
     })
 
+    console.log('Google API response status:', tokenResponse.status)
+
     if (!tokenResponse.ok) {
       const errorData = await tokenResponse.json()
       console.error('Google token refresh failed:', errorData)
       return new Response(
-        JSON.stringify({ error: 'Failed to refresh token', details: errorData }),
+        JSON.stringify({ 
+          error: 'Failed to refresh token', 
+          details: errorData,
+          status: tokenResponse.status 
+        }),
         { 
           status: 400, 
           headers: { ...corsHeaders, 'Content-Type': 'application/json' } 

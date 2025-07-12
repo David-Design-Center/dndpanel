@@ -1,4 +1,5 @@
 import SignatureManager from '../components/common/SignatureManager';
+import OutOfOfficeManager from '../components/common/OutOfOfficeManager';
 import { useAuth } from '../contexts/AuthContext';
 import { useProfile } from '../contexts/ProfileContext';
 
@@ -81,6 +82,9 @@ function Settings() {
         
         {/* Email Signature Manager */}
         <SignatureManager />
+
+        {/* Out of Office Settings */}
+        <OutOfOfficeManager />
       </div>
     </div>
   );

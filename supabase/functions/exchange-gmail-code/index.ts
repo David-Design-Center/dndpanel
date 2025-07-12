@@ -13,9 +13,13 @@ serve(async (req) => {
   }
 
   try {
-    const { code, redirectUri, profileId } = await req.json()
+    const requestBody = await req.json()
+    console.log('Request body received:', requestBody)
+    
+    const { code, redirectUri, profileId } = requestBody
     
     if (!code || !redirectUri) {
+      console.error('Missing required fields:', { code: !!code, redirectUri: !!redirectUri })
       return new Response(
         JSON.stringify({ error: 'Authorization code and redirect URI are required' }),
         { 
@@ -29,6 +33,12 @@ serve(async (req) => {
     const clientId = Deno.env.get('GAPI_CLIENT_ID')
     const clientSecret = Deno.env.get('GAPI_CLIENT_SECRET')
     
+    console.log('Environment check:', {
+      hasClientId: !!clientId,
+      hasClientSecret: !!clientSecret,
+      clientIdLength: clientId?.length || 0
+    })
+    
     if (!clientId || !clientSecret) {
       console.error('Missing GAPI_CLIENT_ID or GAPI_CLIENT_SECRET environment variables')
       return new Response(
@@ -41,19 +51,25 @@ serve(async (req) => {
     }
 
     // Exchange authorization code for tokens
+    console.log('Attempting to exchange code for tokens with Google...')
+    const tokenRequestBody = {
+      client_id: clientId,
+      client_secret: clientSecret,
+      code: code,
+      grant_type: 'authorization_code',
+      redirect_uri: redirectUri,
+    }
+    console.log('Token request body:', { ...tokenRequestBody, client_secret: '[REDACTED]' })
+    
     const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
-      body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        code: code,
-        grant_type: 'authorization_code',
-        redirect_uri: redirectUri,
-      }),
+      body: new URLSearchParams(tokenRequestBody),
     })
+
+    console.log('Google token response status:', tokenResponse.status)
 
     if (!tokenResponse.ok) {
       const errorData = await tokenResponse.json()

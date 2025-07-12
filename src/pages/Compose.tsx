@@ -1,13 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { X, Paperclip, Minimize, Maximize, Eye, CheckCircle } from 'lucide-react';
+import { X, Paperclip, Minimize, Maximize, CheckCircle } from 'lucide-react';
 import { sendEmail, getThreadEmails, clearEmailCache } from '../services/emailService';
-import { Email } from '../types';
+import { Email, Contact } from '../types';
 import { getProfileInitial } from '../lib/utils';
 import Modal from '../components/common/Modal';
 import RichTextEditor from '../components/common/RichTextEditor';
+import FileThumbnail from '../components/common/FileThumbnail';
 import { formatDistanceToNow, parseISO, format } from 'date-fns';
 import { useProfile } from '../contexts/ProfileContext';
+import { useContacts } from '../contexts/ContactsContext';
 
 // Utility functions for text/HTML conversion
 const convertPlainTextToHtml = (text: string): string => {
@@ -19,13 +21,6 @@ const convertPlainTextToHtml = (text: string): string => {
     .replace(/\n/g, '<br>');
 };
 
-const stripHtmlToPlainText = (html: string): string => {
-  if (!html) return '';
-  const tempDiv = document.createElement('div');
-  tempDiv.innerHTML = html;
-  return tempDiv.textContent || tempDiv.innerText || '';
-};
-
 // Define attachment interface that supports both File objects and generated attachments
 interface AttachmentItem {
   name: string;
@@ -33,19 +28,25 @@ interface AttachmentItem {
   data?: string; // Base64 data for generated attachments
   dataUrl?: string; // Data URL for thumbnail preview
   file?: File; // File object for user uploads
+  size?: number; // File size for display
+  // For compatibility with FilePreview component
+  attachmentId?: string;
+  partId?: string;
 }
 
 function Compose() {
   const { currentProfile } = useProfile();
+  const { searchContacts } = useContacts();
   const [to, setTo] = useState('');
+  const [showContactDropdown, setShowContactDropdown] = useState(false);
+  const [filteredContacts, setFilteredContacts] = useState<Contact[]>([]);
   const [subject, setSubject] = useState('');
   const [newBodyHtml, setNewBodyHtml] = useState(''); // User's editable message (now HTML)
   const [originalEmailHtml, setOriginalEmailHtml] = useState(''); // Pre-filled HTML content
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
-  const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
-  const [previewAttachment, setPreviewAttachment] = useState<AttachmentItem | null>(null);
+  const [previewFile, setPreviewFile] = useState<AttachmentItem | null>(null);
   
   // Thread-related state
   const [isReply, setIsReply] = useState(false);
@@ -103,7 +104,8 @@ function Compose() {
           name: att.name,
           mimeType: att.mimeType,
           data: att.data,
-          dataUrl: att.dataUrl
+          dataUrl: att.dataUrl,
+          size: att.size || 0
         })));
       }
     }
@@ -255,7 +257,8 @@ function Compose() {
       const newAttachments = fileList.map(file => ({
         name: file.name,
         mimeType: file.type || 'application/octet-stream',
-        file: file
+        file: file,
+        size: file.size
       }));
       setAttachments(prev => [...prev, ...newAttachments]);
     }
@@ -277,52 +280,70 @@ function Compose() {
 
   // Function to handle attachment preview
   const handleAttachmentPreview = (attachment: AttachmentItem) => {
-    setPreviewAttachment(attachment);
-    setIsPreviewModalOpen(true);
+    setPreviewFile(attachment);
+  };
+
+  // Contact dropdown handlers
+  const handleToInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setTo(value);
+    
+    // Update filtered contacts based on input
+    const contacts = searchContacts(value, 5);
+    setFilteredContacts(contacts);
+    setShowContactDropdown(value.trim().length > 0 && contacts.length > 0);
+  };
+
+  const handleContactSelect = (contact: Contact) => {
+    setTo(contact.email);
+    setShowContactDropdown(false);
+    setFilteredContacts([]);
+  };
+
+  const handleToInputFocus = () => {
+    if (to.trim().length > 0) {
+      const contacts = searchContacts(to, 5);
+      setFilteredContacts(contacts);
+      setShowContactDropdown(contacts.length > 0);
+    }
+  };
+
+  const handleToInputBlur = () => {
+    // Delay hiding dropdown to allow click on contact
+    setTimeout(() => {
+      setShowContactDropdown(false);
+    }, 150);
   };
 
   // Function to render attachment preview
   const renderAttachmentPreview = (attachment: AttachmentItem, index: number) => {
-    const isImage = attachment.mimeType.startsWith('image/');
-    const previewSrc = attachment.dataUrl || (attachment.file ? URL.createObjectURL(attachment.file) : null);
-    
+    // Create a compatible attachment object for FileThumbnail
+    const compatibleAttachment = {
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      size: attachment.size || attachment.file?.size || 0,
+      attachmentId: attachment.attachmentId,
+      partId: attachment.partId
+    };
+
     return (
       <div key={index} className="flex items-center p-3 border border-gray-200 rounded-lg bg-gray-50">
         {/* Thumbnail */}
         <div className="flex-shrink-0 mr-3">
-          {isImage && previewSrc ? (
-            <div className="relative group">
-              <img 
-                src={previewSrc} 
-                alt={attachment.name}
-                className="w-12 h-12 object-cover rounded border border-gray-300"
-              />
-              {/* Preview button overlay */}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  handleAttachmentPreview(attachment);
-                }}
-                className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded"
-                title="Preview image"
-              >
-                <Eye size={16} className="text-white" />
-              </button>
-            </div>
-          ) : (
-            <div className="w-12 h-12 bg-gray-200 rounded border border-gray-300 flex items-center justify-center">
-              <Paperclip size={16} className="text-gray-500" />
-            </div>
-          )}
+          <FileThumbnail
+            attachment={compatibleAttachment}
+            emailId="compose" // Dummy emailId for compose mode
+            size="small"
+            showPreviewButton={true}
+            onPreviewClick={() => handleAttachmentPreview(attachment)}
+          />
         </div>
         
         {/* File info */}
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-gray-900 truncate">{attachment.name}</p>
           <p className="text-xs text-gray-500">
-            {attachment.file ? formatFileSize(attachment.file.size) : 'Generated attachment'}
+            {attachment.file ? formatFileSize(attachment.file.size) : attachment.size ? formatFileSize(attachment.size) : 'Generated attachment'}
             {attachment.mimeType !== 'application/octet-stream' && (
               <span className="ml-2">• {attachment.mimeType}</span>
             )}
@@ -414,15 +435,57 @@ function Compose() {
           
           <form onSubmit={handleSubmit}>
             <div className="p-4 space-y-4">
-              <div className="flex items-center border-b border-gray-200 py-2">
-                <span className="w-20 text-gray-500 text-sm">To:</span>
-                <input
-                  type="text"
-                  value={to}
-                  onChange={(e) => setTo(e.target.value)}
-                  className="flex-1 outline-none text-sm"
-                  placeholder="Recipients"
-                />
+              <div className="relative">
+                <div className="flex items-center border-b border-gray-200 py-2">
+                  <span className="w-20 text-gray-500 text-sm">To:</span>
+                  <input
+                    type="text"
+                    value={to}
+                    onChange={handleToInputChange}
+                    onFocus={handleToInputFocus}
+                    onBlur={handleToInputBlur}
+                    className="flex-1 outline-none text-sm"
+                    placeholder="Recipients"
+                  />
+                </div>
+                
+                {/* Contact dropdown */}
+                {showContactDropdown && filteredContacts.length > 0 && (
+                  <div className="absolute top-full left-0 right-0 z-50 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                    {filteredContacts.map((contact, index) => (
+                      <div
+                        key={`${contact.email}-${index}`}
+                        onClick={() => handleContactSelect(contact)}
+                        className="flex items-center px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                      >
+                        {contact.photoUrl ? (
+                          <img
+                            src={contact.photoUrl}
+                            alt={contact.name}
+                            className="w-8 h-8 rounded-full mr-3 flex-shrink-0"
+                          />
+                        ) : (
+                          <div className="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-sm font-medium mr-3 flex-shrink-0">
+                            {getProfileInitial(contact.name, contact.email)}
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-gray-900 truncate">
+                              {contact.name}
+                            </span>
+                            {contact.isFrequentlyContacted && (
+                              <span className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded-full flex-shrink-0">
+                                Frequent
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-sm text-gray-500 truncate">{contact.email}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
               
               <div className="flex items-center border-b border-gray-200 py-2">
@@ -683,32 +746,72 @@ function Compose() {
       )}
 
       {/* Attachment Preview Modal */}
-      <Modal
-        isOpen={isPreviewModalOpen}
-        onClose={() => {
-          setIsPreviewModalOpen(false);
-          setPreviewAttachment(null);
-        }}
-        title={previewAttachment?.name || 'Attachment Preview'}
-        size="lg"
-      >
-        {previewAttachment && previewAttachment.mimeType.startsWith('image/') && (
-          <div className="p-4 flex items-center justify-center">
-            <img
-              src={previewAttachment.dataUrl || (previewAttachment.file ? URL.createObjectURL(previewAttachment.file) : '')}
-              alt={previewAttachment.name}
-              className="max-w-full max-h-[70vh] object-contain"
-            />
+      {previewFile && (
+        <Modal
+          isOpen={!!previewFile}
+          onClose={() => setPreviewFile(null)}
+          title={previewFile.name || 'Attachment Preview'}
+          size="lg"
+        >
+          <div className="p-4">
+            {/* Image Preview */}
+            {previewFile.mimeType.startsWith('image/') && (
+              <div className="flex items-center justify-center">
+                <img
+                  src={previewFile.dataUrl || (previewFile.file ? URL.createObjectURL(previewFile.file) : '')}
+                  alt={previewFile.name}
+                  className="max-w-full max-h-[70vh] object-contain rounded"
+                />
+              </div>
+            )}
+            
+            {/* PDF Preview */}
+            {previewFile.mimeType === 'application/pdf' && previewFile.file && (
+              <div className="flex items-center justify-center">
+                <iframe
+                  src={URL.createObjectURL(previewFile.file)}
+                  className="w-full h-[70vh] border rounded"
+                  title={previewFile.name}
+                />
+              </div>
+            )}
+            
+            {/* Text/Code Preview */}
+            {(previewFile.mimeType.startsWith('text/') || 
+              previewFile.mimeType === 'application/json' ||
+              previewFile.mimeType === 'application/xml') && previewFile.file && (
+              <div className="bg-gray-50 rounded p-4 max-h-[70vh] overflow-auto">
+                <pre className="text-sm whitespace-pre-wrap">
+                  {/* File content would be loaded here */}
+                  <span className="text-gray-500">Text preview available when file is opened</span>
+                </pre>
+              </div>
+            )}
+            
+            {/* Other file types */}
+            {!previewFile.mimeType.startsWith('image/') && 
+             previewFile.mimeType !== 'application/pdf' &&
+             !previewFile.mimeType.startsWith('text/') &&
+             previewFile.mimeType !== 'application/json' &&
+             previewFile.mimeType !== 'application/xml' && (
+              <div className="text-center text-gray-500 py-8">
+                <Paperclip size={48} className="mx-auto mb-4" />
+                <p>Preview not available for this file type.</p>
+                <p className="text-sm mt-2">{previewFile.name}</p>
+                <p className="text-xs text-gray-400 mt-1">{previewFile.mimeType}</p>
+              </div>
+            )}
+            
+            {/* File Info */}
+            <div className="mt-4 pt-4 border-t border-gray-200">
+              <div className="flex justify-between items-center text-sm text-gray-600">
+                <span>Size: {previewFile.file ? formatFileSize(previewFile.file.size) : previewFile.size ? formatFileSize(previewFile.size) : 'Unknown'}</span>
+                <span>Type: {previewFile.mimeType}</span>
+              </div>
+            </div>
           </div>
-        )}
-        {previewAttachment && !previewAttachment.mimeType.startsWith('image/') && (
-          <div className="p-4 text-center text-gray-500">
-            <Paperclip size={48} className="mx-auto mb-4" />
-            <p>Preview not available for this file type.</p>
-            <p className="text-sm mt-2">{previewAttachment.name}</p>
-          </div>
-        )}
-      </Modal>
+        </Modal>
+      )}
     </>
   );
 }
