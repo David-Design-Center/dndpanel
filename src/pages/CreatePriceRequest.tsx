@@ -623,7 +623,6 @@ www.dnddesigncenter.com`;
         createdBy: user?.email || 'anonymous',
         teams,
         description: projectNotes,
-        dueDate: undefined, // Could add a due date field in the form later
         orderNumber,
         customerName: '', // Could add customer name field later
         orderDate: new Date().toISOString().split('T')[0],

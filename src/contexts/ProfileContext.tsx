@@ -192,20 +192,26 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     try {
       devLog.debug('ProfileContext: Updating signature for profile:', profileId);
       
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('profiles')
         .update({
           signature: signature
         })
         .eq('id', profileId)
-        .select();
+        .select()
 
       if (error) {
         devLog.error('ProfileContext: Supabase error:', error);
         throw error;
       }
 
-      devLog.debug('ProfileContext: Signature update successful');
+      // This is a crucial check. If RLS prevents the select after update, `data` will be an empty array.
+      if (!data || data.length === 0) {
+        devLog.warn('ProfileContext: Signature update did not return data. This is likely a Row Level Security (RLS) issue where the user lacks SELECT permission on the updated row.');
+        throw new Error('Save failed due to a permission issue. The signature may have been saved, but it could not be verified. Please check the Row Level Security SELECT policy on the "profiles" table for authenticated users.');
+      }
+
+      devLog.debug('ProfileContext: Signature update successful, returned data:', data[0]);
 
       // Update the profiles array
       setProfiles(prevProfiles => 

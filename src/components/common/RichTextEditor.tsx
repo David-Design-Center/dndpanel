@@ -1,3 +1,4 @@
+// Update the imports to include Upload and Info icons
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { 
   Bold, 
@@ -12,7 +13,8 @@ import {
   Highlighter,
   ChevronDown,
   Image,
-  FileSignature
+  FileSignature,
+  Globe,
 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Toggle } from '../ui/toggle';
@@ -34,7 +36,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
   onChange,
   placeholder = "Compose your message...",
   className,
-  minHeight = "200px",
+  minHeight = "400px",
   disabled = false,
   signature = '',
   showSignatureButton = false
@@ -43,6 +45,9 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [showHighlightColors, setShowHighlightColors] = useState(false);
   const [showImageSizes, setShowImageSizes] = useState(false);
+  const [showImageUrlDialog, setShowImageUrlDialog] = useState(false); // Add this state
+  const [imageUrl, setImageUrl] = useState(''); // Add this state
+  const [savedRange, setSavedRange] = useState<Range | null>(null);
   const [selectedImageSize, setSelectedImageSize] = useState('medium');
   const [isFormatted, setIsFormatted] = useState({
     bold: false,
@@ -54,15 +59,12 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
     alignCenter: false,
     alignRight: false
   });
-  // Show Gmail compatibility tip for images
-  const [showGmailTip, setShowGmailTip] = useState(false);
 
   // Image size options
   const imageSizes = [
     { name: 'Small', value: 'small', width: '200px' },
     { name: 'Medium', value: 'medium', width: '400px' },
     { name: 'Large', value: 'large', width: '600px' },
-    { name: 'Full Width', value: 'full', width: '100%' }
   ];
 
   // Predefined highlight colors
@@ -148,16 +150,13 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
       if (showImageSizes && !target.closest('.image-size-picker')) {
         setShowImageSizes(false);
       }
-      if (showGmailTip && !target.closest('.gmail-tip')) {
-        setShowGmailTip(false);
-      }
     };
 
     document.addEventListener('mousedown', handleClickOutside);
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [showHighlightColors, showImageSizes, showGmailTip]);
+  }, [showHighlightColors, showImageSizes]);
 
   // Handle link insertion
   const insertLink = useCallback(() => {
@@ -211,18 +210,24 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
   const createGmailCompatibleImage = useCallback((imageSrc: string, fileName: string, sizeValue: string) => {
     const sizeConfig = imageSizes.find(size => size.value === sizeValue) || imageSizes[1];
     
+    // Create wrapper div for alignment control
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = [
+      'margin: 10px 0',
+      'display: block'
+    ].join('; ') + ';';
+    
     // Create image element with Gmail-optimized attributes
     const img = document.createElement('img');
     img.src = imageSrc;
     img.alt = fileName;
     
-    // Gmail-compatible inline styles (exact match to Gmail Compose behavior)
+    // Gmail-compatible inline styles (removed margin: auto for alignment control)
     const styles = [
       `max-width: ${sizeConfig.width}`,
       `width: ${sizeConfig.value === 'full' ? '100%' : sizeConfig.width}`,
       'height: auto',
-      'display: block',
-      'margin: 10px auto',
+      'display: inline-block',
       'border-radius: 4px',
       'box-sizing: border-box',
       'border: none',
@@ -242,7 +247,10 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
     // Set title for accessibility
     img.title = fileName;
     
-    return img;
+    // Append image to wrapper
+    wrapper.appendChild(img);
+    
+    return wrapper;
   }, [imageSizes]);
 
   // Handle text highlighting
@@ -272,9 +280,32 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
     }
   }, [disabled, executeCommand]);
 
+  // Save selection before opening image menus/dialogs to prevent losing cursor position
+  const saveSelection = useCallback(() => {
+    const selection = window.getSelection();
+    if (selection && selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      // IMPORTANT: Only save the range if it's inside the editor.
+      if (editorRef.current && editorRef.current.contains(range.commonAncestorContainer)) {
+        setSavedRange(range.cloneRange());
+        return;
+      }
+    }
+    // If no valid selection is found in the editor, clear it.
+    setSavedRange(null);
+  }, []);
+
+  // Handle opening the image size picker menu
+  const handleImageMenuOpen = useCallback(() => {
+    if (disabled) return;
+    saveSelection();
+    setShowImageSizes(true);
+  }, [disabled, saveSelection]);
+
   // Handle image insertion
   const insertImage = useCallback(() => {
     if (disabled) return;
+    // The selection range should have been saved by handleImageMenuOpen.
     imageInputRef.current?.click();
   }, [disabled]);
 
@@ -287,37 +318,41 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
     reader.onload = (event) => {
       const imageSrc = event.target?.result as string;
       if (imageSrc && editorRef.current) {
-        // Create Gmail-compatible image
-        const img = createGmailCompatibleImage(imageSrc, file.name, selectedImageSize);
-        
-        // Insert image at cursor position
+        // Create Gmail-compatible image wrapper
+        const imageWrapper = createGmailCompatibleImage(imageSrc, file.name, selectedImageSize);
+
+        // Restore focus and insert at saved position
+        editorRef.current.focus();
         const selection = window.getSelection();
-        if (selection && selection.rangeCount > 0) {
-          const range = selection.getRangeAt(0);
+        if (savedRange && selection) {
+          selection.removeAllRanges();
+          selection.addRange(savedRange);
+
+          const range = savedRange;
           range.deleteContents();
-          range.insertNode(img);
-          
-          // Move cursor after image
-          range.setStartAfter(img);
-          range.setEndAfter(img);
+          range.insertNode(imageWrapper);
+
+          // Move cursor after image wrapper
+          range.setStartAfter(imageWrapper);
+          range.setEndAfter(imageWrapper);
           selection.removeAllRanges();
           selection.addRange(range);
         } else {
-          // Fallback: append to end
-          editorRef.current.appendChild(img);
+          // Fallback: append to end if no valid range was saved
+          editorRef.current.appendChild(imageWrapper);
         }
-        
+
         handleInput();
-        editorRef.current.focus();
+        setSavedRange(null); // Clear the saved range
       }
     };
     reader.readAsDataURL(file);
-    
+
     // Reset input
     if (imageInputRef.current) {
       imageInputRef.current.value = '';
     }
-  }, [handleInput, selectedImageSize, createGmailCompatibleImage]);
+  }, [handleInput, selectedImageSize, createGmailCompatibleImage, savedRange]);
 
   // Handle paste to clean up formatting and handle images
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
@@ -333,24 +368,24 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
           reader.onload = (event) => {
             const imageSrc = event.target?.result as string;
             if (imageSrc && editorRef.current) {
-              // Create Gmail-compatible image
-              const img = createGmailCompatibleImage(imageSrc, 'Pasted image', selectedImageSize);
+              // Create Gmail-compatible image wrapper
+              const imageWrapper = createGmailCompatibleImage(imageSrc, 'Pasted image', selectedImageSize);
               
-              // Insert image at cursor position
+              // Insert image wrapper at cursor position
               const selection = window.getSelection();
               if (selection && selection.rangeCount > 0) {
                 const range = selection.getRangeAt(0);
                 range.deleteContents();
-                range.insertNode(img);
+                range.insertNode(imageWrapper);
                 
-                // Move cursor after image
-                range.setStartAfter(img);
-                range.setEndAfter(img);
+                // Move cursor after image wrapper
+                range.setStartAfter(imageWrapper);
+                range.setEndAfter(imageWrapper);
                 selection.removeAllRanges();
                 selection.addRange(range);
               } else {
                 // Fallback: append to end
-                editorRef.current.appendChild(img);
+                editorRef.current.appendChild(imageWrapper);
               }
               
               handleInput();
@@ -444,16 +479,17 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
       imageElement.className = `inline-image-${newSize}`;
       imageElement.setAttribute('data-size', newSize);
       
-      // Update inline styles for Gmail compatibility
+      // Update inline styles for Gmail compatibility (no margin since wrapper handles alignment)
       const styles = [
         `max-width: ${sizeConfig.width}`,
         `width: ${sizeConfig.value === 'full' ? '100%' : sizeConfig.width}`,
         'height: auto',
-        'display: block',
-        'margin: 10px auto',
+        'display: inline-block',
         'border-radius: 4px',
         'box-sizing: border-box',
-        'border: none'
+        'border: none',
+        'vertical-align: top',
+        'outline: none'
       ];
       
       imageElement.style.cssText = styles.join('; ') + ';';
@@ -464,6 +500,13 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
       console.log(`📐 Changed image size to: ${newSize}`);
     }
   }, [disabled, handleInput, imageSizes]);
+
+  // Handle opening the URL image dialog
+  const handleInsertImageUrl = useCallback(() => {
+    if (disabled) return;
+    saveSelection();
+    setShowImageUrlDialog(true);
+  }, [disabled, saveSelection]);
 
   return (
     <div className={cn("border border-gray-200 rounded-lg overflow-hidden rich-text-editor", className)}>
@@ -629,7 +672,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
               type="button"
               size="sm"
               variant="ghost"
-              onClick={() => setShowImageSizes(!showImageSizes)}
+              onClick={handleImageMenuOpen}
               disabled={disabled}
               title="Insert Image"
               className="h-8 px-2 relative"
@@ -689,53 +732,115 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
                     </button>
                   ))}
                 </div>
-                <div className="border-t border-gray-200 mt-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowImageSizes(false);
-                      insertImage();
-                    }}
-                    className="w-full text-xs px-2 py-1 text-blue-600 hover:bg-blue-50 rounded border border-blue-200"
-                  >
-                    Insert New Image
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowGmailTip(!showGmailTip);
-                      setShowImageSizes(false);
-                    }}
-                    className="w-full text-xs px-2 py-1 mt-1 text-gray-600 hover:bg-gray-50 rounded border border-gray-200"
-                  >
-                    ℹ️ Gmail Compatibility
-                  </button>
-                </div>
-              </div>
-            )}
-            
-            {/* Gmail compatibility tip */}
-            {showGmailTip && (
-              <div className="absolute top-full left-0 mt-1 bg-blue-50 border border-blue-200 rounded-lg shadow-lg p-3 z-20 max-w-xs text-xs gmail-tip">
-                <div className="font-medium text-blue-800 mb-2">📧 Enhanced Gmail Inline Images</div>
-                <div className="text-blue-700 space-y-1">
-                  <p>✅ <strong>Our app:</strong> Perfect inline image display</p>
-                  <p>📧 <strong>All email clients:</strong> Images sent with RFC-compliant MIME structure</p>
-                  <p>🔄 <strong>Gmail, Outlook, Apple Mail:</strong> Full compatibility with multipart/related + CID attachments</p>
-                  <p className="text-blue-600 mt-2">💡 <strong>Technical:</strong> Uses multipart/alternative structure with proper Content-ID headers for maximum compatibility!</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowGmailTip(false)}
-                  className="mt-2 text-blue-600 hover:text-blue-800 underline"
-                >
-                  Got it!
-                </button>
               </div>
             )}
           </div>
+          
+          {/* Globe Icon for URL Image */}
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={handleInsertImageUrl}
+            disabled={disabled}
+            title="Insert Image from URL"
+            className="h-8 px-2"
+          >
+            <Globe size={14} />
+          </Button>
         </div>
       </div>
+
+      {/* URL Image Dialog */}
+      {showImageUrlDialog && (
+        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold mb-4">Insert Image from URL</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Image URL
+                </label>
+                <input
+                  type="url"
+                  value={imageUrl}
+                  onChange={(e) => setImageUrl(e.target.value)}
+                  placeholder="https://example.com/image.jpg"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Size
+                </label>
+                <select
+                  value={selectedImageSize}
+                  onChange={(e) => setSelectedImageSize(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {imageSizes.map((size) => (
+                    <option key={size.value} value={size.value}>
+                      {size.name} ({size.width})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSavedRange(null);
+                    setShowImageUrlDialog(false);
+                    setImageUrl('');
+                  }}
+                  className="px-4 py-2 text-gray-600 hover:text-gray-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (imageUrl && editorRef.current) {
+                      const imageWrapper = createGmailCompatibleImage(imageUrl, 'URL Image', selectedImageSize);
+                      
+                      // Restore the saved selection range
+                      if (savedRange && editorRef.current) {
+                        const selection = window.getSelection();
+                        selection?.removeAllRanges();
+                        selection?.addRange(savedRange);
+                        
+                        const range = savedRange;
+                        range.deleteContents();
+                        range.insertNode(imageWrapper);
+                        range.setStartAfter(imageWrapper);
+                        range.setEndAfter(imageWrapper);
+                        
+                        // Update selection
+                        if (selection) {
+                          selection.removeAllRanges();
+                          selection.addRange(range);
+                        }
+                      } else {
+                        editorRef.current.appendChild(imageWrapper);
+                      }
+                      handleInput();
+                      editorRef.current.focus();
+                      setImageUrl('');
+                      setShowImageUrlDialog(false);
+                      setSavedRange(null);
+                    }
+                  }}
+                  disabled={!imageUrl.trim()}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Insert Image
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Editor */}
       <div

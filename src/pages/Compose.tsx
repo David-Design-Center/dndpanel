@@ -509,7 +509,7 @@ function Compose() {
                   value={newBodyHtml}
                   onChange={setNewBodyHtml}
                   placeholder="Compose your message..."
-                  minHeight="200px"
+                  minHeight="400px"
                   disabled={isSending}
                 />
               </div>

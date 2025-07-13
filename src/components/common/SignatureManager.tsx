@@ -171,7 +171,7 @@ function SignatureManager() {
           <RichTextEditor
             value={signature}
             onChange={setSignature}
-            minHeight="200px"
+            minHeight="300px"
             disabled={isSaving}
           />
         </div>

@@ -418,19 +418,6 @@ function CreateCustomerOrder() {
                 <p className="mt-1 text-sm text-red-600 error-message">{errors.orderDate}</p>
               )}
             </div>
-            
-            <div>
-              <label htmlFor="expected-due-date" className="block text-sm font-medium text-gray-700 mb-1">
-                Expected Due Date
-              </label>
-              <input
-                type="date"
-                id="expected-due-date"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                value={expectedDueDate}
-                onChange={(e) => setExpectedDueDate(e.target.value)}
-              />
-            </div>
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
