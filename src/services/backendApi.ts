@@ -262,14 +262,11 @@ const convertRowToPriceRequest = (row: any): PriceRequest => {
     createdBy: row.created_by,
     teams: row.teams || [],
     description: row.description,
-    dueDate: row.due_date,
     threadId: row.thread_id,
     orderNumber: row.order_number,
     customerName: row.customer_name,
     orderDate: row.order_date,
-    expectedDueDate: row.expected_due_date,
     orderAmount: row.order_amount ? parseFloat(row.order_amount) : undefined,
-    paymentOption: row.payment_option,
     paymentStatus: row.payment_status,
     productDetails: row.product_details,
     user: row.user_email,
@@ -294,12 +291,10 @@ const convertRowToCustomerOrder = (row: any): CustomerOrder => {
     orderNumber: row.order_number,
     customerName: row.customer_name,
     orderDate: row.order_date,
-    expectedDueDate: row.expected_due_date,
     orderAmount: row.order_amount ? parseFloat(row.order_amount) : undefined,
     paymentOption: row.payment_option,
     paymentStatus: row.payment_status,
     productDetails: row.product_details,
-    user: row.user_email,
     depositAmount: row.deposit_amount ? parseFloat(row.deposit_amount) : undefined,
     paymentsHistory: row.payments_history || [],
     customer: {
@@ -367,15 +362,12 @@ const convertPriceRequestToRow = (request: Omit<PriceRequest, 'id' | 'date'>) =>
     order_number: request.orderNumber || null,
     customer_name: request.customerName || null,
     order_date: request.orderDate || null,
-    expected_due_date: request.expectedDueDate || null,
     order_amount: request.orderAmount || null,
     payment_option: request.paymentOption || null,
     payment_status: request.paymentStatus || null,
     product_details: request.productDetails || null,
     user_email: request.user || null,
     teams: request.teams || [],
-    description: request.description || null,
-    due_date: request.dueDate || null,
     thread_id: request.threadId || null,
     deposit_amount: request.depositAmount || null,
     payments_history: request.paymentsHistory || null
@@ -1082,12 +1074,10 @@ export const fetchPriceRequests = async (forceRefresh: boolean = false): Promise
             }
           ],
           description: 'Bathroom remodel',
-          dueDate: new Date(mockDate.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString(),
           threadId: 'mock_thread_main_12345',
           orderNumber: 'ORD-13322',
           customerName: 'Bright S.',
           orderDate: '2025-05-15',
-          expectedDueDate: '2025-06-27',
           orderAmount: 6000,
           paymentOption: 'Installments',
           paymentStatus: 'Unpaid',
@@ -1294,15 +1284,12 @@ export const updatePriceRequest = async (
     if (updates.orderNumber !== undefined) rowUpdates.order_number = updates.orderNumber;
     if (updates.customerName !== undefined) rowUpdates.customer_name = updates.customerName;
     if (updates.orderDate !== undefined) rowUpdates.order_date = updates.orderDate;
-    if (updates.expectedDueDate !== undefined) rowUpdates.expected_due_date = updates.expectedDueDate;
     if (updates.orderAmount !== undefined) rowUpdates.order_amount = updates.orderAmount;
     if (updates.paymentOption !== undefined) rowUpdates.payment_option = updates.paymentOption;
     if (updates.paymentStatus !== undefined) rowUpdates.payment_status = updates.paymentStatus;
     if (updates.productDetails !== undefined) rowUpdates.product_details = updates.productDetails;
     if (updates.user !== undefined) rowUpdates.user_email = updates.user;
     if (updates.teams !== undefined) rowUpdates.teams = updates.teams;
-    if (updates.description !== undefined) rowUpdates.description = updates.description;
-    if (updates.dueDate !== undefined) rowUpdates.due_date = updates.dueDate;
     if (updates.threadId !== undefined) rowUpdates.thread_id = updates.threadId;
     if (updates.depositAmount !== undefined) rowUpdates.deposit_amount = updates.depositAmount;
     if (updates.paymentsHistory !== undefined) rowUpdates.payments_history = updates.paymentsHistory;

@@ -7,7 +7,8 @@ import CollapsibleSection from '../components/common/CollapsibleSection';
 import InvoicePrintView, { 
   Invoice, 
   InvoiceLineItem, 
-  calculateRowTotal, 
+  calculateRowTotal,
+  calculatePaymentMethodTotals,
   formatCurrency 
 } from '../components/InvoicePrintView';
 
@@ -62,7 +63,7 @@ function InvoiceGenerator({ orderId: propOrderId, onClose, isModal = false }: In
     total: 0,
     deposit: 0,
     balance: 0,
-    payments: []
+    payments: [] 
   });
   
   // Load customer order data if orderId is provided
@@ -189,7 +190,11 @@ function InvoiceGenerator({ orderId: propOrderId, onClose, isModal = false }: In
       ...prev,
       payments: [
         ...prev.payments,
-        { date: new Date().toISOString().split('T')[0], amount: 0 }
+        { 
+          date: new Date().toISOString().split('T')[0], 
+          amount: 0, 
+          method: 'cash' 
+        }
       ]
     }));
   };
@@ -656,22 +661,36 @@ www.dnddesigncenter.com`;
                   <div className="space-y-2">
                     {invoice.payments.map((payment, index) => (
                       <div key={index} className="flex items-center space-x-2 p-2 border border-gray-200 rounded">
-                        <input
-                          type="date"
-                          className="flex-1 px-1 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                          value={payment.date}
-                          onChange={(e) => handlePaymentChange(index, 'date', e.target.value)}
-                        />
-                        <div className="relative">
+                        <div className="w-1/4">
+                          <input
+                            type="date"
+                            className="w-full px-1 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            value={payment.date}
+                            onChange={(e) => handlePaymentChange(index, 'date', e.target.value)}
+                          />
+                        </div>
+                        <div className="w-1/4 relative">
                           <span className="absolute left-2 top-1/2 transform -translate-y-1/2 text-sm">$</span>
                           <input
                             type="number"
                             step="0.01"
-                            className="w-24 pl-6 pr-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            className="w-full pl-6 pr-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
                             value={payment.amount}
                             onChange={(e) => handlePaymentChange(index, 'amount', parseFloat(e.target.value) || 0)}
                             min="0"
                           />
+                        </div>
+                        <div className="w-1/3">
+                          <select
+                            value={payment.method || 'cash'}
+                            onChange={(e) => handlePaymentChange(index, 'method', e.target.value)}
+                            className="w-full px-1 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          >
+                            <option value="cash">Cash</option>
+                            <option value="cheque">Cheque</option>
+                            <option value="card">Card</option>
+                            <option value="other">Other</option>
+                          </select>
                         </div>
                         <button
                           type="button"
@@ -714,6 +733,46 @@ www.dnddesigncenter.com`;
                     <span>Deposit:</span>
                     <span>{formatCurrency(invoice.deposit)}</span>
                   </div>
+                  {invoice.payments.length > 0 && (
+                    <>
+                      <div className="pt-2">
+                        <div className="flex justify-between text-xs font-medium text-gray-700 pt-1">
+                          <span>Payments by method:</span>
+                        </div>
+                        {(() => {
+                          const methodTotals = calculatePaymentMethodTotals(invoice.payments);
+                          return (
+                            <>
+                              {methodTotals.cash > 0 && (
+                                <div className="flex justify-between text-xs pl-4">
+                                  <span>Cash:</span>
+                                  <span>{formatCurrency(methodTotals.cash)}</span>
+                                </div>
+                              )}
+                              {methodTotals.cheque > 0 && (
+                                <div className="flex justify-between text-xs pl-4">
+                                  <span>Cheque:</span>
+                                  <span>{formatCurrency(methodTotals.cheque)}</span>
+                                </div>
+                              )}
+                              {methodTotals.card > 0 && (
+                                <div className="flex justify-between text-xs pl-4">
+                                  <span>Card:</span>
+                                  <span>{formatCurrency(methodTotals.card)}</span>
+                                </div>
+                              )}
+                              {methodTotals.other > 0 && (
+                                <div className="flex justify-between text-xs pl-4">
+                                  <span>Other:</span>
+                                  <span>{formatCurrency(methodTotals.other)}</span>
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </>
+                  )}
                   <div className="flex justify-between font-bold text-lg pt-2 border-t">
                     <span>Balance:</span>
                     <span>{formatCurrency(invoice.balance)}</span>

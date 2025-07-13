@@ -33,7 +33,7 @@ function OrdersSpreadsheet({ orders, onGenerateInvoice }: OrdersSpreadsheetProps
 
   // Sort and paginate orders
   const sortedOrders = [...orders].sort((a, b) => {
-    if (sortField === 'orderDate' || sortField === 'expectedDueDate') {
+    if (sortField === 'orderDate') {
       const aDate = parseDate(a[sortField] as string);
       const bDate = parseDate(b[sortField] as string);
       return sortDirection === 'asc' 
@@ -193,9 +193,6 @@ function OrdersSpreadsheet({ orders, onGenerateInvoice }: OrdersSpreadsheetProps
                   {order.orderDate || '-'}
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
-                  {order.expectedDueDate || '-'}
-                </td>
-                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                   {order.orderAmount ? (
                     <span className="flex items-center">
                       <DollarSign size={14} className="mr-1" />
@@ -235,7 +232,7 @@ function OrdersSpreadsheet({ orders, onGenerateInvoice }: OrdersSpreadsheetProps
             
             {paginatedOrders.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-4 py-4 text-center text-sm text-gray-500">
+                <td colSpan={8} className="px-4 py-4 text-center text-sm text-gray-500">
                   No customer orders found
                 </td>
               </tr>

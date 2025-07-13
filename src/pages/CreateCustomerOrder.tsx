@@ -24,6 +24,7 @@ interface CustomerOrderItem {
 interface PaymentEntry {
   date: string;
   amount: number;
+  method: 'cash' | 'cheque' | 'card' | 'other';
 }
 
 function CreateCustomerOrder() {
@@ -37,7 +38,6 @@ function CreateCustomerOrder() {
   const [customerEmail, setCustomerEmail] = useState('');
   const [customerAddress, setCustomerAddress] = useState('');
   const [orderDate, setOrderDate] = useState(new Date().toISOString().split('T')[0]);
-  const [expectedDueDate, setExpectedDueDate] = useState('');
   const [paymentOption, setPaymentOption] = useState<'Installments' | 'Full payment'>('Full payment');
   const [paymentStatus, setPaymentStatus] = useState<'Unpaid' | 'Paid' | 'Partially Paid'>('Unpaid');
   const [notes, setNotes] = useState('');
@@ -121,7 +121,11 @@ function CreateCustomerOrder() {
   const handleAddPayment = () => {
     setPaymentsHistory([
       ...paymentsHistory,
-      { date: new Date().toISOString().split('T')[0], amount: 0 }
+      { 
+        date: new Date().toISOString().split('T')[0], 
+        amount: 0,
+        method: 'cash' 
+      }
     ]);
   };
 
@@ -231,7 +235,6 @@ function CreateCustomerOrder() {
         order_number: orderNumber,
         customer_name: customerName,
         order_date: orderDate,
-        expected_due_date: expectedDueDate || null,
         order_amount: totalAmount,
         payment_option: paymentOption,
         payment_status: paymentStatus,
@@ -240,7 +243,6 @@ function CreateCustomerOrder() {
         ).join(', '),
         user_email: customerEmail,
         description: notes || null,
-        due_date: expectedDueDate ? new Date(expectedDueDate).toISOString() : null,
         // Store line items as JSON for later retrieval
         teams: lineItems.map(item => ({
           id: item.id,
@@ -499,7 +501,7 @@ function CreateCustomerOrder() {
                   <div className="space-y-2">
                     {paymentsHistory.map((payment, index) => (
                       <div key={index} className="flex items-center gap-3 p-2 bg-white border border-gray-200 rounded-md">
-                        <div className="flex-1">
+                        <div className="flex-grow-0 w-1/4">
                           <input
                             type="date"
                             value={payment.date}
@@ -507,7 +509,7 @@ function CreateCustomerOrder() {
                             className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                           />
                         </div>
-                        <div className="flex-1">
+                        <div className="flex-grow-0 w-1/4">
                           <div className="relative">
                             <span className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-500 text-sm">$</span>
                             <input
@@ -520,6 +522,18 @@ function CreateCustomerOrder() {
                               placeholder="0.00"
                             />
                           </div>
+                        </div>
+                        <div className="flex-grow-0 w-1/3">
+                          <select
+                            value={payment.method}
+                            onChange={(e) => handlePaymentChange(index, 'method', e.target.value as 'cash' | 'cheque' | 'card' | 'other')}
+                            className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="cash">Cash</option>
+                            <option value="cheque">Cheque</option>
+                            <option value="card">Card</option>
+                            <option value="other">Other</option>
+                          </select>
                         </div>
                         <button
                           type="button"

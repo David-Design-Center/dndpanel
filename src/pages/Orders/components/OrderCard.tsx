@@ -81,9 +81,7 @@ function OrderCard({ request, isExpanded, onToggleExpand, onComplete }: OrderCar
               <h4 className="font-medium text-sm text-gray-700">Partner Requests</h4>
               <div className="flex items-center space-x-2">
                 <p className="text-xs text-gray-500">
-                  {request.dueDate ? (
-                    <>Due by {formatDate(request.dueDate)}</>
-                  ) : 'No due date set'}
+                  No due date set
                 </p>
                 {/* Complete Button */}
                 {onComplete && request.type === 'Price Request' && request.status !== 'Completed' && (

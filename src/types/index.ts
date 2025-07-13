@@ -70,6 +70,7 @@ export type OrderStatus = 'Pending' | 'Sent' | 'Reply Received' | 'Completed' | 
 export type OrderType = 'Price Request' | 'Customer Order' | 'Customer Invoice';
 export type PaymentOption = 'Installments' | 'Full payment';
 export type PaymentStatus = 'Unpaid' | 'Paid' | 'Partially Paid';
+export type PaymentMethod = 'cash' | 'cheque' | 'card' | 'other';
 
 export interface Order {
   id: string;
@@ -83,21 +84,23 @@ export interface Order {
   orderNumber?: string;
   customerName?: string;
   orderDate?: string;
-  expectedDueDate?: string;
   orderAmount?: number;
   paymentOption?: PaymentOption;
   paymentStatus?: PaymentStatus;
   productDetails?: string;
   user?: string;
   depositAmount?: number;
-  paymentsHistory?: Array<{ date: string; amount: number; }>;
+  paymentsHistory?: Array<{
+    date: string;
+    amount: number;
+    method?: PaymentMethod;
+  }>;
 }
 
 export interface PriceRequest extends Order {
   type: 'Price Request';
   teams: PriceRequestTeam[];
   description?: string;
-  dueDate?: string;
   threadId?: string;
 }
 

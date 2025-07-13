@@ -12,7 +12,6 @@
       - `order_number` (text)
       - `customer_name` (text)
       - `order_date` (date)
-      - `expected_due_date` (date)
       - `order_amount` (numeric)
       - `payment_option` (text)
       - `payment_status` (text)
@@ -38,7 +37,6 @@ CREATE TABLE IF NOT EXISTS orders (
   order_number text,
   customer_name text,
   order_date date,
-  expected_due_date date,
   order_amount numeric,
   payment_option text,
   payment_status text,

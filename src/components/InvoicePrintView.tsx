@@ -9,6 +9,16 @@ export interface InvoiceLineItem {
   price: number;
 }
 
+// Define payment method type
+export type PaymentMethod = 'cash' | 'cheque' | 'card' | 'other';
+
+// Define payment entry interface
+export interface PaymentEntry {
+  date: string;
+  amount: number;
+  method?: PaymentMethod;
+}
+
 // Define the interface for the invoice
 export interface Invoice {
   poNumber: string;
@@ -27,7 +37,7 @@ export interface Invoice {
   total: number;
   deposit: number;
   balance: number;
-  payments: Array<{ date: string; amount: number }>;
+  payments: PaymentEntry[];
 }
 
 interface InvoicePrintViewProps {
@@ -45,6 +55,15 @@ export const formatCurrency = (amount: number) => {
     style: 'currency',
     currency: 'USD'
   });
+};
+
+// Calculate payment totals by method
+export const calculatePaymentMethodTotals = (payments: PaymentEntry[]) => {
+  return payments.reduce((acc, payment) => {
+    const method = payment.method || 'other';
+    acc[method] += payment.amount;
+    return acc;
+  }, { cash: 0, cheque: 0, card: 0, other: 0 });
 };
 
 function InvoicePrintView({ invoice, innerRef }: InvoicePrintViewProps) {
@@ -434,10 +453,52 @@ function InvoicePrintView({ invoice, innerRef }: InvoicePrintViewProps) {
                     marginBottom: '2px',
                     fontSize: '10px'
                   }}>
-                    <span style={{ fontWeight: '500' }}>{payment.date}</span>
+                    <span style={{ fontWeight: '500' }}>
+                      {payment.date} {payment.method && `(${payment.method.charAt(0).toUpperCase() + payment.method.slice(1)})`}
+                    </span>
                     <span style={{ fontWeight: 'bold' }}>${payment.amount.toFixed(2)}</span>
                   </div>
                 ))}
+                
+                {/* Payment method totals */}
+                {(() => {
+                  const methodTotals = calculatePaymentMethodTotals(invoice.payments);
+                  const hasMultipleMethods = Object.values(methodTotals).filter(t => t > 0).length > 1;
+                  
+                  return hasMultipleMethods && (
+                    <div style={{
+                      marginTop: '4px',
+                      paddingTop: '4px',
+                      borderTop: '1px dashed #eee',
+                      fontSize: '9px'
+                    }}>
+                      {methodTotals.cash > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span>Total Cash:</span>
+                          <span>${methodTotals.cash.toFixed(2)}</span>
+                        </div>
+                      )}
+                      {methodTotals.cheque > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span>Total Cheque:</span>
+                          <span>${methodTotals.cheque.toFixed(2)}</span>
+                        </div>
+                      )}
+                      {methodTotals.card > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span>Total Card:</span>
+                          <span>${methodTotals.card.toFixed(2)}</span>
+                        </div>
+                      )}
+                      {methodTotals.other > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span>Total Other:</span>
+                          <span>${methodTotals.other.toFixed(2)}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>

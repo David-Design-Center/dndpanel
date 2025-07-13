@@ -171,11 +171,6 @@ function Tracker() {
                     Status: {selectedOrder.status}
                   </div>
                 )}
-                {selectedOrder.dueDate && (
-                  <div className="text-xs bg-orange-100 text-orange-800 px-2 py-1 rounded-md">
-                    Due: {new Date(selectedOrder.dueDate).toLocaleDateString()}
-                  </div>
-                )}
               </div>
             </div>
           )}
