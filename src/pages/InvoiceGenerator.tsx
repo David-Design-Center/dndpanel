@@ -11,6 +11,12 @@ import InvoicePrintView, {
   calculatePaymentMethodTotals,
   formatCurrency 
 } from '../components/InvoicePrintView';
+import {
+  fetchInvoiceByOrderId,
+  fetchInvoiceById,
+  saveInvoiceToSupabase
+} from '../services/backendApi';
+import { SupabaseInvoice, SupabaseInvoiceLineItem } from '../types';
 
 // Initialize Supabase client
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
@@ -36,6 +42,7 @@ function InvoiceGenerator({ orderId: propOrderId, onClose, isModal = false }: In
   const [isLoadingOrder, setIsLoadingOrder] = useState(false);
   const [orderLoadError, setOrderLoadError] = useState<string | null>(null);
   const [isSendingToCustomer, setIsSendingToCustomer] = useState(false);
+  const [isSavingInvoice, setIsSavingInvoice] = useState(false);
   
   // State for invoice data
   const [invoice, setInvoice] = useState<Invoice>({
@@ -75,8 +82,48 @@ function InvoiceGenerator({ orderId: propOrderId, onClose, isModal = false }: In
         setIsLoadingOrder(true);
         setOrderLoadError(null);
         
-        console.log('Loading customer order:', orderId);
+        console.log('Loading data for order ID:', orderId);
         
+        // First, check if an invoice already exists for this order
+        const existingInvoice = await fetchInvoiceByOrderId(orderId);
+        
+        if (existingInvoice) {
+          console.log('Found existing invoice for order:', existingInvoice);
+          
+          // Convert the Supabase invoice format to our component's format
+          const { invoice: supabaseInvoice, lineItems } = existingInvoice;
+          
+          setInvoice({
+            poNumber: supabaseInvoice.po_number || '',
+            date: supabaseInvoice.invoice_date || new Date().toISOString().split('T')[0],
+            customerName: supabaseInvoice.customer_name || '',
+            address: supabaseInvoice.customer_address || '',
+            city: supabaseInvoice.customer_city || '',
+            state: supabaseInvoice.customer_state || '',
+            zip: supabaseInvoice.customer_zip || '',
+            tel1: supabaseInvoice.customer_tel1 || '',
+            tel2: supabaseInvoice.customer_tel2 || '',
+            email: supabaseInvoice.customer_email || '',
+            lineItems: lineItems.map(item => ({
+              id: item.id || crypto.randomUUID(),
+              item: item.item_code || '',
+              description: item.description || '',
+              quantity: Number(item.quantity) || 1,
+              price: Number(item.unit_price) || 0
+            })),
+            subtotal: Number(supabaseInvoice.subtotal) || 0,
+            tax: Number(supabaseInvoice.tax_amount) || 0,
+            total: Number(supabaseInvoice.total_amount) || 0,
+            deposit: Number(supabaseInvoice.deposit_amount) || 0,
+            balance: Number(supabaseInvoice.balance_due) || 0,
+            payments: supabaseInvoice.payments_history || []
+          });
+          
+          setIsLoadingOrder(false);
+          return;
+        }
+        
+        // If no existing invoice, load from customer order data
         const { data, error } = await supabase
           .from('orders')
           .select('*')
@@ -225,6 +272,70 @@ function InvoiceGenerator({ orderId: propOrderId, onClose, isModal = false }: In
     }));
   };
   
+  // Save invoice to Supabase
+  const saveInvoice = async (): Promise<SupabaseInvoice | null> => {
+    try {
+      setIsSavingInvoice(true);
+      
+      // Convert component invoice format to Supabase format
+      const supabaseInvoice: SupabaseInvoice = {
+        po_number: invoice.poNumber,
+        invoice_date: invoice.date,
+        customer_name: invoice.customerName,
+        customer_address: invoice.address,
+        customer_city: invoice.city,
+        customer_state: invoice.state,
+        customer_zip: invoice.zip,
+        customer_tel1: invoice.tel1,
+        customer_tel2: invoice.tel2,
+        customer_email: invoice.email,
+        subtotal: invoice.subtotal,
+        tax_amount: invoice.tax,
+        total_amount: invoice.total,
+        deposit_amount: invoice.deposit,
+        balance_due: invoice.balance,
+        payments_history: invoice.payments
+      };
+      
+      // Convert line items to Supabase format
+      const supabaseLineItems: Omit<SupabaseInvoiceLineItem, 'invoice_id'>[] = 
+        invoice.lineItems.map(item => ({
+          item_code: item.item,
+          description: item.description,
+          quantity: item.quantity,
+          unit_price: item.price,
+          line_total: item.quantity * item.price
+        }));
+      
+      // Save to Supabase
+      const savedInvoice = await saveInvoiceToSupabase(supabaseInvoice, supabaseLineItems);
+      
+      if (!savedInvoice) {
+        throw new Error('Failed to save invoice to database');
+      }
+      
+      return savedInvoice;
+    } catch (error) {
+      console.error('Error saving invoice:', error);
+      throw error;
+    } finally {
+      setIsSavingInvoice(false);
+    }
+  };
+
+  // Handle save invoice button click
+  const handleSaveInvoice = async () => {
+    try {
+      const savedInvoice = await saveInvoice();
+      if (savedInvoice) {
+        alert('Invoice saved successfully');
+      }
+    } catch (error) {
+      console.error('Error saving invoice:', error);
+      alert('Failed to save invoice. Please try again.');
+    }
+  };
+
   // Handle print/download
   const handlePrintInvoice = () => {
     window.print();
@@ -244,6 +355,15 @@ function InvoiceGenerator({ orderId: propOrderId, onClose, isModal = false }: In
 
     try {
       setIsSendingToCustomer(true);
+
+      // First save the invoice to Supabase
+      try {
+        await saveInvoice();
+        console.log('Invoice saved to database before sending');
+      } catch (saveError) {
+        console.error('Warning: Failed to save invoice before sending:', saveError);
+        // Continue with sending - we don't want to block the send if save fails
+      }
 
       // Capture the InvoicePrintView component directly
       const canvas = await html2canvas(invoiceDocumentRef.current, {
@@ -786,29 +906,33 @@ www.dnddesigncenter.com`;
           <div className="flex space-x-3 pt-4">
             <button
               type="button"
+              onClick={handleSaveInvoice}
+              disabled={isSavingInvoice}
+              className="flex-1 px-4 py-2 bg-gray-600 rounded-md text-white font-medium hover:bg-gray-700 disabled:opacity-50 flex items-center justify-center"
+            >
+              {isSavingInvoice ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-white mr-2"></div>
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                    <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                    <polyline points="7 3 7 8 15 8"></polyline>
+                  </svg>
+                  Save Invoice
+                </>
+              )}
+            </button>
+            <button
+              type="button"
               onClick={handlePrintInvoice}
               className="flex-1 px-4 py-2 bg-blue-50 border border-blue-300 rounded-md text-blue-700 font-medium hover:bg-blue-100 flex items-center justify-center"
             >
               <Download size={18} className="mr-2" />
               Print / Download
-            </button>
-            <button
-              type="button"
-              onClick={handleSendToCustomer}
-              disabled={isSendingToCustomer || !invoice.email}
-              className="flex-1 px-4 py-2 bg-green-600 rounded-md text-white font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
-            >
-              {isSendingToCustomer ? (
-                <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-white mr-2"></div>
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <Send size={18} className="mr-2" />
-                  Send to Customer
-                </>
-              )}
             </button>
           </div>
         </div>

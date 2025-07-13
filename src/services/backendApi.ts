@@ -1,4 +1,4 @@
-import { PriceRequest, PriceRequestTeam, OrderStatus, CustomerOrder, Shipment, GeneralDocument } from '../types';
+import { PriceRequest, PriceRequestTeam, OrderStatus, CustomerOrder, Shipment, GeneralDocument, SupabaseInvoice, SupabaseInvoiceLineItem } from '../types';
 import { createClient } from '@supabase/supabase-js';
 import { getUnreadEmails, markEmailAsRead } from './emailService';
 
@@ -72,6 +72,21 @@ const generalDocumentsCache: {
   timestamp: 0
 };
 
+// Cache for invoice by order ID
+const invoiceByOrderIdCache: {
+  [orderId: string]: {
+    data: SupabaseInvoice | null;
+    lineItems: SupabaseInvoiceLineItem[];
+    timestamp: number;
+  };
+} = {};
+
+// Cache for under-deposit invoices
+let underDepositInvoicesCache: {
+  invoices: any[];
+  timestamp: number;
+} | null = null;
+
 // Variable to track the current fetch operation
 let currentFetchPromise: Promise<PriceRequest[]> | null = null;
 let currentCustomerOrdersFetchPromise: Promise<CustomerOrder[]> | null = null;
@@ -80,6 +95,7 @@ let currentMonthlyRevenueFetchPromise: Promise<MonthlyRevenue[]> | null = null;
 let currentRecentOrdersFetchPromise: Promise<RecentOrder[]> | null = null;
 let currentShipmentsFetchPromise: Promise<Shipment[]> | null = null;
 let currentGeneralDocumentsFetchPromise: Promise<GeneralDocument[]> | null = null;
+let currentInvoiceFetchPromise: Promise<SupabaseInvoice | null> | null = null;
 
 // Cache duration: 12 hours in milliseconds
 const CACHE_DURATION_MS = 12 * 60 * 60 * 1000;
@@ -194,6 +210,77 @@ export const clearShipmentsCache = (): void => {
 export const clearGeneralDocumentsCache = (): void => {
   generalDocumentsCache.data = null;
   generalDocumentsCache.timestamp = 0;
+};
+
+/**
+ * Clear the invoice cache for a specific order ID
+ */
+export const clearInvoiceByOrderIdCache = (orderId: string): void => {
+  if (invoiceByOrderIdCache[orderId]) {
+    delete invoiceByOrderIdCache[orderId];
+  }
+};
+
+/**
+ * Fetch invoices that don't have the standard 50% deposit
+ */
+export const fetchUnderDepositInvoices = async (forceRefresh = false): Promise<any[]> => {
+  // Return cached data if valid and not forcing refresh
+  if (!forceRefresh && underDepositInvoicesCache && (Date.now() - underDepositInvoicesCache.timestamp < CACHE_DURATION_MS)) {
+    console.log('Returning cached under-deposit invoices');
+    return underDepositInvoicesCache.invoices;
+  }
+
+  try {
+    // Query invoices where deposit is less than 50% of total amount
+    const { data, error } = await supabase
+      .from('invoices')
+      .select('*')
+      .lt('deposit_amount', supabase.raw('total_amount * 0.5'))
+      .order('invoice_date', { ascending: false });
+    
+    if (error) {
+      console.error('Error fetching under-deposit invoices:', error);
+      throw error;
+    }
+    
+    // Update cache
+    underDepositInvoicesCache = {
+      invoices: data || [],
+      timestamp: Date.now()
+    };
+    
+    console.log(`Fetched ${data?.length || 0} under-deposit invoices`);
+    return data || [];
+  } catch (error) {
+    console.error('Error in fetchUnderDepositInvoices:', error);
+    // If in development or testing, return mock data for easier development
+    if (import.meta.env.DEV) {
+      console.log('Returning mock under-deposit invoices for development');
+      const mockData = [
+        {
+          id: '1',
+          po_number: 'INV-001',
+          invoice_date: '2025-07-15',
+          customer_name: 'Johnson Residence',
+          total_amount: 5000,
+          deposit_amount: 1000,
+          balance_due: 4000
+        },
+        {
+          id: '2',
+          po_number: 'INV-002',
+          invoice_date: '2025-07-12',
+          customer_name: 'Smith Renovation',
+          total_amount: 8500,
+          deposit_amount: 2500,
+          balance_due: 6000
+        }
+      ];
+      return mockData;
+    }
+    throw error;
+  }
 };
 
 /**
@@ -375,6 +462,297 @@ const convertPriceRequestToRow = (request: Omit<PriceRequest, 'id' | 'date'>) =>
 };
 
 /**
+ * Save invoice data to the new Supabase tables
+ * @param invoice The invoice data to save
+ * @param lineItems The line items for this invoice
+ * @returns The saved invoice data with ID, or null if there was an error
+ */
+export const saveInvoiceToSupabase = async (
+  invoice: SupabaseInvoice, 
+  lineItems: Omit<SupabaseInvoiceLineItem, 'invoice_id'>[]
+): Promise<SupabaseInvoice | null> => {
+  try {
+    console.log('Saving invoice to Supabase:', invoice);
+    
+    // Start a transaction (we'll use single requests since we can't use proper transactions)
+    // First, insert or update the invoice
+    let result;
+    
+    if (invoice.id) {
+      // Update existing invoice
+      console.log('Updating existing invoice:', invoice.id);
+      
+      const { data, error } = await supabase
+        .from('invoices')
+        .update({
+          po_number: invoice.po_number,
+          invoice_date: invoice.invoice_date,
+          customer_name: invoice.customer_name,
+          customer_address: invoice.customer_address,
+          customer_city: invoice.customer_city,
+          customer_state: invoice.customer_state,
+          customer_zip: invoice.customer_zip,
+          customer_tel1: invoice.customer_tel1,
+          customer_tel2: invoice.customer_tel2,
+          customer_email: invoice.customer_email,
+          subtotal: invoice.subtotal,
+          tax_amount: invoice.tax_amount,
+          total_amount: invoice.total_amount,
+          deposit_amount: invoice.deposit_amount,
+          balance_due: invoice.balance_due,
+          payments_history: invoice.payments_history
+        })
+        .eq('id', invoice.id)
+        .select()
+        .single();
+      
+      if (error) {
+        console.error('Error updating invoice in Supabase:', error);
+        throw error;
+      }
+      
+      result = data;
+      
+      // Delete existing line items for this invoice
+      const { error: deleteError } = await supabase
+        .from('invoice_line_items')
+        .delete()
+        .eq('invoice_id', invoice.id);
+      
+      if (deleteError) {
+        console.error('Error deleting existing line items:', deleteError);
+        throw deleteError;
+      }
+      
+    } else {
+      // Create new invoice
+      console.log('Creating new invoice');
+      
+      const { data, error } = await supabase
+        .from('invoices')
+        .insert({
+          po_number: invoice.po_number,
+          invoice_date: invoice.invoice_date,
+          customer_name: invoice.customer_name,
+          customer_address: invoice.customer_address,
+          customer_city: invoice.customer_city,
+          customer_state: invoice.customer_state,
+          customer_zip: invoice.customer_zip,
+          customer_tel1: invoice.customer_tel1,
+          customer_tel2: invoice.customer_tel2,
+          customer_email: invoice.customer_email,
+          subtotal: invoice.subtotal,
+          tax_amount: invoice.tax_amount,
+          total_amount: invoice.total_amount,
+          deposit_amount: invoice.deposit_amount,
+          balance_due: invoice.balance_due,
+          payments_history: invoice.payments_history
+        })
+        .select()
+        .single();
+      
+      if (error) {
+        console.error('Error creating invoice in Supabase:', error);
+        throw error;
+      }
+      
+      result = data;
+    }
+    
+    if (!result) {
+      throw new Error('No data returned from Supabase for invoice operation');
+    }
+    
+    // Now, insert the line items
+    const invoiceId = result.id;
+    const lineItemsWithInvoiceId = lineItems.map(item => ({
+      ...item,
+      invoice_id: invoiceId
+    }));
+    
+    console.log('Inserting invoice line items:', lineItemsWithInvoiceId);
+    
+    const { error: lineItemsError } = await supabase
+      .from('invoice_line_items')
+      .insert(lineItemsWithInvoiceId);
+    
+    if (lineItemsError) {
+      console.error('Error inserting invoice line items:', lineItemsError);
+      throw lineItemsError;
+    }
+    
+    console.log('Successfully saved invoice and line items to Supabase');
+    
+    // Clear any cache for this invoice
+    if (result.id) {
+      // If this invoice is associated with an order, clear that cache too
+      // This requires an additional query to check for order association
+      try {
+        const { data: orderData } = await supabase
+          .from('orders')
+          .select('id')
+          .eq('order_number', result.po_number)
+          .maybeSingle();
+        
+        if (orderData?.id) {
+          clearInvoiceByOrderIdCache(orderData.id);
+        }
+      } catch (err) {
+        console.log('Error checking for order association:', err);
+        // Non-critical error, continue
+      }
+    }
+    
+    return result;
+  } catch (error) {
+    console.error('Error saving invoice to Supabase:', error);
+    return null;
+  }
+};
+
+/**
+ * Fetch an invoice by ID including its line items
+ * @param invoiceId The ID of the invoice to fetch
+ * @returns The invoice data with line items, or null if not found or error
+ */
+export const fetchInvoiceById = async (invoiceId: string): Promise<{
+  invoice: SupabaseInvoice;
+  lineItems: SupabaseInvoiceLineItem[];
+} | null> => {
+  try {
+    console.log('Fetching invoice by ID from Supabase:', invoiceId);
+    
+    // Fetch the invoice
+    const { data: invoiceData, error: invoiceError } = await supabase
+      .from('invoices')
+      .select('*')
+      .eq('id', invoiceId)
+      .single();
+    
+    if (invoiceError) {
+      console.error('Error fetching invoice from Supabase:', invoiceError);
+      return null;
+    }
+    
+    if (!invoiceData) {
+      console.log('No invoice found with ID:', invoiceId);
+      return null;
+    }
+    
+    // Fetch the line items
+    const { data: lineItemsData, error: lineItemsError } = await supabase
+      .from('invoice_line_items')
+      .select('*')
+      .eq('invoice_id', invoiceId)
+      .order('created_at', { ascending: true });
+    
+    if (lineItemsError) {
+      console.error('Error fetching invoice line items from Supabase:', lineItemsError);
+      return null;
+    }
+    
+    return {
+      invoice: invoiceData,
+      lineItems: lineItemsData || []
+    };
+  } catch (error) {
+    console.error('Error fetching invoice by ID from Supabase:', error);
+    return null;
+  }
+};
+
+/**
+ * Fetch an invoice for a specific order
+ * @param orderId The ID of the order to fetch the invoice for
+ * @returns The invoice data with line items, or null if not found or error
+ */
+export const fetchInvoiceByOrderId = async (orderId: string): Promise<{
+  invoice: SupabaseInvoice;
+  lineItems: SupabaseInvoiceLineItem[];
+} | null> => {
+  try {
+    // Check if the cache is valid for this order ID
+    if (invoiceByOrderIdCache[orderId] && 
+        Date.now() - invoiceByOrderIdCache[orderId].timestamp < CACHE_DURATION_MS) {
+      console.log('Using cached invoice data for order ID:', orderId);
+      return invoiceByOrderIdCache[orderId].data 
+        ? { invoice: invoiceByOrderIdCache[orderId].data!, lineItems: invoiceByOrderIdCache[orderId].lineItems } 
+        : null;
+    }
+    
+    console.log('Fetching invoice for order ID from Supabase:', orderId);
+    
+    // First, get the order details to find the order_number
+    const { data: orderData, error: orderError } = await supabase
+      .from('orders')
+      .select('order_number')
+      .eq('id', orderId)
+      .single();
+    
+    if (orderError) {
+      console.error('Error fetching order details from Supabase:', orderError);
+      return null;
+    }
+    
+    if (!orderData || !orderData.order_number) {
+      console.log('No order found with ID or missing order number:', orderId);
+      return null;
+    }
+    
+    // Now find the invoice with this order number as po_number
+    const { data: invoiceData, error: invoiceError } = await supabase
+      .from('invoices')
+      .select('*')
+      .eq('po_number', orderData.order_number)
+      .order('created_at', { ascending: false })
+      .maybeSingle(); // Use maybeSingle to get null instead of error if not found
+    
+    if (invoiceError) {
+      console.error('Error fetching invoice from Supabase:', invoiceError);
+      return null;
+    }
+    
+    if (!invoiceData) {
+      console.log('No invoice found with PO number:', orderData.order_number);
+      // Update the cache with a null result
+      invoiceByOrderIdCache[orderId] = {
+        data: null,
+        lineItems: [],
+        timestamp: Date.now()
+      };
+      return null;
+    }
+    
+    // Fetch the line items for this invoice
+    const { data: lineItemsData, error: lineItemsError } = await supabase
+      .from('invoice_line_items')
+      .select('*')
+      .eq('invoice_id', invoiceData.id)
+      .order('created_at', { ascending: true });
+    
+    if (lineItemsError) {
+      console.error('Error fetching invoice line items from Supabase:', lineItemsError);
+      return null;
+    }
+    
+    // Update the cache
+    invoiceByOrderIdCache[orderId] = {
+      data: invoiceData,
+      lineItems: lineItemsData || [],
+      timestamp: Date.now()
+    };
+    
+    return {
+      invoice: invoiceData,
+      lineItems: lineItemsData || []
+    };
+  } catch (error) {
+    console.error('Error fetching invoice by order ID from Supabase:', error);
+    return null;
+  }
+};
+
+/**
  * Fetch monthly revenue data from Supabase
  * @param forceRefresh If true, bypass the cache and fetch fresh data
  */
@@ -410,7 +788,7 @@ export const fetchMonthlyRevenue = async (forceRefresh: boolean = false): Promis
         throw error;
       }
 
-      if (!data) {
+      if (!orderData) {
         console.log('No order data returned from Supabase');
         return [];
       }
@@ -504,7 +882,7 @@ export const fetchRecentOrders = async (date?: Date, forceRefresh: boolean = fal
         throw error;
       }
 
-      if (!data) {
+      if (!orderData) {
         console.log('No recent orders data returned from Supabase');
         return [];
       }

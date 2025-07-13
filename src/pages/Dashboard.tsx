@@ -12,12 +12,13 @@ import {
 } from 'lucide-react';
 import { useProfile } from '../contexts/ProfileContext';
 import { 
-  fetchDashboardMetrics, 
-  DashboardMetrics, 
+  fetchDashboardMetrics,
+  DashboardMetrics,
   fetchMonthlyRevenue,
   MonthlyRevenue,
   fetchRecentOrders,
-  RecentOrder
+  RecentOrder,
+  fetchUnderDepositInvoices
 } from '../services/backendApi';
 
 // Shadcn UI Components
@@ -46,6 +47,8 @@ function Dashboard() {
   const [monthlyRevenueData, setMonthlyRevenueData] = useState<{ name: string; total: number }[]>([]);
   const [recentOrdersList, setRecentOrdersList] = useState<RecentOrder[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(false);
+  const [underDepositInvoices, setUnderDepositInvoices] = useState<any[]>([]);
+  const [loadingInvoices, setLoadingInvoices] = useState(false);
 
   // Placeholder for graph data - fallback if API fetch fails
   const graphData = [
@@ -81,18 +84,32 @@ function Dashboard() {
 
       // Fetch dashboard metrics and monthly revenue in parallel
       const [metricsData, revenueData] = await Promise.all([
-        fetchDashboardMetrics(forceRefresh),
-        fetchMonthlyRevenue(forceRefresh)
+        fetchDashboardMetrics(forceRefresh), 
+        fetchMonthlyRevenue(forceRefresh),
+        fetchUnderDepositInvoices(forceRefresh)
       ]);
+      
+      const [dashboardMetrics, monthlyRevenue, underDeposit] = [metricsData, revenueData, revenueData[2]];
 
-      setMetrics(metricsData);
+      setMetrics(dashboardMetrics);
 
       // Convert monthly revenue data format for the chart
-      const formattedRevenueData = revenueData.map(item => ({
+      const formattedRevenueData = monthlyRevenue.map(item => ({
         name: item.month,
         total: item.total
       }));
       setMonthlyRevenueData(formattedRevenueData);
+      
+      // Set under deposit invoices
+      try {
+        setLoadingInvoices(true);
+        const invoicesData = await fetchUnderDepositInvoices(forceRefresh);
+        setUnderDepositInvoices(invoicesData);
+      } catch (error) {
+        console.error('Error fetching under-deposit invoices:', error);
+      } finally {
+        setLoadingInvoices(false);
+      }
 
       // If we have a date selected, fetch orders for that date
       if (date) {
@@ -337,6 +354,126 @@ function Dashboard() {
               </CardContent>
             </Card>
           </div>
+          
+          {/* New Card: Invoices Missing 50% Deposit */}
+          <Card className="col-span-4 mt-4">
+            <CardHeader>
+              <CardTitle>Invoices Missing 50% Deposit</CardTitle>
+              <CardDescription>
+                Orders that don't meet the required 50% deposit policy
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {loadingInvoices ? (
+                <div className="flex items-center justify-center py-4">
+                  <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500 mr-2"></div>
+                  <span className="text-gray-500 text-sm">Loading invoices...</span>
+                </div>
+              ) : underDepositInvoices.length > 0 ? (
+                <div className="rounded-md border overflow-hidden">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Invoice #
+                        </th>
+                        <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Customer
+                        </th>
+                        <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Date
+                        </th>
+                        <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Total
+                        </th>
+                        <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Deposit
+                        </th>
+                        <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          % Paid
+                        </th>
+                        <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Action
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {underDepositInvoices.map((invoice) => {
+                        // Calculate deposit percentage
+                        const depositPercentage = invoice.total_amount > 0 
+                          ? (invoice.deposit_amount / invoice.total_amount) * 100 
+                          : 0;
+                        
+                        // Format date
+                        const formattedDate = new Date(invoice.invoice_date).toLocaleDateString('en-US', {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric'
+                        });
+                        
+                        return (
+                          <tr key={invoice.id} className="hover:bg-gray-50">
+                            <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                              {invoice.po_number || '-'}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                              {invoice.customer_name}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                              {formattedDate}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm font-medium">
+                              ${invoice.total_amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm font-medium">
+                              ${invoice.deposit_amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <div className="flex items-center">
+                                <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                                  depositPercentage >= 50 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                                }`}>
+                                  {depositPercentage.toFixed(1)}%
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm font-medium">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => navigate(`/invoice-generator/${invoice.id}`)}
+                              >
+                                View Invoice
+                              </Button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="text-center py-8 bg-gray-50 rounded-lg border border-gray-200">
+                  <svg
+                    className="mx-auto h-12 w-12 text-gray-400"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1.5}
+                      d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                  <h3 className="mt-2 text-sm font-medium text-gray-900">No under-deposit invoices</h3>
+                  <p className="mt-1 text-sm text-gray-500">All current invoices have at least 50% deposit.</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
         <TabsContent value="metrics" className="space-y-4">
           {/* Key Metrics Cards (Existing) */}

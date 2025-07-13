@@ -143,6 +143,50 @@ export interface CustomerInvoice extends Order {
   paymentStatus?: 'Unpaid' | 'Partially Paid' | 'Paid';
 }
 
+// Payment method type
+export type PaymentMethod = 'cash' | 'cheque' | 'card' | 'other';
+
+// Payment entry interface
+export interface PaymentEntry {
+  date: string;
+  amount: number;
+  method?: PaymentMethod;
+}
+
+// Database-specific interfaces for the new Supabase tables
+export interface SupabaseInvoice {
+  id?: string; // Optional for new records
+  po_number?: string;
+  invoice_date: string;
+  customer_name: string;
+  customer_address?: string;
+  customer_city?: string;
+  customer_state?: string;
+  customer_zip?: string;
+  customer_tel1?: string;
+  customer_tel2?: string;
+  customer_email?: string;
+  subtotal: number;
+  tax_amount: number;
+  total_amount: number;
+  deposit_amount: number;
+  balance_due: number;
+  payments_history?: PaymentEntry[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SupabaseInvoiceLineItem {
+  id?: string; // Optional for new records
+  invoice_id: string;
+  item_code?: string;
+  description: string;
+  quantity: number;
+  unit_price: number;
+  line_total: number;
+  created_at?: string;
+}
+
 export interface InvoiceItem {
   id: string;
   item?: string;
@@ -152,7 +196,6 @@ export interface InvoiceItem {
   amount: number;
 }
 
-// Shipment-related types
 export interface Shipment {
   id: number;
   ref: string;

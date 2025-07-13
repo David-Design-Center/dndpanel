@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ChevronLeft, ChevronRight, ArrowUp, ArrowDown, DollarSign, FileText } from 'lucide-react';
 import { CustomerOrder } from '../../../types';
 import { format, parse } from 'date-fns';
+import { fetchInvoiceByOrderId } from '../../../services/backendApi';
 
 interface OrdersSpreadsheetProps {
   orders: CustomerOrder[];
@@ -89,8 +90,24 @@ function OrdersSpreadsheet({ orders, onGenerateInvoice }: OrdersSpreadsheetProps
     return sortDirection === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />;
   };
 
-  const handleGenerateInvoice = (orderId: string) => {
-    onGenerateInvoice(orderId);
+  const handleGenerateInvoice = async (orderId: string) => {
+    try {
+      // Check if an invoice already exists for this order
+      const existingInvoice = await fetchInvoiceByOrderId(orderId);
+      
+      if (existingInvoice) {
+        console.log('Found existing invoice for order:', existingInvoice.invoice.id);
+        // If an invoice exists, navigate to the invoice editor with the invoice ID
+        onGenerateInvoice(orderId);
+      } else {
+        // If no invoice exists, proceed as normal to create a new one
+        onGenerateInvoice(orderId);
+      }
+    } catch (error) {
+      console.error('Error checking for existing invoice:', error);
+      // Proceed with normal flow in case of error
+      onGenerateInvoice(orderId);
+    }
   };
 
   return (

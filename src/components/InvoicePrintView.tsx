@@ -454,7 +454,8 @@ function InvoicePrintView({ invoice, innerRef }: InvoicePrintViewProps) {
                     fontSize: '10px'
                   }}>
                     <span style={{ fontWeight: '500' }}>
-                      {payment.date} {payment.method && `(${payment.method.charAt(0).toUpperCase() + payment.method.slice(1)})`}
+                      {payment.date} {payment.method ? 
+                        `(${payment.method.charAt(0).toUpperCase() + payment.method.slice(1)})` : ''}
                     </span>
                     <span style={{ fontWeight: 'bold' }}>${payment.amount.toFixed(2)}</span>
                   </div>
