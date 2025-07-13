@@ -16,6 +16,7 @@ declare global {
     gapi: {
       load: (libraries: string, callback: () => void) => void;
       client: {
+        people: any;
         init: (config: any) => Promise<void>;
         gmail: {
           users: {
@@ -55,7 +56,7 @@ export interface PaginatedEmailResponse {
 }
 
 // Configuration options
-const SCOPES = 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.labels https://www.googleapis.com/auth/contacts.readonly';
+const SCOPES = 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.labels https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/contacts.other.readonly https://www.googleapis.com/auth/user.emails.read';
 const API_KEY = import.meta.env.VITE_GAPI_API_KEY || '';
 const CLIENT_ID = import.meta.env.VITE_GAPI_CLIENT_ID || '';
 const DISCOVERY_DOCS = ['https://www.googleapis.com/discovery/v1/apis/gmail/v1/rest'];
@@ -2067,13 +2068,11 @@ export const fetchPeopleConnections = async (): Promise<any[]> => {
 
     console.log('Fetching people connections...');
     
-    const response = await window.gapi.client.request({
-      path: 'https://people.googleapis.com/v1/people/me/connections',
-      params: {
-        personFields: 'names,emailAddresses,photos,metadata',
-        pageSize: 1000,
-        sortOrder: 'LAST_MODIFIED_DESCENDING'
-      }
+    const response = await window.gapi.client.people.people.connections.list({
+      resourceName: 'people/me',
+      pageSize: 1000,
+      sortOrder: 'LAST_MODIFIED_DESCENDING',
+      personFields: 'names,emailAddresses,photos,metadata'
     });
 
     return response.result.connections || [];
@@ -2097,7 +2096,7 @@ export const fetchOtherContacts = async (): Promise<any[]> => {
     const response = await window.gapi.client.request({
       path: 'https://people.googleapis.com/v1/otherContacts',
       params: {
-        personFields: 'names,emailAddresses,photos',
+        readMask: 'names,emailAddresses,photos',
         pageSize: 1000
       }
     });

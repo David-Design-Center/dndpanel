@@ -33,7 +33,7 @@ export const ContactsProvider: React.FC<ContactsProviderProps> = ({ children }) 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  const { user } = useAuth();
+  const { user, isGmailSignedIn } = useAuth();
   const { currentProfile } = useProfile();
 
   const loadContacts = useCallback(async () => {
@@ -70,13 +70,12 @@ export const ContactsProvider: React.FC<ContactsProviderProps> = ({ children }) 
     return contactService.filterContacts(query, limit);
   }, []);
 
-  // Load contacts when the provider mounts and user/profile are available
+  // Load contacts whenever user, profile, and Gmail sign-in are available
   useEffect(() => {
-    // Only load contacts if we don't have any yet and user/profile are available
-    if (contacts.length === 0 && !isLoading && !error && user && currentProfile) {
+    if (!isLoading && !error && user && currentProfile && isGmailSignedIn) {
       loadContacts();
     }
-  }, [contacts.length, isLoading, error, loadContacts, user, currentProfile]);
+  }, [isLoading, error, loadContacts, user, currentProfile, isGmailSignedIn]);
 
   const value: ContactsContextType = {
     contacts,

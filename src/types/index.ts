@@ -90,7 +90,7 @@ export interface Order {
   productDetails?: string;
   user?: string;
   depositAmount?: number;
-  paymentsHistory?: Array<{ date: string; amount: number }>;
+  paymentsHistory?: Array<{ date: string; amount: number; }>;
 }
 
 export interface PriceRequest extends Order {

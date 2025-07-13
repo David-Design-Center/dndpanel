@@ -9,7 +9,6 @@ import { ProfileProvider } from './contexts/ProfileContext';
 import { LabelProvider } from './contexts/LabelContext';
 import { OutOfOfficeProvider } from './contexts/OutOfOfficeContext';
 import { OutOfOfficeSettingsProvider } from './contexts/OutOfOfficeSettingsContext';
-import { ContactsProvider } from './contexts/ContactsContext';
 import microsoftGraphService from './services/microsoftGraphService';
 import { Toaster } from './components/toaster';
 
@@ -24,9 +23,7 @@ microsoftGraphService.initialize().then(() => {
               <LabelProvider>
                 <OutOfOfficeProvider>
                   <OutOfOfficeSettingsProvider>
-                    <ContactsProvider>
-                      <App />
-                    </ContactsProvider>
+                    <App />
                   </OutOfOfficeSettingsProvider>
                 </OutOfOfficeProvider>
               </LabelProvider>
@@ -49,9 +46,7 @@ microsoftGraphService.initialize().then(() => {
               <LabelProvider>
                 <OutOfOfficeProvider>
                   <OutOfOfficeSettingsProvider>
-                    <ContactsProvider>
-                      <App />
-                    </ContactsProvider>
+                    <App />
                   </OutOfOfficeSettingsProvider>
                 </OutOfOfficeProvider>
               </LabelProvider>

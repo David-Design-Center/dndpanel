@@ -287,11 +287,12 @@ function Compose() {
   const handleToInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setTo(value);
-    
+
     // Update filtered contacts based on input
     const contacts = searchContacts(value, 5);
     setFilteredContacts(contacts);
-    setShowContactDropdown(value.trim().length > 0 && contacts.length > 0);
+    // Show dropdown as soon as user types any character (even if no matches)
+    setShowContactDropdown(value.trim().length > 0);
   };
 
   const handleContactSelect = (contact: Contact) => {
@@ -450,40 +451,44 @@ function Compose() {
                 </div>
                 
                 {/* Contact dropdown */}
-                {showContactDropdown && filteredContacts.length > 0 && (
+                {showContactDropdown && (
                   <div className="absolute top-full left-0 right-0 z-50 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto">
-                    {filteredContacts.map((contact, index) => (
-                      <div
-                        key={`${contact.email}-${index}`}
-                        onClick={() => handleContactSelect(contact)}
-                        className="flex items-center px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
-                      >
-                        {contact.photoUrl ? (
-                          <img
-                            src={contact.photoUrl}
-                            alt={contact.name}
-                            className="w-8 h-8 rounded-full mr-3 flex-shrink-0"
-                          />
-                        ) : (
-                          <div className="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-sm font-medium mr-3 flex-shrink-0">
-                            {getProfileInitial(contact.name, contact.email)}
-                          </div>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium text-gray-900 truncate">
-                              {contact.name}
-                            </span>
-                            {contact.isFrequentlyContacted && (
-                              <span className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded-full flex-shrink-0">
-                                Frequent
+                    {filteredContacts.length > 0 ? (
+                      filteredContacts.map((contact, index) => (
+                        <div
+                          key={`${contact.email}-${index}`}
+                          onClick={() => handleContactSelect(contact)}
+                          className="flex items-center px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                        >
+                          {contact.photoUrl ? (
+                            <img
+                              src={contact.photoUrl}
+                              alt={contact.name}
+                              className="w-8 h-8 rounded-full mr-3 flex-shrink-0"
+                            />
+                          ) : (
+                            <div className="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-sm font-medium mr-3 flex-shrink-0">
+                              {getProfileInitial(contact.name, contact.email)}
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-gray-900 truncate">
+                                {contact.name}
                               </span>
-                            )}
+                              {contact.isFrequentlyContacted && (
+                                <span className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded-full flex-shrink-0">
+                                  Frequent
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm text-gray-500 truncate">{contact.email}</p>
                           </div>
-                          <p className="text-sm text-gray-500 truncate">{contact.email}</p>
                         </div>
-                      </div>
-                    ))}
+                      ))
+                    ) : (
+                      <div className="px-4 py-3 text-gray-500 text-sm">No contacts found</div>
+                    )}
                   </div>
                 )}
               </div>
