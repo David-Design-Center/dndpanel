@@ -52,7 +52,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
       
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, name')
+        .select('id, name, passcode')
         .order('name');
       
       if (error) {
