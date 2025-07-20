@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthContext';
 import { Profile } from '../types';
@@ -27,12 +27,12 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
-  // Track authentication state directly with Supabase
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [authLoading, setAuthLoading] = useState(true);
-  
   // Prevent infinite retry loops
   const [isInitializing, setIsInitializing] = useState(false);
+  
+  // Add throttling to prevent rapid profile restoration
+  const lastProfileRestoreRef = useRef<number>(0);
+  const PROFILE_RESTORE_THROTTLE_MS = 2000; // 2 second throttle
 
   // Get authentication context and Gmail functions
   const { user, initGmail } = useAuth();
@@ -65,6 +65,15 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
       // Try to restore previously selected profile from sessionStorage
       const savedProfileId = sessionStorage.getItem('currentProfileId');
       if (savedProfileId && data) {
+        const now = Date.now();
+        
+        // Throttle profile restoration to prevent refresh loops
+        if (now - lastProfileRestoreRef.current < PROFILE_RESTORE_THROTTLE_MS) {
+          devLog.debug('Profile restoration throttled to prevent refresh loop');
+          return;
+        }
+        lastProfileRestoreRef.current = now;
+        
         const savedProfileExists = data.find(p => p.id === savedProfileId);
         if (savedProfileExists) {
           devLog.info('Found saved profile ID, fetching full profile data...');
@@ -275,8 +284,6 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
         const authenticated = !!data.session;
         
         devLog.debug('ProfileContext: Authentication check completed, authenticated =', authenticated);
-        setIsAuthenticated(authenticated);
-        setAuthLoading(false);
 
         if (authenticated) {
           devLog.debug('ProfileContext: Authenticated, fetching profiles');
@@ -294,33 +301,16 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
 
     initializeProfiles();
 
-    // Set up an auth state listener to detect changes to authentication
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        devLog.debug('ProfileContext: Auth state changed:', event);
-        setIsAuthenticated(!!session);
-
-        // If the user signed out, clear profiles
-        if (event === 'SIGNED_OUT') {
-          setProfiles([]);
-          setCurrentProfile(null);
-          setIsLoading(false);
-        }
-      }
-    );
-
-    return () => subscription.unsubscribe();
+    // Clean up function (no auth listener to unsubscribe since we don't use it)
+    return () => {
+      // No cleanup needed since we disabled the auth state listener to prevent page refreshes
+    };
   }, [user]);
 
-  // DEBUG: Log currentProfile changes
+  // DEBUG: Log currentProfile changes (keep minimal debugging)
   useEffect(() => {
     devLog.debug('ProfileContext: currentProfile changed to:', currentProfile?.name || 'none');
   }, [currentProfile]);
-
-  // DEBUG: Log auth state changes
-  useEffect(() => {
-    devLog.debug('ProfileContext: Auth state - authLoading:', authLoading, 'isAuthenticated:', isAuthenticated);
-  }, [authLoading, isAuthenticated]);
 
   // Listen for Gmail token updates from AuthContext
   useEffect(() => {

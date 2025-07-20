@@ -15,11 +15,11 @@ interface OutOfOfficeSettingsContextType {
 const OutOfOfficeSettingsContext = createContext<OutOfOfficeSettingsContextType | undefined>(undefined);
 
 const defaultSettings: OutOfOfficeSettings = {
-  forwardToEmail: '',
+  isOutOfOffice: false,
   autoReplyMessage: `
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
       <p>Hi,</p>
-      <p>I'm out of office currently.</p>
+      <p>I'm out of office currently. I'll get back to you when I return.</p>
       <p>Thank you for your understanding.</p>
     </div>
   `.trim()
@@ -28,26 +28,46 @@ const defaultSettings: OutOfOfficeSettings = {
 // Default settings for each profile
 const profileDefaults: { [profileName: string]: OutOfOfficeSettings } = {
   'David': {
-    forwardToEmail: 'martisuvorov12@gmail.com',
+    isOutOfOffice: false,
     autoReplyMessage: `
       <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
         <p>Hi,</p>
-        <p>I'm out of office currently. I forwarded your message to my associate.</p>
+        <p>I'm out of office currently. I'll get back to you when I return.</p>
         <p>Thank you, have a blessed day.</p>
-        <br>
         <p>David</p>
       </div>
     `.trim()
   },
   'Marti': {
-    forwardToEmail: 'martisuvorov12@gmail.com',
+    isOutOfOffice: false,
     autoReplyMessage: `
       <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
         <p>Hi,</p>
-        <p>I'm out of office currently. I forwarded your message to my colleague.</p>
+        <p>I'm out of office currently. I'll get back to you when I return.</p>
         <p>Thank you for your understanding.</p>
-        <br>
         <p>Marti</p>
+      </div>
+    `.trim()
+  },
+  'Natalia': {
+    isOutOfOffice: false,
+    autoReplyMessage: `
+      <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+        <p>Hi,</p>
+        <p>I'm out of office currently. I'll get back to you when I return.</p>
+        <p>Thank you for your understanding.</p>
+        <p>Natalia</p>
+      </div>
+    `.trim()
+  },
+  'Dimitry': {
+    isOutOfOffice: false,
+    autoReplyMessage: `
+      <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+        <p>Hi,</p>
+        <p>I'm out of office currently. I'll get back to you when I return.</p>
+        <p>Thank you for your understanding.</p>
+        <p>Dimitry</p>
       </div>
     `.trim()
   }
@@ -67,8 +87,10 @@ export function OutOfOfficeSettingsProvider({ children }: { children: React.Reac
         return;
       }
       
-      // Check if we have David or Marti profiles specifically
-      const targetProfiles = profiles.filter(p => p.name === 'David' || p.name === 'Marti');
+      // Check if we have any of the target profiles
+      const targetProfiles = profiles.filter(p => 
+        p.name === 'David' || p.name === 'Marti' || p.name === 'Natalia' || p.name === 'Dimitry'
+      );
       if (targetProfiles.length === 0) {
         devLog.debug('OutOfOfficeSettingsContext: No target profiles found, skipping load');
         return;
@@ -94,7 +116,7 @@ export function OutOfOfficeSettingsProvider({ children }: { children: React.Reac
         // Fallback to profile defaults
         const fallbackSettings: { [profileName: string]: OutOfOfficeSettings } = {};
         profiles.forEach(profile => {
-          if (profile.name === 'David' || profile.name === 'Marti') {
+          if (['David', 'Marti', 'Natalia', 'Dimitry'].includes(profile.name)) {
             fallbackSettings[profile.name] = profileDefaults[profile.name] || defaultSettings;
           }
         });

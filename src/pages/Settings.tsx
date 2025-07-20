@@ -83,7 +83,7 @@ function Settings() {
         {/* Email Signature Manager */}
         <SignatureManager />
 
-        {/* Out of Office Settings */}
+        {/* Out of Office Manager */}
         <OutOfOfficeManager />
       </div>
     </div>

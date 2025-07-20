@@ -1,9 +1,9 @@
 // 🚨 EMERGENCY PATCH - Critical Out-of-Office Bug Fix
-// This disables the problematic auto-reply functionality until it can be properly fixed
+// Re-enabled after fixing the mass email incident
 
-export const EMERGENCY_DISABLE_AUTO_REPLY = true;
+export const EMERGENCY_DISABLE_AUTO_REPLY = false;
 
-export const emergencyCheckAndSendAutoReply = async (email: any): Promise<void> => {
+export const emergencyCheckAndSendAutoReply = async (_email: any): Promise<void> => {
   if (EMERGENCY_DISABLE_AUTO_REPLY) {
     console.log('🚨 EMERGENCY: Auto-reply DISABLED due to critical bug');
     return;
@@ -14,6 +14,6 @@ export const emergencyCheckAndSendAutoReply = async (email: any): Promise<void> 
 
 // Emergency function to disable auto-reply processing
 export const disableAutoReplyEmergency = (): void => {
-  console.log('🚨 EMERGENCY: Auto-reply functionality has been disabled due to mass email incident');
-  console.log('🚨 This prevents further automated email sending until the bug is fixed');
+  console.log('✅ Auto-reply functionality has been re-enabled');
+  console.log('✅ Out-of-office processing is now active');
 };

@@ -1,5 +1,4 @@
-// Update the imports to include Upload and Info icons
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { 
   Bold, 
   Italic, 
@@ -15,6 +14,7 @@ import {
   Image,
   FileSignature,
   Globe,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Toggle } from '../ui/toggle';
@@ -29,6 +29,8 @@ interface RichTextEditorProps {
   disabled?: boolean;
   signature?: string;
   showSignatureButton?: boolean;
+  showPriceRequestButton?: boolean;
+  onOpenPriceRequest?: () => void;
 }
 
 const RichTextEditor: React.FC<RichTextEditorProps> = ({
@@ -39,7 +41,9 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
   minHeight = "400px",
   disabled = false,
   signature = '',
-  showSignatureButton = false
+  showSignatureButton = false,
+  showPriceRequestButton = false,
+  onOpenPriceRequest
 }) => {
   const editorRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -295,6 +299,21 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
     setSavedRange(null);
   }, []);
 
+  // Handle opening Price Request panel
+  const handleOpenPriceRequest = useCallback((e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    
+    if (disabled) {
+      return;
+    }
+    
+    // Call the prop function to open the panel
+    onOpenPriceRequest?.();
+  }, [disabled, onOpenPriceRequest]);
+
   // Handle opening the image size picker menu
   const handleImageMenuOpen = useCallback(() => {
     if (disabled) return;
@@ -509,7 +528,8 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
   }, [disabled, saveSelection]);
 
   return (
-    <div className={cn("border border-gray-200 rounded-lg overflow-hidden rich-text-editor", className)}>
+    <>
+      <div className={cn("border border-gray-200 rounded-lg overflow-hidden rich-text-editor", className)}>
       {/* Toolbar */}
       <div className="flex items-center gap-1 p-2 border-b border-gray-200 bg-gray-50 flex-wrap rich-text-toolbar">
         {/* Text formatting */}
@@ -748,6 +768,21 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
           >
             <Globe size={14} />
           </Button>
+          
+          {/* Price Request Button */}
+          {showPriceRequestButton && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={handleOpenPriceRequest}
+              disabled={disabled}
+              title="Insert Price Request Table"
+              className="h-8 px-2 text-purple-600 hover:text-purple-800 hover:bg-purple-50"
+            >
+              <FileSpreadsheet size={14} />
+            </Button>
+          )}
         </div>
       </div>
 
@@ -868,7 +903,8 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
         onChange={handleImageFile}
         style={{ display: 'none' }}
       />
-    </div>
+      </div>
+    </>
   );
 };
 

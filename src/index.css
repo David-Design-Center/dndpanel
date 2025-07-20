@@ -2,6 +2,21 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Invoice preview scaling for two-column layout */
+.invoice-preview-wrapper {
+  transform-origin: top left;
+  transform: scale(0.6);
+  width: 166.67%; /* 100% / 0.6 to compensate for scale */
+  overflow: hidden;
+}
+
+@media (max-width: 1024px) {
+  .invoice-preview-wrapper {
+    transform: scale(0.5);
+    width: 200%; /* 100% / 0.5 to compensate for scale */
+  }
+}
+
 /* Strong email content isolation to prevent style leakage while preserving email appearance */
 .email-isolation-container {
   /* Create a strong isolation boundary */
@@ -43,24 +58,50 @@
     width: auto !important;
   }
   
-  /* Prevent dangerous positioning that could break out of container */
+  /* Prevent dangerous positioning that could break out of container - ONLY within email content */
   * {
     position: static !important;
     z-index: auto !important;
   }
   
-  /* Prevent fixed/absolute positioning */
+  /* Prevent fixed/absolute positioning - ONLY within email content */
   [style*="position: fixed"],
   [style*="position: absolute"] {
     position: relative !important;
   }
   
-  /* Prevent overflow that could break the container */
+  /* Prevent overflow that could break the container - ONLY within email content */
   body, html {
     overflow: visible !important;
     width: auto !important;
     height: auto !important;
   }
+}
+
+/* Exception: Allow modals and overlays to work properly outside email content */
+/* These rules must be more specific than the email content rules above */
+body > div[class*="fixed"],
+body > .fixed,
+div[class*="z-50"],
+.fixed.inset-0,
+[style*="position: fixed"][class*="z-"],
+[class*="modal"],
+[class*="overlay"],
+[data-modal] {
+  position: fixed !important;
+  z-index: 50 !important;
+}
+
+/* Ensure modal backdrops work */
+div[class*="bg-black"][class*="fixed"] {
+  position: fixed !important;
+  z-index: 50 !important;
+}
+
+/* Ensure modal content containers work */
+div[class*="flex"][class*="min-h-full"] {
+  position: fixed !important;
+  z-index: 50 !important;
 }
 
 @layer base {

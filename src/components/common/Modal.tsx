@@ -7,11 +7,15 @@ interface ModalProps {
   children: React.ReactNode;
   title?: string;
   size?: 'sm' | 'md' | 'lg' | 'xl' | 'full';
+  zIndex?: number; // Allow custom z-index
 }
 
-function Modal({ isOpen, onClose, children, title, size = 'xl' }: ModalProps) {
+function Modal({ isOpen, onClose, children, title, size = 'xl', zIndex = 50 }: ModalProps) {
   const [isVisible, setIsVisible] = useState(false);
   const [shouldRender, setShouldRender] = useState(false);
+
+  // Debug logging
+  console.log('Modal render:', { isOpen, isVisible, shouldRender, title, timestamp: Date.now() });
 
   useEffect(() => {
     if (isOpen) {
@@ -41,7 +45,9 @@ function Modal({ isOpen, onClose, children, title, size = 'xl' }: ModalProps) {
   }, [isOpen, onClose]);
 
   const handleBackdropClick = (e: React.MouseEvent) => {
+    console.log('Modal backdrop clicked', { target: e.target, currentTarget: e.currentTarget });
     if (e.target === e.currentTarget) {
+      console.log('Closing modal due to backdrop click');
       onClose();
     }
   };
@@ -57,12 +63,14 @@ function Modal({ isOpen, onClose, children, title, size = 'xl' }: ModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto">
+    <div className="fixed inset-0 overflow-y-auto" style={{ zIndex: zIndex }}>
       {/* Backdrop */}
       <div 
-        className={`fixed inset-0 bg-black transition-opacity duration-200 ease-out ${
-          isVisible ? 'bg-opacity-50' : 'bg-opacity-0'
-        }`}
+        className="fixed inset-0 bg-black transition-opacity duration-200 ease-out"
+        style={{ 
+          opacity: isVisible ? 0.5 : 0,
+          zIndex: zIndex 
+        }}
         onClick={handleBackdropClick}
       />
       
@@ -70,12 +78,16 @@ function Modal({ isOpen, onClose, children, title, size = 'xl' }: ModalProps) {
       <div 
         className="flex min-h-full items-center justify-center p-4"
         onClick={handleBackdropClick}
+        style={{ zIndex: zIndex + 1 }}
       >
-        <div className={`relative bg-white rounded-lg shadow-xl w-full ${sizeClasses[size]} max-h-[90vh] overflow-hidden transform transition-all duration-200 ease-out ${
-          isVisible 
-            ? 'opacity-100 scale-100 translate-y-0' 
-            : 'opacity-0 scale-95 translate-y-4'
-        }`}>
+        <div 
+          className={`relative bg-white rounded-lg shadow-xl w-full ${sizeClasses[size]} max-h-[90vh] overflow-hidden transform transition-all duration-200 ease-out ${
+            isVisible 
+              ? 'opacity-100 scale-100 translate-y-0' 
+              : 'opacity-0 scale-95 translate-y-4'
+          }`}
+          style={{ zIndex: zIndex + 2 }}
+        >
           {/* Header */}
           {title && (
             <div className="flex items-center justify-between p-6 border-b border-gray-200 bg-gray-50">

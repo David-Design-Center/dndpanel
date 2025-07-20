@@ -384,6 +384,8 @@ const convertRowToCustomerOrder = (row: any): CustomerOrder => {
     productDetails: row.product_details,
     depositAmount: row.deposit_amount ? parseFloat(row.deposit_amount) : undefined,
     paymentsHistory: row.payments_history || [],
+    isEdited: row.is_edited || false,
+    originalInvoiceId: row.original_invoice_id || null,
     customer: {
       name: row.customer_name || '',
       email: row.user_email || '',
@@ -542,11 +544,14 @@ export const saveInvoiceToSupabase = async (
           customer_tel2: invoice.customer_tel2,
           customer_email: invoice.customer_email,
           subtotal: invoice.subtotal,
+          discount_amount: invoice.discount_amount,
           tax_amount: invoice.tax_amount,
           total_amount: invoice.total_amount,
           deposit_amount: invoice.deposit_amount,
           balance_due: invoice.balance_due,
-          payments_history: invoice.payments_history
+          payments_history: invoice.payments_history,
+          is_edited: invoice.is_edited || false,
+          original_invoice_id: invoice.original_invoice_id
         })
         .select()
         .single();
@@ -1458,7 +1463,7 @@ export const fetchPriceRequests = async (forceRefresh: boolean = false): Promise
           orderDate: '2025-05-15',
           orderAmount: 6000,
           paymentOption: 'Installments',
-          paymentStatus: 'Unpaid',
+          paymentStatus: 'Order in Progress',
           productDetails: 'Bathroom remodel',
           user: 'Dima'
         } as PriceRequest
@@ -1552,22 +1557,22 @@ export const fetchCustomerOrders = async (forceRefresh: boolean = false): Promis
  * @param newStatus The new status to set
  * @returns The updated order or null if there was an error
  */
-export const updateOrderStatus = async (
+export const updateOrderPaymentStatus = async (
   id: string,
   newStatus: OrderStatus
 ): Promise<PriceRequest | CustomerOrder | null> => {
   try {
-    console.log('Updating order status in Supabase:', id, newStatus);
+    console.log('Updating payment status in Supabase:', id, newStatus);
     
     const { data, error } = await supabase
       .from('orders')
-      .update({ status: newStatus })
+      .update({ payment_status: newStatus })
       .eq('id', id)
       .select()
       .single();
 
     if (error) {
-      console.error('Error updating order status in Supabase:', error);
+      console.error('Error updating payment status in Supabase:', error);
       return null;
     }
 
@@ -1576,7 +1581,7 @@ export const updateOrderStatus = async (
       return null;
     }
 
-    console.log('Successfully updated order status in Supabase:', data);
+    console.log('Successfully updated payment status in Supabase:', data);
     
     // Clear caches to ensure fresh data on next fetch
     clearPriceRequestsCache();
@@ -1735,6 +1740,62 @@ export const deletePriceRequest = async (id: string): Promise<boolean> => {
   } catch (error) {
     console.error('Error deleting price request from Supabase:', error);
     return false;
+  }
+};
+
+/**
+ * Save a customer order to the orders table
+ * @param orderData The customer order data to save
+ * @returns The saved order data with ID, or null if there was an error
+ */
+export const saveCustomerOrderToSupabase = async (orderData: {
+  order_number: string;
+  customer_name: string;
+  customer_email?: string;
+  order_date: string;
+  order_amount: number;
+  payment_status?: string;
+  product_details?: string;
+  deposit_amount?: number;
+  teams?: any[];
+}): Promise<any | null> => {
+  try {
+    console.log('Saving customer order to Supabase:', orderData);
+    
+    const { data, error } = await supabase
+      .from('orders')
+      .insert({
+        project_name: `Order ${orderData.order_number}`,
+        type: 'Customer Order',
+        status: 'Order in Progress',
+        created_by: 'system',
+        order_number: orderData.order_number,
+        customer_name: orderData.customer_name,
+        order_date: orderData.order_date,
+        order_amount: orderData.order_amount,
+        payment_status: orderData.payment_status || 'Order in Progress',
+        product_details: orderData.product_details || null,
+        user_email: orderData.customer_email || null,
+        deposit_amount: orderData.deposit_amount || null,
+        teams: orderData.teams || []
+      })
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('Error saving customer order to Supabase:', error);
+      throw error;
+    }
+    
+    console.log('Successfully saved customer order to Supabase:', data);
+    
+    // Clear the customer orders cache to force refresh
+    clearCustomerOrdersCache();
+    
+    return data;
+  } catch (error) {
+    console.error('Error saving customer order:', error);
+    return null;
   }
 };
 

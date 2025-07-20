@@ -33,6 +33,10 @@ declare global {
               update: (params: any) => Promise<any>;
               delete: (params: any) => Promise<any>;
             };
+            settings: {
+              getVacation: (params: any) => Promise<any>;
+              updateVacation: (params: any) => Promise<any>;
+            };
             attachments: {
               get: (params: any) => Promise<any>;
             };
@@ -56,7 +60,7 @@ export interface PaginatedEmailResponse {
 }
 
 // Configuration options
-const SCOPES = 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.labels https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/contacts.other.readonly https://www.googleapis.com/auth/user.emails.read';
+const SCOPES = 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.labels https://www.googleapis.com/auth/gmail.settings.basic https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/contacts.other.readonly https://www.googleapis.com/auth/user.emails.read';
 const API_KEY = import.meta.env.VITE_GAPI_API_KEY || '';
 const CLIENT_ID = import.meta.env.VITE_GAPI_CLIENT_ID || '';
 const DISCOVERY_DOCS = ['https://www.googleapis.com/discovery/v1/apis/gmail/v1/rest'];

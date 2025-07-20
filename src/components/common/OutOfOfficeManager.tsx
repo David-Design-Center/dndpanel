@@ -3,19 +3,15 @@ import { useProfile } from '../../contexts/ProfileContext';
 import { useOutOfOfficeSettings } from '../../contexts/OutOfOfficeSettingsContext';
 import { OutOfOfficeSettings } from '../../types';
 import { Button } from '../ui/button';
-import { Input } from '../ui/input';
 import { Label } from '../ui/label';
-import { Textarea } from '../ui/textarea';
 import { Settings, Save, RotateCcw, AlertCircle } from 'lucide-react';
+import RichTextEditor from './RichTextEditor';
 
 function OutOfOfficeManager() {
   const { currentProfile } = useProfile();
   const { getSettingsForProfile, updateSettings, isLoading: contextLoading, error: contextError } = useOutOfOfficeSettings();
   
-  const [formData, setFormData] = useState<OutOfOfficeSettings>({
-    forwardToEmail: '',
-    autoReplyMessage: ''
-  });
+  const [message, setMessage] = useState<string>('');
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -24,17 +20,22 @@ function OutOfOfficeManager() {
   useEffect(() => {
     if (currentProfile) {
       const settings = getSettingsForProfile(currentProfile.name);
-      setFormData(settings);
+      setMessage(settings.autoReplyMessage || '');
     }
   }, [currentProfile, getSettingsForProfile]);
 
   const handleSave = async () => {
     if (!currentProfile) return;
-
     setIsSaving(true);
     setSaveError(null);
     try {
-      await updateSettings(currentProfile.name, formData);
+      const currentSettings = getSettingsForProfile(currentProfile.name);
+      const settings: OutOfOfficeSettings = {
+        isOutOfOffice: currentSettings.isOutOfOffice, // Preserve the current status
+        autoReplyMessage: message
+      };
+      await updateSettings(currentProfile.name, settings);
+      
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
     } catch (error) {
@@ -47,27 +48,12 @@ function OutOfOfficeManager() {
 
   const handleReset = () => {
     if (!currentProfile) return;
-    
     const defaultSettings = getSettingsForProfile(currentProfile.name);
-    setFormData(defaultSettings);
-  };
-
-  const handleMessageChange = (value: string) => {
-    setFormData(prev => ({
-      ...prev,
-      autoReplyMessage: value
-    }));
-  };
-
-  const handleEmailChange = (value: string) => {
-    setFormData(prev => ({
-      ...prev,
-      forwardToEmail: value
-    }));
+    setMessage(defaultSettings.autoReplyMessage || '');
   };
 
   // Don't show for profiles that don't support out-of-office
-  if (!currentProfile || (currentProfile.name !== 'David' && currentProfile.name !== 'Marti')) {
+  if (!currentProfile || !['David', 'Marti', 'Natalia', 'Dimitry'].includes(currentProfile.name)) {
     return null;
   }
 
@@ -98,54 +84,22 @@ function OutOfOfficeManager() {
       )}
 
       <div className="space-y-6">
-        {/* Forward To Email */}
+        {/* Out-of-Office Rich Text Editor */}
         <div className="space-y-2">
-          <Label htmlFor="forwardEmail" className="text-sm font-medium text-gray-700">
-            Forward Emails To
+          <Label htmlFor="outOfOfficeEditor" className="text-sm font-medium text-gray-700">
+            Out of Office Auto-Reply Message
           </Label>
-          <Input
-            id="forwardEmail"
-            type="email"
-            placeholder="colleague@example.com"
-            value={formData.forwardToEmail}
-            onChange={(e) => handleEmailChange(e.target.value)}
-            className="w-full"
-          />
-          <p className="text-xs text-gray-500">
-            When you're out of office, incoming emails will be forwarded to this address.
-          </p>
-        </div>
-
-        {/* Auto-Reply Message */}
-        <div className="space-y-2">
-          <Label htmlFor="autoReplyMessage" className="text-sm font-medium text-gray-700">
-            Auto-Reply Message
-          </Label>
-          <Textarea
-            id="autoReplyMessage"
-            placeholder="Enter your out-of-office message..."
-            value={formData.autoReplyMessage}
-            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => handleMessageChange(e.target.value)}
-            rows={8}
-            className="w-full resize-none"
-          />
-          <p className="text-xs text-gray-500">
-            This message will be automatically sent to people who email you while you're out of office.
-            Basic HTML formatting is supported.
-          </p>
-        </div>
-
-        {/* Preview */}
-        <div className="border-t pt-4">
-          <Label className="text-sm font-medium text-gray-700 mb-2 block">
-            Message Preview
-          </Label>
-          <div className="bg-gray-50 p-4 rounded-md border">
-            <div 
-              className="text-sm"
-              dangerouslySetInnerHTML={{ __html: formData.autoReplyMessage }}
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <RichTextEditor
+              value={message}
+              onChange={setMessage}
+              minHeight="300px"
+              disabled={isSaving}
             />
           </div>
+          <p className="text-xs text-gray-500">
+            This message will be automatically sent to people who email you while you're out of office. Basic formatting is supported.
+          </p>
         </div>
 
         {/* Action Buttons */}
@@ -167,8 +121,8 @@ function OutOfOfficeManager() {
             )}
             <Button
               onClick={handleSave}
-              disabled={isSaving || !formData.forwardToEmail.trim() || !formData.autoReplyMessage.trim()}
-              className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700"
+              disabled={isSaving || !message.trim()}
+              className="flex items-center space-x-2 bg-black hover:bg-grey"
             >
               <Save className="w-4 h-4" />
               <span>{isSaving ? 'Saving...' : 'Save Settings'}</span>

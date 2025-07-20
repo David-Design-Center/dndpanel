@@ -35,34 +35,30 @@ const getOutOfOfficeSettings = async (profileName: string) => {
       console.error('Error fetching out-of-office settings:', error);
     } else if (data?.out_of_office_settings && 
                typeof data.out_of_office_settings === 'object' &&
-               data.out_of_office_settings.forwardToEmail) {
+               data.out_of_office_settings.autoReplyMessage) {
       return data.out_of_office_settings;
     }
   } catch (error) {
     console.error('Error loading out-of-office settings:', error);
   }
   
-  const defaults: { [key: string]: { forwardToEmail: string; autoReplyMessage: string } } = {
+  const defaults: { [key: string]: { autoReplyMessage: string } } = {
     'David': {
-      forwardToEmail: 'martisuvorov12@gmail.com',
       autoReplyMessage: `
         <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
           <p>Hi,</p>
-          <p>I'm out of office currently. I forwarded your message to my associate.</p>
+          <p>I'm out of office currently. I'll get back to you when I return.</p>
           <p>Thank you, have a blessed day.</p>
-          <br>
           <p>David</p>
         </div>
       `.trim()
     },
     'Marti': {
-      forwardToEmail: 'martisuvorov12@gmail.com',
       autoReplyMessage: `
         <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
           <p>Hi,</p>
-          <p>I'm out of office currently. I forwarded your message to my colleague.</p>
+          <p>I'm out of office currently. I'll get back to you when I return.</p>
           <p>Thank you for your understanding.</p>
-          <br>
           <p>Marti</p>
         </div>
       `.trim()
@@ -70,11 +66,10 @@ const getOutOfOfficeSettings = async (profileName: string) => {
   };
   
   return defaults[profileName] || {
-    forwardToEmail: '',
     autoReplyMessage: `
       <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
         <p>Hi,</p>
-        <p>I'm out of office currently.</p>
+        <p>I'm out of office currently. I'll get back to you when I return.</p>
         <p>Thank you for your understanding.</p>
       </div>
     `.trim()
@@ -88,6 +83,8 @@ export const checkAndSendAutoReply = async (email: Email): Promise<void> => {
   if (senderEmail === 'me@example.com' || 
       senderEmail.includes('david') || 
       senderEmail.includes('marti') ||
+      senderEmail.includes('natalia') ||
+      senderEmail.includes('dimitry') ||
       processedSenders.has(senderEmail) ||
       pendingSenders.has(senderEmail)) {
     return;
@@ -97,16 +94,49 @@ export const checkAndSendAutoReply = async (email: Email): Promise<void> => {
   pendingSenders.add(senderEmail);
   
   try {
-    // Get out-of-office statuses from localStorage
-    const outOfOfficeStatuses = localStorage.getItem('outOfOfficeStatuses');
-    const statuses = outOfOfficeStatuses ? JSON.parse(outOfOfficeStatuses) : {};
+    // Get out-of-office statuses from Supabase profiles table
+    let outOfOfficeUsers: string[] = [];
+    const userStatuses: { [name: string]: boolean } = {};
     
-    // Check if David or Marti is out of office
-    const isDavidOutOfOffice = statuses['David'] || false;
-    const isMartiOutOfOffice = statuses['Marti'] || false;
+    try {
+      const { data: profiles, error } = await supabase
+        .from('profiles')
+        .select('name, out_of_office_settings')
+        .in('name', ['David', 'Marti', 'Natalia', 'Dimitry']);
+
+      if (error) {
+        console.error('Error loading out-of-office settings from Supabase:', error);
+        throw error;
+      }
+
+      // Extract statuses from Supabase data
+      profiles?.forEach(profile => {
+        const settings = profile.out_of_office_settings;
+        if (settings && settings.isOutOfOffice) {
+          outOfOfficeUsers.push(profile.name);
+          userStatuses[profile.name] = true;
+        } else {
+          userStatuses[profile.name] = false;
+        }
+      });
+    } catch (supabaseError) {
+      console.warn('Failed to load from Supabase, falling back to localStorage:', supabaseError);
+      // Fallback to localStorage
+      const outOfOfficeStatuses = localStorage.getItem('outOfOfficeStatuses');
+      const statuses = outOfOfficeStatuses ? JSON.parse(outOfOfficeStatuses) : {};
+      
+      ['David', 'Marti', 'Natalia', 'Dimitry'].forEach(name => {
+        if (statuses[name]) {
+          outOfOfficeUsers.push(name);
+          userStatuses[name] = true;
+        } else {
+          userStatuses[name] = false;
+        }
+      });
+    }
     
-    if (!isDavidOutOfOffice && !isMartiOutOfOffice) {
-      return; // Neither David nor Marti is out of office, no auto-reply needed
+    if (outOfOfficeUsers.length === 0) {
+      return; // No one is out of office, no auto-reply needed
     }
     
     // Don't auto-reply to automated emails, newsletters, etc.
@@ -122,33 +152,50 @@ export const checkAndSendAutoReply = async (email: Email): Promise<void> => {
     // Determine who is out of office and get their settings
     let outOfOfficePerson = '';
     let autoReplyMessage = '';
-    let davidSettings = null;
-    let martiSettings = null;
+    const userSettings: { [name: string]: any } = {};
     
-    if (isDavidOutOfOffice) {
-      davidSettings = await getOutOfOfficeSettings('David');
-    }
-    if (isMartiOutOfOffice) {
-      martiSettings = await getOutOfOfficeSettings('Marti');
+    // Load settings for all out-of-office users
+    for (const userName of outOfOfficeUsers) {
+      userSettings[userName] = await getOutOfOfficeSettings(userName);
     }
     
-    if (isDavidOutOfOffice && isMartiOutOfOffice) {
-      outOfOfficePerson = 'David and Marti';
+    // Generate appropriate message based on who is out of office
+    if (outOfOfficeUsers.length === 1) {
+      // Single person out of office
+      const userName = outOfOfficeUsers[0];
+      outOfOfficePerson = userName;
+      autoReplyMessage = userSettings[userName]?.autoReplyMessage || `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+          <p>Hi,</p>
+          <p>I'm out of office currently. I'll get back to you when I return.</p>
+          <p>Thank you for your understanding.</p>
+          <p>${userName}</p>
+        </div>
+      `;
+    } else if (outOfOfficeUsers.length === 2) {
+      // Two people out of office
+      outOfOfficePerson = outOfOfficeUsers.join(' and ');
       autoReplyMessage = `
         <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
           <p>Hi,</p>
           <p>We are both out of office currently. Your message has been received and we will respond when we return.</p>
-          <p>Thank you, have a blessed day.</p>
+          <p>Thank you for your understanding.</p>
           <br>
-          <p>David & Marti</p>
+          <p>${outOfOfficeUsers.join(' & ')}</p>
         </div>
       `;
-    } else if (isDavidOutOfOffice && davidSettings) {
-      outOfOfficePerson = 'David';
-      autoReplyMessage = davidSettings.autoReplyMessage;
-    } else if (isMartiOutOfOffice && martiSettings) {
-      outOfOfficePerson = 'Marti';
-      autoReplyMessage = martiSettings.autoReplyMessage;
+    } else if (outOfOfficeUsers.length > 2) {
+      // Multiple people out of office
+      outOfOfficePerson = outOfOfficeUsers.slice(0, -1).join(', ') + ' and ' + outOfOfficeUsers.slice(-1);
+      autoReplyMessage = `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+          <p>Hi,</p>
+          <p>Our team is currently out of office. Your message has been received and we will respond when we return.</p>
+          <p>Thank you for your understanding.</p>
+          <br>
+          <p>${outOfOfficeUsers.join(', ')}</p>
+        </div>
+      `;
     }
     
     console.log(`🏖️ ${outOfOfficePerson} is out of office, sending auto-reply to: ${senderEmail}`);
@@ -165,49 +212,7 @@ export const checkAndSendAutoReply = async (email: Email): Promise<void> => {
       [], // no attachments
       email.threadId // reply in the same thread
     );
-    
-    // Forward the original email to the appropriate person using configurable settings
-    let forwardToEmail = '';
-    let forwardToName = '';
-    
-    if (isDavidOutOfOffice && !isMartiOutOfOffice && davidSettings) {
-      // David is out, forward to configured email (likely Marti)
-      forwardToEmail = davidSettings.forwardToEmail;
-      forwardToName = 'Marti';
-    } else if (isMartiOutOfOffice && !isDavidOutOfOffice && martiSettings) {
-      // Marti is out, forward to configured email (likely David)
-      forwardToEmail = martiSettings.forwardToEmail;
-      forwardToName = 'David';
-    }
-    // If both are out of office, don't forward (no one to forward to)
-    
-    if (forwardToEmail) {
-      const forwardSubject = `Fwd: ${email.subject}`;
-      const forwardBody = `
-        <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-          <p>---------- Forwarded message ----------</p>
-          <p><strong>From:</strong> ${email.from.name} &lt;${email.from.email}&gt;</p>
-          <p><strong>Date:</strong> ${new Date(email.date).toLocaleString()}</p>
-          <p><strong>Subject:</strong> ${email.subject}</p>
-          <p><strong>To:</strong> ${outOfOfficePerson}</p>
-          <br>
-          ${email.body}
-        </div>
-      `;
-      
-      // Forward to the appropriate person
-      await sendGmailMessage(
-        forwardToEmail,
-        '', // no CC
-        forwardSubject,
-        forwardBody,
-        [], // no attachments for now - could include original attachments if needed
-        undefined // new conversation for forwarded email
-      );
-      
-      console.log(`📧 Email forwarded to ${forwardToName} (${forwardToEmail})`);
-    }
-    
+
     // CRITICAL FIX: Only mark as processed AFTER successful completion
     processedSenders.add(senderEmail);
     console.log(`✅ Auto-reply sent for ${outOfOfficePerson} to: ${senderEmail}`);
@@ -450,18 +455,15 @@ export const getEmails = async (
         if (query.includes('in:inbox') && !pageToken) {
           const unreadEmails = gmailResponse.emails.filter(email => !email.isRead);
           
-          // 🚨 EMERGENCY DISABLE - Auto-reply disabled due to critical bug
-          console.log('🚨 EMERGENCY: Auto-reply functionality DISABLED due to mass email incident');
-          console.log(`Would have processed ${unreadEmails.length} unread emails, but auto-reply is disabled for safety`);
+          console.log(`Processing ${unreadEmails.length} unread emails for auto-reply`);
           
-          // ORIGINAL CODE (DISABLED):
-          // for (const email of unreadEmails) {
-          //   try {
-          //     await checkAndSendAutoReply(email);
-          //   } catch (error) {
-          //     console.error('Auto-reply check failed for email:', email.id, error);
-          //   }
-          // }
+          for (const email of unreadEmails) {
+            try {
+              await checkAndSendAutoReply(email);
+            } catch (error) {
+              console.error('Auto-reply check failed for email:', email.id, error);
+            }
+          }
         }
       }
       

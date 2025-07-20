@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { GmailLabel } from '../types';
 import { fetchGmailLabels, createGmailLabel, updateGmailLabel, deleteGmailLabel } from '../integrations/gapiService';
 import { useAuth } from './AuthContext';
@@ -28,6 +28,10 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
   const [labels, setLabels] = useState<GmailLabel[]>([]);
   const [loadingLabels, setLoadingLabels] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // Cache to prevent duplicate API calls when switching tabs/pages
+  const labelsCache = useRef<{[profileId: string]: { labels: GmailLabel[], timestamp: number }}>({});
+  const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes cache
   const [isAddingLabel, setIsAddingLabel] = useState(false);
   const [addLabelError, setAddLabelError] = useState<string | null>(null);
   const [isEditingLabel, setIsEditingLabel] = useState(false);
@@ -57,12 +61,28 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    // Check cache first to prevent unnecessary API calls
+    const cached = labelsCache.current[currentProfile.id];
+    if (cached && (Date.now() - cached.timestamp) < CACHE_DURATION) {
+      console.log('📁 Using cached labels for profile:', currentProfile.name);
+      setLabels(cached.labels);
+      setLoadingLabels(false);
+      setError(null);
+      return;
+    }
+
     try {
       setLoadingLabels(true);
       setError(null);
       console.log(`Fetching Gmail labels for profile: ${currentProfile.name} (API Ready: ${isGmailApiReady})`);
       
       const fetchedLabels = await fetchGmailLabels();
+      
+      // Cache the result
+      labelsCache.current[currentProfile.id] = {
+        labels: fetchedLabels,
+        timestamp: Date.now()
+      };
       
       // Filter to show only relevant labels (system labels like INBOX, SENT, etc. and user labels)
       const filteredLabels = fetchedLabels.filter(label => {

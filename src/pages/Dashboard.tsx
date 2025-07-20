@@ -654,13 +654,13 @@ function Dashboard() {
                 {Object.entries(metrics.paymentStatusBreakdown).map(([status, data]) => (
                   <div key={status} className="text-center p-4 border border-gray-200 rounded-lg">
                     <div className={`w-12 h-12 mx-auto rounded-full flex items-center justify-center mb-3 ${
-                      status === 'Paid' ? 'bg-green-100' :
-                      status === 'Partially Paid' ? 'bg-yellow-100' :
+                      status === 'Paid in Full' ? 'bg-green-100' :
+                      status === 'Order in Progress' ? 'bg-yellow-100' :
                       'bg-red-100'
                     }`}>
                       <DollarSign className={`w-6 h-6 ${
-                        status === 'Paid' ? 'text-green-600' :
-                        status === 'Partially Paid' ? 'text-yellow-600' :
+                        status === 'Paid in Full' ? 'text-green-600' :
+                        status === 'Order in Progress' ? 'text-yellow-600' :
                         'text-red-600'
                       }`} />
                     </div>
@@ -714,12 +714,10 @@ function Dashboard() {
                   <h4 className="font-medium text-orange-800 mb-2">Outstanding Payments</h4>
                   <div>
                     <p className="text-orange-700 font-semibold">
-                      {(metrics.paymentStatusBreakdown['Unpaid']?.count || 0) +
-                       (metrics.paymentStatusBreakdown['Partially Paid']?.count || 0)} orders
+                      {(metrics.paymentStatusBreakdown['Order in Progress']?.count || 0)} orders
                     </p>
                     <p className="text-orange-600">
-                      ${((metrics.paymentStatusBreakdown['Unpaid']?.totalAmount || 0) +
-                         (metrics.paymentStatusBreakdown['Partially Paid']?.totalAmount || 0))
+                      ${(metrics.paymentStatusBreakdown['Order in Progress']?.totalAmount || 0)
                          .toLocaleString('en-US', { minimumFractionDigits: 2 })}
                     </p>
                   </div>

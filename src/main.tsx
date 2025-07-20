@@ -1,4 +1,3 @@
-import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
@@ -15,46 +14,42 @@ import { Toaster } from './components/toaster';
 // Initialize Microsoft Graph service early to handle redirect responses
 microsoftGraphService.initialize().then(() => {
   createRoot(document.getElementById('root')!).render(
-    <StrictMode>
-      <BrowserRouter>
-        <AuthProvider>
-          <SecurityProvider>
-            <ProfileProvider>
-              <LabelProvider>
+    <BrowserRouter>
+      <AuthProvider>
+        <SecurityProvider>
+          <ProfileProvider>
+            <LabelProvider>
+              <OutOfOfficeSettingsProvider>
                 <OutOfOfficeProvider>
-                  <OutOfOfficeSettingsProvider>
-                    <App />
-                  </OutOfOfficeSettingsProvider>
+                  <App />
                 </OutOfOfficeProvider>
-              </LabelProvider>
-            </ProfileProvider>
+              </OutOfOfficeSettingsProvider>
+            </LabelProvider>
+          </ProfileProvider>
           </SecurityProvider>
         </AuthProvider>
         <Toaster />
       </BrowserRouter>
-    </StrictMode>
   );
 }).catch((error) => {
   console.error('Failed to initialize Microsoft Graph service:', error);
   // Still render the app even if MSAL initialization fails
   createRoot(document.getElementById('root')!).render(
-    <StrictMode>
-      <BrowserRouter>
-        <AuthProvider>
-          <SecurityProvider>
-            <ProfileProvider>
-              <LabelProvider>
+    <BrowserRouter>
+      <AuthProvider>
+        <SecurityProvider>
+          <ProfileProvider>
+            <LabelProvider>
+              <OutOfOfficeSettingsProvider>
                 <OutOfOfficeProvider>
-                  <OutOfOfficeSettingsProvider>
-                    <App />
-                  </OutOfOfficeSettingsProvider>
+                  <App />
                 </OutOfOfficeProvider>
-              </LabelProvider>
-            </ProfileProvider>
-          </SecurityProvider>
-        </AuthProvider>
-        <Toaster />
-      </BrowserRouter>
-    </StrictMode>
+              </OutOfOfficeSettingsProvider>
+            </LabelProvider>
+          </ProfileProvider>
+        </SecurityProvider>
+      </AuthProvider>
+      <Toaster />
+    </BrowserRouter>
   );
 });

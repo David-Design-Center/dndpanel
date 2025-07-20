@@ -19,9 +19,9 @@ const ViewEmail = lazy(() => import('./pages/ViewEmail'));
 const Compose = lazy(() => import('./pages/Compose'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Orders = lazy(() => import('./pages/Orders'));
-const CreatePriceRequest = lazy(() => import('./pages/CreatePriceRequest'));
-const CreateCustomerOrder = lazy(() => import('./pages/CreateCustomerOrder'));
 const InvoiceGenerator = lazy(() => import('./pages/InvoiceGenerator'));
+const InvoicesList = lazy(() => import('./pages/InvoicesList'));
+const InvoiceView = lazy(() => import('./pages/InvoiceView'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Shipments = lazy(() => import('./pages/Shipments'));
 const Calendar = lazy(() => import('./pages/Calendar'));
@@ -49,8 +49,33 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
 
 function App() {
   useEffect(() => {
-    // Always initialize security measures
+    // Check for browser tab discarding (when browser unloads tab due to memory pressure)
+    const checkForTabDiscard = () => {
+      if ((document as any).wasDiscarded) {
+        console.log('Tab was discarded by browser due to memory pressure');
+      }
+    };
+    checkForTabDiscard();
+    
+    // Instead of reloading the page, refresh only necessary data when tab becomes visible
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        // Check if tab was discarded
+        checkForTabDiscard();
+        
+        // Dispatch custom events to refresh specific data without reloading
+        window.dispatchEvent(new CustomEvent('tab-visible-refresh-data'));
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    // Initialize security measures
     initSecurityMeasures();
+    
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
 
   // Note: Authentication initialization is now handled by individual contexts
@@ -88,11 +113,12 @@ function App() {
             <Route path="compose" element={<Compose />} />
             <Route path="settings" element={<Settings />} />
             <Route path="orders" element={<Orders />} />
-            <Route path="create-price-request" element={<CreatePriceRequest />} />
-            <Route path="create-customer-order" element={<CreateCustomerOrder />} />
+            <Route path="orders/create-customer-order" element={<InvoiceGenerator />} />
+            <Route path="invoices" element={<InvoicesList />} />
             <Route path="invoice-generator" element={<InvoiceGenerator />} />
             <Route path="invoice-generator/:orderId" element={<InvoiceGenerator />} />
             <Route path="invoice/:orderId" element={<InvoiceGenerator />} />
+            <Route path="invoice-view/:invoiceId" element={<InvoiceView />} />
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="shipments" element={<Shipments />} />
             <Route path="calendar" element={<Calendar />} />

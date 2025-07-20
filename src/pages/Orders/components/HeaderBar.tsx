@@ -1,4 +1,3 @@
-import { Search } from 'lucide-react';
 
 function HeaderBar() {
   return (

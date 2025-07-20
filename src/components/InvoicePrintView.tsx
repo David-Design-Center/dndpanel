@@ -1,22 +1,14 @@
 import React from 'react';
+import { PaymentEntry } from '../types';
 
 // Define the interface for invoice line items
 export interface InvoiceLineItem {
   id: string;
   item: string;
   description: string;
+  brand?: string; // Optional brand field for internal invoices
   quantity: number;
   price: number;
-}
-
-// Define payment method type
-export type PaymentMethod = 'cash' | 'cheque' | 'card' | 'other';
-
-// Define payment entry interface
-export interface PaymentEntry {
-  date: string;
-  amount: number;
-  method?: PaymentMethod;
 }
 
 // Define the interface for the invoice
@@ -33,9 +25,9 @@ export interface Invoice {
   email: string;
   lineItems: InvoiceLineItem[];
   subtotal: number;
+  discount: number;
   tax: number;
   total: number;
-  deposit: number;
   balance: number;
   payments: PaymentEntry[];
 }
@@ -43,11 +35,12 @@ export interface Invoice {
 interface InvoicePrintViewProps {
   invoice: Invoice;
   innerRef?: React.RefObject<HTMLDivElement>;
+  showInternalView?: boolean; // Shows brand column for internal D&D invoices
 }
 
 // Utility functions
 export const calculateRowTotal = (quantity: number, price: number) => {
-  return (quantity * price).toFixed(2);
+  return ((quantity || 0) * (price || 0)).toFixed(2);
 };
 
 export const formatCurrency = (amount: number) => {
@@ -63,10 +56,10 @@ export const calculatePaymentMethodTotals = (payments: PaymentEntry[]) => {
     const method = payment.method || 'other';
     acc[method] += payment.amount;
     return acc;
-  }, { cash: 0, cheque: 0, card: 0, other: 0 });
+  }, { cash: 0, check: 0, card: 0, other: 0 });
 };
 
-function InvoicePrintView({ invoice, innerRef }: InvoicePrintViewProps) {
+function InvoicePrintView({ invoice, innerRef, showInternalView = false }: InvoicePrintViewProps) {
   return (
     <div 
       ref={innerRef}
@@ -122,7 +115,9 @@ function InvoicePrintView({ invoice, innerRef }: InvoicePrintViewProps) {
                 padding: '2px 8px',
                 minWidth: '80px',
                 display: 'inline-block'
-              }}>{invoice.poNumber || ''}</span>
+              }}>
+                {invoice.poNumber || ''}
+              </span>
             </div>
             <div style={{
               display: 'flex',
@@ -205,10 +200,13 @@ function InvoicePrintView({ invoice, innerRef }: InvoicePrintViewProps) {
                 fontWeight: 'bold',
                 color: '#666'
               }}>Name: </span>
-              <span style={{
-                fontSize: '11px',
-                fontWeight: '500'
-              }}>{invoice.customerName}</span>
+              <span 
+                style={{
+                  fontSize: '11px',
+                  fontWeight: '500'
+                }}
+                data-field="customer-name"
+              >{invoice.customerName}</span>
             </p>
             <p style={{
               margin: '2px 0',
@@ -220,9 +218,12 @@ function InvoicePrintView({ invoice, innerRef }: InvoicePrintViewProps) {
                 fontWeight: 'bold',
                 color: '#666'
               }}>Address: </span>
-              <span style={{
-                fontSize: '11px'
-              }}>{invoice.address}</span>
+              <span 
+                style={{
+                  fontSize: '11px'
+                }}
+                data-field="customer-address"
+              >{invoice.address}</span>
             </p>
             <p style={{
               margin: '2px 0',
@@ -234,9 +235,12 @@ function InvoicePrintView({ invoice, innerRef }: InvoicePrintViewProps) {
                 fontWeight: 'bold',
                 color: '#666'
               }}>Location: </span>
-              <span style={{
-                fontSize: '11px'
-              }}>{invoice.city}, {invoice.state} {invoice.zip}</span>
+              <span 
+                style={{
+                  fontSize: '11px'
+                }}
+                data-field="customer-location"
+              >{invoice.city}, {invoice.state} {invoice.zip}</span>
             </p>
             <p style={{
               margin: '2px 0',
@@ -248,9 +252,12 @@ function InvoicePrintView({ invoice, innerRef }: InvoicePrintViewProps) {
                 fontWeight: 'bold',
                 color: '#666'
               }}>Phone: </span>
-              <span style={{
-                fontSize: '11px'
-              }}>{invoice.tel1} {invoice.tel2}</span>
+              <span 
+                style={{
+                  fontSize: '11px'
+                }}
+                data-field="customer-phone"
+              >{invoice.tel1} {invoice.tel2}</span>
             </p>
             <p style={{
               margin: '2px 0',
@@ -262,9 +269,12 @@ function InvoicePrintView({ invoice, innerRef }: InvoicePrintViewProps) {
                 fontWeight: 'bold',
                 color: '#666'
               }}>Email: </span>
-              <span style={{
-                fontSize: '11px'
-              }}>{invoice.email}</span>
+              <span 
+                style={{
+                  fontSize: '11px'
+                }}
+                data-field="customer-email"
+              >{invoice.email}</span>
             </p>
           </div>
         </div>
@@ -299,6 +309,16 @@ function InvoicePrintView({ invoice, innerRef }: InvoicePrintViewProps) {
                 fontSize: '11px',
                 fontWeight: 'bold'
               }}>Description</th>
+              {showInternalView && (
+                <th className="brand-column" style={{
+                  border: '1px solid #000',
+                  padding: '8px',
+                  textAlign: 'left',
+                  fontSize: '11px',
+                  fontWeight: 'bold',
+                  width: '80px'
+                }}>Brand</th>
+              )}
               <th style={{
                 border: '1px solid #000',
                 padding: '8px',
@@ -327,39 +347,46 @@ function InvoicePrintView({ invoice, innerRef }: InvoicePrintViewProps) {
           </thead>
           <tbody>
             {invoice.lineItems.map(item => (
-              <tr key={item.id}>
+              <tr key={item.id} data-field="line-item">
                 <td style={{
                   border: '1px solid #000',
                   padding: '8px',
                   fontSize: '11px',
                   fontWeight: '600'
-                }}>{item.item}</td>
+                }} data-field="item-number">{item.item}</td>
                 <td style={{
                   border: '1px solid #000',
                   padding: '8px',
                   fontSize: '11px'
-                }}>{item.description}</td>
+                }} data-field="item-description">{item.description}</td>
+                {showInternalView && (
+                  <td className="brand-column" style={{
+                    border: '1px solid #000',
+                    padding: '8px',
+                    fontSize: '11px'
+                  }} data-field="item-brand">{item.brand || ''}</td>
+                )}
                 <td style={{
                   border: '1px solid #000',
                   padding: '8px',
                   textAlign: 'center',
                   fontSize: '11px',
                   fontWeight: '600'
-                }}>{item.quantity}</td>
+                }} data-field="item-quantity">{item.quantity}</td>
                 <td style={{
                   border: '1px solid #000',
                   padding: '8px',
                   textAlign: 'center',
                   fontSize: '11px',
                   fontWeight: '600'
-                }}>${item.price.toFixed(2)}</td>
+                }} data-field="item-price">${(item.price || 0).toFixed(2)}</td>
                 <td style={{
                   border: '1px solid #000',
                   padding: '8px',
                   textAlign: 'center',
                   fontSize: '11px',
                   fontWeight: 'bold'
-                }}>${calculateRowTotal(item.quantity, item.price)}</td>
+                }} data-field="item-total">${calculateRowTotal(item.quantity, item.price)}</td>
               </tr>
             ))}
           </tbody>
@@ -390,8 +417,19 @@ function InvoicePrintView({ invoice, innerRef }: InvoicePrintViewProps) {
               fontSize: '11px'
             }}>
               <span style={{ fontWeight: '600' }}>Subtotal (before tax):</span>
-              <span style={{ fontWeight: 'bold' }}>${invoice.subtotal.toFixed(2)}</span>
+              <span style={{ fontWeight: 'bold' }} data-field="subtotal">${invoice.subtotal.toFixed(2)}</span>
             </div>
+            {invoice.discount > 0 && (
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                marginBottom: '4px',
+                fontSize: '11px'
+              }}>
+                <span style={{ fontWeight: '600' }}>Discount:</span>
+                <span style={{ fontWeight: 'bold', color: '#dc2626' }} data-field="discount">-${invoice.discount.toFixed(2)}</span>
+              </div>
+            )}
             <div style={{
               display: 'flex',
               justifyContent: 'space-between',
@@ -399,7 +437,7 @@ function InvoicePrintView({ invoice, innerRef }: InvoicePrintViewProps) {
               fontSize: '11px'
             }}>
               <span style={{ fontWeight: '600' }}>NY Sales tax @ 8.875%:</span>
-              <span style={{ fontWeight: 'bold' }}>${invoice.tax.toFixed(2)}</span>
+              <span style={{ fontWeight: 'bold' }} data-field="tax">${invoice.tax.toFixed(2)}</span>
             </div>
             <div style={{
               display: 'flex',
@@ -410,7 +448,7 @@ function InvoicePrintView({ invoice, innerRef }: InvoicePrintViewProps) {
               fontSize: '11px'
             }}>
               <span style={{ fontWeight: '600' }}>Grand total:</span>
-              <span style={{ fontWeight: 'bold' }}>${(invoice.subtotal + invoice.tax).toFixed(2)}</span>
+              <span style={{ fontWeight: 'bold' }} data-field="total">${invoice.total.toFixed(2)}</span>
             </div>
             <div style={{
               display: 'flex',
@@ -419,7 +457,7 @@ function InvoicePrintView({ invoice, innerRef }: InvoicePrintViewProps) {
               fontSize: '11px'
             }}>
               <span style={{ fontWeight: '600' }}>Amount paid to date:</span>
-              <span style={{ fontWeight: 'bold' }}>${(invoice.deposit + invoice.payments.reduce((sum, payment) => sum + payment.amount, 0)).toFixed(2)}</span>
+              <span style={{ fontWeight: 'bold' }} data-field="paid-amount">${invoice.payments.reduce((sum, payment) => sum + payment.amount, 0).toFixed(2)}</span>
             </div>
             <div style={{
               display: 'flex',
@@ -432,7 +470,7 @@ function InvoicePrintView({ invoice, innerRef }: InvoicePrintViewProps) {
               <span style={{
                 fontWeight: 'bold',
                 fontSize: '14px'
-              }}>${invoice.balance.toFixed(2)}</span>
+              }} data-field="balance">${invoice.balance.toFixed(2)}</span>
             </div>
             {invoice.payments.length > 0 && (
               <div style={{
@@ -479,10 +517,10 @@ function InvoicePrintView({ invoice, innerRef }: InvoicePrintViewProps) {
                           <span>${methodTotals.cash.toFixed(2)}</span>
                         </div>
                       )}
-                      {methodTotals.cheque > 0 && (
+                      {methodTotals.check > 0 && (
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span>Total Cheque:</span>
-                          <span>${methodTotals.cheque.toFixed(2)}</span>
+                          <span>Total Check:</span>
+                          <span>${methodTotals.check.toFixed(2)}</span>
                         </div>
                       )}
                       {methodTotals.card > 0 && (
@@ -513,7 +551,7 @@ function InvoicePrintView({ invoice, innerRef }: InvoicePrintViewProps) {
             fontSize: '12px',
             fontWeight: 'bold',
             borderBottom: '1px solid #000'
-          }}>Store Policy</h3>
+          }}>Store Policy – D&D Design Center</h3>
           <div style={{
             padding: '12px',
             fontSize: '10px'
@@ -523,11 +561,12 @@ function InvoicePrintView({ invoice, innerRef }: InvoicePrintViewProps) {
               paddingLeft: '16px',
               lineHeight: '1.4'
             }}>
-              <li style={{ marginBottom: '4px' }}>All special/custom orders require 10 to 12 weeks delivery time.</li>
-              <li style={{ marginBottom: '4px' }}>All orders require <strong>50% deposit</strong>.</li>
-              <li style={{ marginBottom: '4px' }}>Deposits are <strong>non-refundable</strong> for cancellation on custom and special orders.</li>
-              <li style={{ marginBottom: '4px' }}>All cancellations on stock items, store credit only. Deposits are <strong>not refundable</strong>.</li>
-              <li style={{ marginBottom: '8px' }}>Merchandise belongs to D&D Design Center until paid in full.</li>
+              <li style={{ marginBottom: '4px' }}><strong>Custom & Special Orders:</strong> All custom-made and special orders require a delivery time of 12–16 weeks.</li>
+              <li style={{ marginBottom: '4px' }}><strong>Deposits:</strong> A 50% deposit is required on all orders.</li>
+              <li style={{ marginBottom: '4px' }}>Deposits for custom and special orders are non-refundable in the event of cancellation.</li>
+              <li style={{ marginBottom: '4px' }}>Deposits for stock items are also non-refundable; cancellations on stock items will be issued store credit only.</li>
+              <li style={{ marginBottom: '4px' }}><strong>Ownership:</strong> All merchandise remains the property of D&D Design Center until paid in full.</li>
+              <li style={{ marginBottom: '8px' }}><strong>Final Payment:</strong> The remaining balance must be paid in full before delivery. No exceptions.</li>
             </ol>
             
             <div style={{

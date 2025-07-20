@@ -6,6 +6,7 @@ import { Email, Contact } from '../types';
 import { getProfileInitial } from '../lib/utils';
 import Modal from '../components/common/Modal';
 import RichTextEditor from '../components/common/RichTextEditor';
+import PriceRequestAddon from '../components/common/PriceRequestAddon';
 import FileThumbnail from '../components/common/FileThumbnail';
 import { formatDistanceToNow, parseISO, format } from 'date-fns';
 import { useProfile } from '../contexts/ProfileContext';
@@ -47,6 +48,7 @@ function Compose() {
   const [isSending, setIsSending] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [previewFile, setPreviewFile] = useState<AttachmentItem | null>(null);
+  const [showPriceRequestModal, setShowPriceRequestModal] = useState(false);
   
   // Thread-related state
   const [isReply, setIsReply] = useState(false);
@@ -61,6 +63,42 @@ function Compose() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const location = useLocation();
+
+  // Handle Price Request insertion
+  // Handle opening the price request panel
+  const handleOpenPriceRequest = () => {
+    setShowPriceRequestModal(true);
+  };
+
+  // Handle closing the price request panel
+  const handleClosePriceRequest = () => {
+    setShowPriceRequestModal(false);
+  };
+
+  // Handle price request table insertion
+  const handlePriceRequestInsert = (html: string, recipientEmail?: string, attachments?: Array<{ name: string; mimeType: string; data: string; cid: string }>) => {
+    // Insert the HTML table into the editor
+    setNewBodyHtml(prev => prev + html);
+    
+    // If recipientEmail is provided, update the To field
+    if (recipientEmail && !to) {
+      setTo(recipientEmail);
+    }
+    
+    // If attachments are provided, add them to the email
+    if (attachments && attachments.length > 0) {
+      const newAttachments: AttachmentItem[] = attachments.map(att => ({
+        name: att.name,
+        mimeType: att.mimeType,
+        data: att.data,
+        size: undefined, // Size not available for base64 data
+      }));
+      setAttachments(prev => [...prev, ...newAttachments]);
+    }
+    
+    // Close the panel
+    setShowPriceRequestModal(false);
+  };
 
   // Check if we're replying to an email or have pre-filled data
   useEffect(() => {
@@ -292,7 +330,8 @@ function Compose() {
     const contacts = searchContacts(value, 5);
     setFilteredContacts(contacts);
     // Show dropdown as soon as user types any character (even if no matches)
-    setShowContactDropdown(value.trim().length > 0);
+    const shouldShow = value.trim().length > 0;
+    setShowContactDropdown(shouldShow);
   };
 
   const handleContactSelect = (contact: Contact) => {
@@ -412,27 +451,29 @@ function Compose() {
         </div>
       )}
 
-      <div className="max-w-4xl mx-auto p-4 slide-in">
-        <div className="bg-white rounded-lg shadow-md overflow-hidden">
-          <div className="px-4 py-3 bg-gray-100 border-b border-gray-200 flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-medium">New Message</h2>
+      <div className="max-w-7xl mx-auto p-4 slide-in">
+        <div className="flex gap-4">
+          {/* Main Compose Window */}
+          <div className="flex-1 max-w-4xl bg-white rounded-lg shadow-md overflow-hidden">
+            <div className="px-4 py-3 bg-gray-100 border-b border-gray-200 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-medium">New Message</h2>
+              </div>
+              <div className="flex space-x-2">
+                <button 
+                  onClick={() => setIsMinimized(true)}
+                  className="text-gray-500 hover:text-gray-700"
+                >
+                  <Minimize size={18} />
+                </button>
+                <button 
+                  onClick={handleCancel}
+                  className="text-gray-500 hover:text-gray-700"
+                >
+                  <X size={18} />
+                </button>
+              </div>
             </div>
-            <div className="flex space-x-2">
-              <button 
-                onClick={() => setIsMinimized(true)}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                <Minimize size={18} />
-              </button>
-              <button 
-                onClick={handleCancel}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                <X size={18} />
-              </button>
-            </div>
-          </div>
           
           <form onSubmit={handleSubmit}>
             <div className="p-4 space-y-4">
@@ -452,7 +493,7 @@ function Compose() {
                 
                 {/* Contact dropdown */}
                 {showContactDropdown && (
-                  <div className="absolute top-full left-0 right-0 z-50 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                  <div className="absolute top-full left-0 right-0 z-[999] bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto">
                     {filteredContacts.length > 0 ? (
                       filteredContacts.map((contact, index) => (
                         <div
@@ -511,6 +552,8 @@ function Compose() {
                   placeholder="Compose your message..."
                   minHeight="400px"
                   disabled={isSending}
+                  showPriceRequestButton={true}
+                  onOpenPriceRequest={handleOpenPriceRequest}
                 />
               </div>
 
@@ -565,6 +608,20 @@ function Compose() {
               </div>
             </div>
           </form>
+        </div>
+
+        {/* Sliding Product Table Panel */}
+        <div className={`transition-all duration-300 ease-in-out bg-white rounded-lg shadow-md overflow-hidden ${
+          showPriceRequestModal ? 'w-80 opacity-100' : 'w-0 opacity-0'
+        }`}>
+          {showPriceRequestModal && (
+            <PriceRequestAddon
+              isOpen={showPriceRequestModal}
+              onClose={handleClosePriceRequest}
+              onInsertTable={handlePriceRequestInsert}
+            />
+          )}
+        </div>
         </div>
       </div>
 

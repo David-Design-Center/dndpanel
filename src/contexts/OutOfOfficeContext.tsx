@@ -1,10 +1,15 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { clearAutoReplyCache } from '../services/emailService';
 import { useProfile } from './ProfileContext';
+import { 
+  isGmailVacationResponderActive 
+} from '../services/gmailVacationService';
 
 interface OutOfOfficeContextType {
   isOutOfOffice: boolean;
   setOutOfOffice: (status: boolean) => void;
+  isLoading: boolean;
+  refreshStatus: () => void;
 }
 
 const OutOfOfficeContext = createContext<OutOfOfficeContextType | undefined>(undefined);
@@ -23,39 +28,97 @@ interface OutOfOfficeProviderProps {
 
 export function OutOfOfficeProvider({ children }: OutOfOfficeProviderProps) {
   const { currentProfile } = useProfile();
-  const [outOfOfficeStatuses, setOutOfOfficeStatuses] = useState<{[profileName: string]: boolean}>({});
+  const [isOutOfOffice, setIsOutOfOfficeState] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  
+  // Cache to prevent duplicate API calls when switching tabs/pages
+  const statusCache = useRef<{[profileName: string]: { value: boolean, timestamp: number }}>({});
+  const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes cache
 
-  // Load the out-of-office statuses from localStorage on component mount
-  useEffect(() => {
-    const savedStatuses = localStorage.getItem('outOfOfficeStatuses');
-    if (savedStatuses) {
-      setOutOfOfficeStatuses(JSON.parse(savedStatuses));
-    }
-  }, []);
-
-  // Get the current profile's out-of-office status
-  const isOutOfOffice = currentProfile ? (outOfOfficeStatuses[currentProfile.name] || false) : false;
-
-  // Save the out-of-office status to localStorage whenever it changes
-  const setOutOfOffice = (status: boolean) => {
+  // Check Gmail vacation responder status
+  const refreshStatus = async () => {
     if (!currentProfile) return;
     
-    const newStatuses = {
-      ...outOfOfficeStatuses,
-      [currentProfile.name]: status
+    // Check cache first to prevent unnecessary API calls
+    const cached = statusCache.current[currentProfile.name];
+    if (cached && (Date.now() - cached.timestamp) < CACHE_DURATION) {
+      setIsOutOfOfficeState(cached.value);
+      return;
+    }
+    
+    setIsLoading(true);
+    try {
+      const isActive = await isGmailVacationResponderActive();
+      setIsOutOfOfficeState(isActive);
+      
+      // Cache the result
+      statusCache.current[currentProfile.name] = {
+        value: isActive,
+        timestamp: Date.now()
+      };
+      
+      // Also update localStorage as backup
+      const localStatuses = JSON.parse(localStorage.getItem('outOfOfficeStatuses') || '{}');
+      localStatuses[currentProfile.name] = isActive;
+      localStorage.setItem('outOfOfficeStatuses', JSON.stringify(localStatuses));
+    } catch (error) {
+      console.error('Error checking Gmail vacation responder status:', error);
+      
+      // Fallback to localStorage
+      const localStatuses = JSON.parse(localStorage.getItem('outOfOfficeStatuses') || '{}');
+      setIsOutOfOfficeState(localStatuses[currentProfile.name] || false);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Load status when profile changes
+  useEffect(() => {
+    refreshStatus();
+  }, [currentProfile]);
+
+  // Listen for tab visibility refresh events (instead of relying on auth state changes)
+  useEffect(() => {
+    const handleTabVisibleRefresh = () => {
+      if (currentProfile) {
+        refreshStatus();
+      }
     };
+
+    window.addEventListener('tab-visible-refresh-data', handleTabVisibleRefresh);
     
-    setOutOfOfficeStatuses(newStatuses);
-    localStorage.setItem('outOfOfficeStatuses', JSON.stringify(newStatuses));
+    return () => {
+      window.removeEventListener('tab-visible-refresh-data', handleTabVisibleRefresh);
+    };
+  }, [currentProfile]);
+
+  // This function is now handled by the GmailVacationSettings component
+  // We keep it here for backward compatibility
+  const setOutOfOffice = async (status: boolean) => {
+    if (!currentProfile) return;
     
-    // Clear auto-reply cache when status changes to prevent duplicate replies
-    clearAutoReplyCache();
-    
-    console.log(`${currentProfile.name}'s out-of-office status set to:`, status);
+    try {
+      // Clear auto-reply cache when status changes
+      clearAutoReplyCache();
+      
+      // Update state immediately for UI responsiveness
+      setIsOutOfOfficeState(status);
+      
+      // Also update localStorage as backup
+      const localStatuses = JSON.parse(localStorage.getItem('outOfOfficeStatuses') || '{}');
+      localStatuses[currentProfile.name] = status;
+      localStorage.setItem('outOfOfficeStatuses', JSON.stringify(localStatuses));
+      
+      console.log(`${currentProfile.name}'s out-of-office status set to:`, status);
+      
+      // Note: Actual Gmail vacation responder should be updated through GmailVacationSettings component
+    } catch (err) {
+      console.error('Failed to update out-of-office status:', err);
+    }
   };
 
   return (
-    <OutOfOfficeContext.Provider value={{ isOutOfOffice, setOutOfOffice }}>
+    <OutOfOfficeContext.Provider value={{ isOutOfOffice, setOutOfOffice, isLoading, refreshStatus }}>
       {children}
     </OutOfOfficeContext.Provider>
   );

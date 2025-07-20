@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useProfile } from '../contexts/ProfileContext';
-import { User, UserCircle, Lock, ChevronDown } from 'lucide-react';
+import { User, UserCircle, Lock, ChevronDown, ArrowRight } from 'lucide-react';
 
 function ProfileSelector() {
-  const { profiles, currentProfile, selectProfile, error } = useProfile();
+  const { profiles, currentProfile, selectProfile, error, clearProfile } = useProfile();
   const [isOpen, setIsOpen] = useState(false);
   const [passcode, setPasscode] = useState('');
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
@@ -51,16 +51,29 @@ function ProfileSelector() {
 
   return (
     <div className="relative">
-      <button 
-        className="flex items-center px-4 py-2 text-sm font-medium transition-colors text-gray-700 hover:bg-gray-100 rounded-md w-full"
-        onClick={toggleDropdown}
-      >
-        <span className="mr-3">
-          <UserCircle size={20} className="text-gray-600" />
-        </span>
-        <span className="flex-1 text-left">{currentProfile?.name || 'Select Profile'}</span>
-        <ChevronDown size={16} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-      </button>
+      <div className="border border-gray-200 rounded-lg bg-white">
+        <button 
+          className="flex items-center px-4 py-2 text-sm font-medium transition-colors text-gray-700 hover:bg-gray-100 rounded-t-lg w-full"
+          onClick={toggleDropdown}
+        >
+          <span className="mr-3">
+            <UserCircle size={20} className="text-gray-600" />
+          </span>
+          <span className="flex-1 text-left">{currentProfile?.name || 'Select Profile'}</span>
+          <ChevronDown size={16} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        </button>
+        
+        {/* Switch Profile option underneath the name */}
+        {currentProfile && (
+          <button
+            onClick={clearProfile}
+            className="flex items-center px-4 py-2 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-50 w-full text-left border-t border-gray-100 rounded-b-lg transition-colors"
+          >
+            <ArrowRight size={12} className="mr-2" />
+            <span>Switch Profile</span>
+          </button>
+        )}
+      </div>
       
       {isOpen && !showPasscodeInput && (
         <div className="absolute left-0 mt-1 w-full z-10 bg-white rounded-md shadow-lg py-1 border border-gray-200">

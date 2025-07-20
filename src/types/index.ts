@@ -49,7 +49,7 @@ export interface GmailLabel {
 }
 
 export interface OutOfOfficeSettings {
-  forwardToEmail: string;
+  isOutOfOffice: boolean;
   autoReplyMessage: string;
 }
 
@@ -69,8 +69,7 @@ export interface Profile {
 export type OrderStatus = 'Pending' | 'Sent' | 'Reply Received' | 'Completed' | 'In Progress' | 'Draft';
 export type OrderType = 'Price Request' | 'Customer Order' | 'Customer Invoice';
 export type PaymentOption = 'Installments' | 'Full payment';
-export type PaymentStatus = 'Unpaid' | 'Paid' | 'Partially Paid';
-export type PaymentMethod = 'cash' | 'cheque' | 'card' | 'other';
+export type PaymentStatus = 'Order in Progress' | 'Paid in Full';
 
 export interface Order {
   id: string;
@@ -115,6 +114,8 @@ export interface CustomerOrder extends Order {
   total: number;
   currency: string;
   paymentDue?: string;
+  isEdited?: boolean;
+  originalInvoiceId?: string;
 }
 
 export interface PriceRequestTeam {
@@ -140,11 +141,11 @@ export interface CustomerInvoice extends Order {
   total: number;
   currency: string;
   paymentDue?: string;
-  paymentStatus?: 'Unpaid' | 'Partially Paid' | 'Paid';
+  paymentStatus?: 'Order in Progress' | 'Paid in Full';
 }
 
 // Payment method type
-export type PaymentMethod = 'cash' | 'cheque' | 'card' | 'other';
+export type PaymentMethod = 'cash' | 'check' | 'card' | 'other';
 
 // Payment entry interface
 export interface PaymentEntry {
@@ -167,11 +168,15 @@ export interface SupabaseInvoice {
   customer_tel2?: string;
   customer_email?: string;
   subtotal: number;
+  discount_amount?: number;
   tax_amount: number;
   total_amount: number;
-  deposit_amount: number;
+  deposit_amount?: number; // Made optional
   balance_due: number;
   payments_history?: PaymentEntry[];
+  is_edited?: boolean;
+  original_invoice_id?: string;
+  order_id?: string; // Link back to order if needed
   created_at?: string;
   updated_at?: string;
 }
@@ -181,6 +186,7 @@ export interface SupabaseInvoiceLineItem {
   invoice_id: string;
   item_code?: string;
   description: string;
+  brand?: string; // Brand field for internal invoices
   quantity: number;
   unit_price: number;
   line_total: number;

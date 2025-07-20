@@ -2,7 +2,6 @@ import React, { createContext, useContext, useState, useCallback, useEffect } fr
 import { createClient } from '@supabase/supabase-js';
 import { User, Session } from '../types';
 import { initGapiClient, isGmailSignedIn as checkGmailSignedIn, signInToGmail, signOutFromGmail, setAccessToken } from '../integrations/gapiService';
-import { SECURITY_CONFIG } from '../config/security';
 
 // Initialize Supabase client with persistent session storage
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://your-project-url.supabase.co';
@@ -10,9 +9,10 @@ const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'your-anon-key';
 const supabase = createClient(supabaseUrl, supabaseKey, {
   auth: {
     storage: window.localStorage,
-    autoRefreshToken: true,
+    autoRefreshToken: false, // Disable auto refresh to prevent page refreshes
     persistSession: true,
-    detectSessionInUrl: true
+    detectSessionInUrl: false, // Disable URL session detection to prevent refreshes
+    flowType: 'implicit' // Use implicit flow to reduce auth events
   }
 });
 
@@ -370,34 +370,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Initialize auth on app start
     initializeAuth();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        console.log('Auth state change event:', event);
-        setSession(session as unknown as Session);
-        setUser(session?.user as unknown as User || null);
-        
-        // Check if user is authorized after authentication
-        if (session?.user?.email) {
-          // Check if the user's email is in the allowed list
-          const userEmail = session.user.email.toLowerCase().trim();
-          const authorized = SECURITY_CONFIG.ALLOWED_USERS.some(
-            allowedEmail => allowedEmail.toLowerCase().trim() === userEmail
-          );
-          
-          if (!authorized && SECURITY_CONFIG.FEATURES.ENFORCE_USER_WHITELIST) {
-            console.log(`User ${userEmail} is not authorized, signing out`);
-            // Sign out unauthorized users
-            supabase.auth.signOut();
-            return;
-          }
-        }
-        
-        setLoading(false);
-      }
-    );
+    // Note: Supabase auth state listener is disabled to prevent page refresh issues.
+    // Manual session checks are performed in initializeAuth instead.
     
     return () => {
-      subscription.unsubscribe();
+      // No auth state listener cleanup needed since it's disabled
     };
   }, [initializeAuth]);
 

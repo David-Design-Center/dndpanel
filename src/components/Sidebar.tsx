@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Inbox, Send, Folder, FileWarning, Trash, MailPlus, AlertCircle, ChevronDown, ChevronRight, Clipboard, FileText, Settings, Tag, Loader2, BarChart3, Package, Calendar, Search, X, Plus, LogOut } from 'lucide-react';
+import { Inbox, Send, Folder, FileWarning, Trash, MailPlus, AlertCircle, ChevronDown, ChevronRight, Clipboard, FileText, Settings, Tag, Loader2, BarChart3, Package, Calendar, Search, X, Plus } from 'lucide-react';
 import { useLocation, Link } from 'react-router-dom';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -22,7 +22,7 @@ function Sidebar({ onCompose }: SidebarProps) {
   const [isCreateLabelOpen, setIsCreateLabelOpen] = useState(false);
   const [newLabelName, setNewLabelName] = useState('');
   const { labels, loadingLabels, addLabel, isAddingLabel, addLabelError } = useLabel();
-  const { currentProfile, clearProfile } = useProfile();
+  const { currentProfile } = useProfile();
   const { isOutOfOffice, setOutOfOffice } = useOutOfOffice();
   
   // Filter and clean labels based on search
@@ -316,15 +316,15 @@ function Sidebar({ onCompose }: SidebarProps) {
             </Link>
             
             <Link
-              to="/shipments"
+              to="/invoices"
               className={`flex items-center px-4 py-3 text-sm font-medium transition-all duration-200 rounded-xl ${
-                location.pathname === '/shipments'
+                location.pathname === '/invoices'
                   ? 'text-gray-800 bg-white shadow-lg'
                   : 'text-gray-600 hover:bg-white hover:shadow-md'
               }`}
             >
-              <span className="mr-3"><Package size={20} className="text-red-500" /></span>
-              <span>Shipments</span>
+              <span className="mr-3"><FileText size={20} className="text-green-500"/></span>
+              <span>Invoices</span>
             </Link>
             
             <Link
@@ -340,15 +340,15 @@ function Sidebar({ onCompose }: SidebarProps) {
             </Link>
             
             <Link
-              to="/invoice-generator"
+              to="/shipments"
               className={`flex items-center px-4 py-3 text-sm font-medium transition-all duration-200 rounded-xl ${
-                location.pathname === '/invoice-generator'
+                location.pathname === '/shipments'
                   ? 'text-gray-800 bg-white shadow-lg'
                   : 'text-gray-600 hover:bg-white hover:shadow-md'
               }`}
             >
-              <span className="mr-3"><FileText size={20} className="text-green-500"/></span>
-              <span>Invoices</span>
+              <span className="mr-3"><Package size={20} className="text-red-500" /></span>
+              <span>Shipments</span>
             </Link>
             
             <Link
