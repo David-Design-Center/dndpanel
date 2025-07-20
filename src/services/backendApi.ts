@@ -232,11 +232,10 @@ export const fetchUnderDepositInvoices = async (forceRefresh = false): Promise<a
   }
 
   try {
-    // Query invoices where deposit is less than 50% of total amount
+    // Query all invoices and filter for under-deposit ones
     const { data, error } = await supabase
       .from('invoices')
       .select('*')
-      .lt('deposit_amount', supabase.raw('total_amount * 0.5'))
       .order('invoice_date', { ascending: false });
     
     if (error) {
@@ -244,14 +243,21 @@ export const fetchUnderDepositInvoices = async (forceRefresh = false): Promise<a
       throw error;
     }
     
+    // Filter invoices where deposit is less than 50% of total amount
+    const underDepositInvoices = (data || []).filter(invoice => {
+      const depositAmount = parseFloat(invoice.deposit_amount) || 0;
+      const totalAmount = parseFloat(invoice.total_amount) || 0;
+      return depositAmount < (totalAmount * 0.5);
+    });
+    
     // Update cache
     underDepositInvoicesCache = {
-      invoices: data || [],
+      invoices: underDepositInvoices,
       timestamp: Date.now()
     };
     
-    console.log(`Fetched ${data?.length || 0} under-deposit invoices`);
-    return data || [];
+    console.log(`Fetched ${underDepositInvoices.length} under-deposit invoices`);
+    return underDepositInvoices;
   } catch (error) {
     console.error('Error in fetchUnderDepositInvoices:', error);
     // If in development or testing, return mock data for easier development
@@ -782,19 +788,18 @@ export const fetchMonthlyRevenue = async (forceRefresh: boolean = false): Promis
       // Get the current year
       const currentYear = new Date().getFullYear();
       
-      // Fetch all customer orders from Supabase
-      const { data: orderData, error } = await supabase
-        .from('orders')
-        .select('*')
-        .eq('type', 'Customer Order');
+      // Fetch all invoices from Supabase
+      const { data: invoiceData, error } = await supabase
+        .from('invoices')
+        .select('*');
 
       if (error) {
-        console.error('Error fetching orders for monthly revenue:', error);
+        console.error('Error fetching invoices for monthly revenue:', error);
         throw error;
       }
 
-      if (!orderData) {
-        console.log('No order data returned from Supabase');
+      if (!invoiceData) {
+        console.log('No invoice data returned from Supabase');
         return [];
       }
 
@@ -802,15 +807,15 @@ export const fetchMonthlyRevenue = async (forceRefresh: boolean = false): Promis
       const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
       const monthlyRevenue = monthNames.map(month => ({ month, total: 0 }));
 
-      // Process the order data to calculate monthly revenue
-      orderData.forEach(order => {
-        if (order.order_amount && order.order_date) {
-          const orderDate = new Date(order.order_date);
+      // Process the invoice data to calculate monthly revenue
+      invoiceData.forEach(invoice => {
+        if (invoice.total_amount && invoice.invoice_date) {
+          const invoiceDate = new Date(invoice.invoice_date);
           
-          // Only include orders from the current year
-          if (orderDate.getFullYear() === currentYear) {
-            const month = orderDate.getMonth(); // 0-11
-            const amount = parseFloat(order.order_amount);
+          // Only include invoices from the current year
+          if (invoiceDate.getFullYear() === currentYear) {
+            const month = invoiceDate.getMonth(); // 0-11
+            const amount = parseFloat(invoice.total_amount);
             
             if (!isNaN(amount)) {
               monthlyRevenue[month].total += amount;
@@ -868,38 +873,37 @@ export const fetchRecentOrders = async (date?: Date, forceRefresh: boolean = fal
       console.log('Fetching recent orders from Supabase');
 
       let query = supabase
-        .from('orders')
+        .from('invoices')
         .select('*')
-        .eq('type', 'Customer Order')
         .order('created_at', { ascending: false })
-        .limit(5); // Limit to 5 recent orders
+        .limit(5); // Limit to 5 recent invoices
       
-      // If a specific date is provided, filter orders by that date
+      // If a specific date is provided, filter invoices by that date
       if (date) {
         const formattedDate = date.toISOString().split('T')[0];
-        query = query.eq('order_date', formattedDate);
+        query = query.eq('invoice_date', formattedDate);
       }
       
-      const { data: orderData, error } = await query;
+      const { data: invoiceData, error } = await query;
 
       if (error) {
         console.error('Error fetching recent orders:', error);
         throw error;
       }
 
-      if (!orderData) {
+      if (!invoiceData) {
         console.log('No recent orders data returned from Supabase');
         return [];
       }
 
-      // Convert the order data to RecentOrder objects
-      const recentOrders: RecentOrder[] = orderData.map(order => ({
-        id: order.id,
-        customerName: order.customer_name || 'Unknown Customer',
-        customerEmail: order.user_email || 'no-email@example.com',
-        amount: parseFloat(order.order_amount) || 0,
-        date: order.order_date || order.created_at.split('T')[0],
-        createdBy: order.created_by || 'Unknown Staff'
+      // Convert the invoice data to RecentOrder objects
+      const recentOrders: RecentOrder[] = invoiceData.map(invoice => ({
+        id: invoice.id,
+        customerName: invoice.customer_name || 'Unknown Customer',
+        customerEmail: invoice.customer_email || 'no-email@example.com',
+        amount: parseFloat(invoice.total_amount) || 0,
+        date: invoice.invoice_date || invoice.created_at.split('T')[0],
+        createdBy: 'Staff' // invoices don't have created_by field, use default
       }));
 
       console.log('Successfully fetched recent orders:', recentOrders);
@@ -953,7 +957,7 @@ export const fetchDashboardMetrics = async (forceRefresh: boolean = false): Prom
       console.log('Fetching dashboard metrics from Supabase');
       
       const { data, error } = await supabase
-        .from('orders')
+        .from('invoices')
         .select('*');
 
       if (error) {
@@ -998,95 +1002,56 @@ export const fetchDashboardMetrics = async (forceRefresh: boolean = false): Prom
 };
 
 /**
- * Calculate dashboard metrics from raw order data
- * @param orders Raw order data from Supabase
+ * Calculate dashboard metrics from raw invoice data
+ * @param invoices Raw invoice data from Supabase
  * @returns Calculated dashboard metrics
  */
-const calculateDashboardMetrics = (orders: any[]): DashboardMetrics => {
-  const priceRequests = orders.filter(order => order.type === 'Price Request');
-  const customerOrders = orders.filter(order => order.type === 'Customer Order');
-  
-  // Calculate total revenue from customer orders only
-  const totalRevenue = customerOrders.reduce((sum, order) => {
-    return sum + (parseFloat(order.order_amount) || 0);
+const calculateDashboardMetrics = (invoices: any[]): DashboardMetrics => {
+  // Calculate total revenue from all invoices
+  const totalRevenue = invoices.reduce((sum, invoice) => {
+    return sum + (parseFloat(invoice.total_amount) || 0);
   }, 0);
   
   // Calculate average order value
-  const averageOrderValue = customerOrders.length > 0 ? totalRevenue / customerOrders.length : 0;
+  const averageOrderValue = invoices.length > 0 ? totalRevenue / invoices.length : 0;
   
   // Get unique customers (by email or name)
   const uniqueCustomers = new Set();
-  customerOrders.forEach(order => {
-    const identifier = order.user_email || order.customer_name;
+  invoices.forEach(invoice => {
+    const identifier = invoice.customer_email || invoice.customer_name;
     if (identifier) {
       uniqueCustomers.add(identifier.toLowerCase());
     }
   });
   
-  // Calculate staff metrics
-  const staffMetrics: { [staffName: string]: any } = {};
+  // Calculate payment status breakdown based on balance_due
+  const paymentStatusBreakdown: { [status: string]: { count: number; totalAmount: number } } = {
+    'Paid in Full': { count: 0, totalAmount: 0 },
+    'Order in Progress': { count: 0, totalAmount: 0 }
+  };
   
-  orders.forEach(order => {
-    const staffName = order.created_by || 'Unknown';
+  invoices.forEach(invoice => {
+    const totalAmount = parseFloat(invoice.total_amount) || 0;
+    const balanceDue = parseFloat(invoice.balance_due) || 0;
     
-    if (!staffMetrics[staffName]) {
-      staffMetrics[staffName] = {
-        totalOrders: 0,
-        priceRequests: 0,
-        customerOrders: 0,
-        totalRevenue: 0,
-        customers: new Set()
-      };
+    if (balanceDue <= 0) {
+      paymentStatusBreakdown['Paid in Full'].count++;
+      paymentStatusBreakdown['Paid in Full'].totalAmount += totalAmount;
+    } else {
+      paymentStatusBreakdown['Order in Progress'].count++;
+      paymentStatusBreakdown['Order in Progress'].totalAmount += totalAmount;
     }
-    
-    staffMetrics[staffName].totalOrders++;
-    
-    if (order.type === 'Price Request') {
-      staffMetrics[staffName].priceRequests++;
-    } else if (order.type === 'Customer Order') {
-      staffMetrics[staffName].customerOrders++;
-      staffMetrics[staffName].totalRevenue += parseFloat(order.order_amount) || 0;
-      
-      // Track unique customers per staff
-      const customerIdentifier = order.user_email || order.customer_name;
-      if (customerIdentifier) {
-        staffMetrics[staffName].customers.add(customerIdentifier.toLowerCase());
-      }
-    }
-  });
-  
-  // Convert customer sets to counts
-  Object.keys(staffMetrics).forEach(staffName => {
-    staffMetrics[staffName].customers = staffMetrics[staffName].customers.size;
-  });
-  
-  // Calculate status breakdown
-  const statusBreakdown: { [status: string]: number } = {};
-  orders.forEach(order => {
-    const status = order.status || 'Unknown';
-    statusBreakdown[status] = (statusBreakdown[status] || 0) + 1;
-  });
-  
-  // Calculate payment status breakdown
-  const paymentStatusBreakdown: { [status: string]: { count: number; totalAmount: number } } = {};
-  customerOrders.forEach(order => {
-    const paymentStatus = order.payment_status || 'Unknown';
-    if (!paymentStatusBreakdown[paymentStatus]) {
-      paymentStatusBreakdown[paymentStatus] = { count: 0, totalAmount: 0 };
-    }
-    paymentStatusBreakdown[paymentStatus].count++;
-    paymentStatusBreakdown[paymentStatus].totalAmount += parseFloat(order.order_amount) || 0;
   });
   
   return {
-    totalOrders: orders.length,
-    priceRequests: priceRequests.length,
-    customerOrders: customerOrders.length,
+    totalOrders: invoices.length,
+    priceRequests: 0, // No longer applicable with invoices
+    customerOrders: invoices.length, // All invoices are customer orders
     totalRevenue,
     averageOrderValue,
     totalCustomers: uniqueCustomers.size,
-    staffMetrics,
-    statusBreakdown,
+    staffMetrics: {}, // Could be added later if needed
+    statusBreakdown: {}, // Could be added later if needed
     paymentStatusBreakdown
   };
 };

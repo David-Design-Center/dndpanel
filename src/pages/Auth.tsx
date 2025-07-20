@@ -1,31 +1,53 @@
-import { useState } from 'react';
+import { useState, ChangeEvent, FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Lock } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import Footer from '../components/common/Footer';
+import { 
+  Ripple, 
+  AuthTabs, 
+  TechOrbitDisplay,
+  businessIconsArray 
+} from '../components/ui/modern-animated-sign-in';
+
+type FormData = {
+  email: string;
+  password: string;
+};
 
 function Auth() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [formData, setFormData] = useState<FormData>({
+    email: '',
+    password: '',
+  });
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const { signIn } = useAuth();
   const navigate = useNavigate();
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleInputChange = (
+    event: ChangeEvent<HTMLInputElement>,
+    name: keyof FormData
+  ) => {
+    const value = event.target.value;
+    setFormData((prevState) => ({
+      ...prevState,
+      [name]: value,
+    }));
+  };
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     setError(null);
     setIsLoading(true);
 
-    console.log('Attempting to sign in with:', email);
+    console.log('Attempting to sign in with:', formData.email);
 
     try {
-      const { error: authError } = await signIn(email, password);
+      const { error: authError } = await signIn(formData.email, formData.password);
       
       if (!authError) {
-        console.log('Authentication successful, navigating to inbox');
-        // Authentication successful, navigate to the app
-        navigate('/inbox');
+        console.log('Authentication successful, navigating to dashboard');
+        navigate('/');
       } else {
         console.error('Authentication error:', authError);
         setError(authError.message || 'Authentication failed. Please check your credentials.');
@@ -38,94 +60,56 @@ function Auth() {
     }
   };
 
+  const formFields = {
+    header: 'Welcome to DND Panel',
+    subHeader: 'Sign in to your business dashboard',
+    fields: [
+      {
+        label: 'Email',
+        required: true,
+        type: 'email' as const,
+        placeholder: 'Enter your email address',
+        onChange: (event: ChangeEvent<HTMLInputElement>) =>
+          handleInputChange(event, 'email'),
+        value: formData.email,
+      },
+      {
+        label: 'Password',
+        required: true,
+        type: 'password' as const,
+        placeholder: 'Enter your password',
+        onChange: (event: ChangeEvent<HTMLInputElement>) =>
+          handleInputChange(event, 'password'),
+        value: formData.password,
+      },
+    ],
+    submitButton: 'Sign in',
+  };
+
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
-      <div className="sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="flex justify-center">
-          <div className="h-12 w-12 rounded-full bg-blue-600 flex items-center justify-center">
-            <Lock className="h-6 w-6 text-white" />
-          </div>
-        </div>
-        <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-          Secure Access
-        </h2>
-        <p className="mt-2 text-center text-sm text-gray-600">
-          Sign in to your authorized account
-        </p>
-      </div>
+    <div className="min-h-screen bg-gray-50 flex flex-col">
+      <section className='flex max-lg:justify-center h-screen'>
+        {/* Left Side - Animated Background */}
+        <span className='flex flex-col justify-center w-1/2 max-lg:hidden relative overflow-hidden'>
+          <Ripple mainCircleSize={100} />
+          <TechOrbitDisplay 
+            iconsArray={businessIconsArray} 
+            logoUrl="https://res.cloudinary.com/designcenter/image/upload/DnD_Logo_Transparent.svg"
+          />
+        </span>
 
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
-          {error && (
-            <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 text-sm rounded flex items-center">
-              <Lock className="h-4 w-4 mr-2 flex-shrink-0" />
-              {error}
-            </div>
-          )}
-          
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-                Email address
-              </label>
-              <div className="mt-1">
-                <input
-                  id="email"
-                  name="email"
-                  type="email"
-                  autoComplete="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="input"
-                  placeholder="Enter authorized email"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-                Password
-              </label>
-              <div className="mt-1">
-                <input
-                  id="password"
-                  name="password"
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="input"
-                />
-              </div>
-            </div>
-
-            <div>
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="w-full btn btn-primary flex justify-center items-center"
-              >
-                {isLoading ? (
-                  <span className="h-5 w-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
-                ) : (
-                  <Lock className="h-5 w-5 mr-2" />
-                )}
-                Sign In
-              </button>
-            </div>
-          </form>
-
-          <div className="mt-6 text-center">
-            <p className="text-xs text-gray-500">
-              This application is restricted to authorized users only.<br/>
-            </p>
-          </div>
-        </div>
-      </div>
+        {/* Right Side - Login Form */}
+        <span className='w-1/2 h-full flex flex-col justify-center items-center max-lg:w-full max-lg:px-[10%]'>
+          <AuthTabs
+            formFields={formFields}
+            handleSubmit={handleSubmit}
+            errorField={error || undefined}
+            isLoading={isLoading}
+          />
+        </span>
+      </section>
       
-      <Footer className="mt-8" />
+      <Footer className="mt-auto" />
     </div>
   );
 }
