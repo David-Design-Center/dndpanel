@@ -1,29 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
 import { User, Session } from '../types';
+import { supabase } from '../lib/supabase';
 import { initGapiClient, isGmailSignedIn as checkGmailSignedIn, signInToGmail, signOutFromGmail, setAccessToken } from '../integrations/gapiService';
-
-// Initialize Supabase client with persistent session storage
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://your-project-url.supabase.co';
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'your-anon-key';
-
-// Debug logging for production
-console.log('Supabase Config:', {
-  url: supabaseUrl?.substring(0, 30) + '...',
-  hasKey: !!supabaseKey,
-  keyLength: supabaseKey?.length || 0,
-  environment: import.meta.env.MODE
-});
-
-const supabase = createClient(supabaseUrl, supabaseKey, {
-  auth: {
-    storage: window.localStorage,
-    autoRefreshToken: false, // Disable auto refresh to prevent page refreshes
-    persistSession: true,
-    detectSessionInUrl: false, // Disable URL session detection to prevent refreshes
-    flowType: 'implicit' // Use implicit flow to reduce auth events
-  }
-});
 
 interface AuthContextType {
   user: User | null;
@@ -396,11 +374,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signIn = async (email: string, password: string) => {
     setLoading(true);
-    console.log('Attempting sign in with Supabase client configuration:', {
-      url: supabaseUrl?.substring(0, 30) + '...',
-      hasKey: !!supabaseKey,
-      environment: import.meta.env.MODE
-    });
     
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     

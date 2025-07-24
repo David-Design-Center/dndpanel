@@ -235,30 +235,95 @@ export const clearAutoReplyCache = (): void => {
   console.log('🧹 Auto-reply cache cleared (both processed and pending)');
 };
 
-// Cache for emails to reduce API calls
+// Cache for emails to reduce API calls - now with localStorage persistence
+const CACHE_KEY_PREFIX = 'dnd_email_cache_';
+const CACHE_VALIDITY_MS = 30 * 60 * 1000; // Increased to 30 minutes for localStorage
+
+// Enhanced cache interface
+interface EmailCacheData {
+  emails: Email[];
+  timestamp: number;
+  query: string;
+  profileId?: string;
+  nextPageToken?: string;
+}
+
+interface EmailDetailCache {
+  email: Email;
+  timestamp: number;
+  profileId?: string;
+}
+
+// In-memory cache for quick access
 const emailCache: {
-  list?: { emails: Email[], timestamp: number, query: string, profileId?: string },
-  details: { [id: string]: { email: Email, timestamp: number, profileId?: string } },
-  threads: { [threadId: string]: { email: Email, timestamp: number, profileId?: string } }
+  list?: EmailCacheData,
+  details: { [id: string]: EmailDetailCache },
+  threads: { [threadId: string]: EmailDetailCache }
 } = {
   details: {},
   threads: {}
 };
 
-// Cache validity duration (5 minutes)
-const CACHE_VALIDITY_MS = 5 * 60 * 1000;
+// localStorage cache utilities
+const getFromLocalStorage = (key: string): any => {
+  try {
+    const item = localStorage.getItem(key);
+    return item ? JSON.parse(item) : null;
+  } catch (error) {
+    console.warn('Error reading from localStorage:', error);
+    return null;
+  }
+};
+
+const setToLocalStorage = (key: string, value: any): void => {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    console.warn('Error writing to localStorage:', error);
+    // If storage is full, clear old email caches
+    if (error instanceof Error && error.name === 'QuotaExceededError') {
+      clearOldLocalStorageCaches();
+      try {
+        localStorage.setItem(key, JSON.stringify(value));
+      } catch (retryError) {
+        console.warn('Still unable to save to localStorage after cleanup');
+      }
+    }
+  }
+};
+
+const clearOldLocalStorageCaches = (): void => {
+  const keys = Object.keys(localStorage);
+  const emailCacheKeys = keys.filter(key => key.startsWith(CACHE_KEY_PREFIX));
+  const now = Date.now();
+  
+  emailCacheKeys.forEach(key => {
+    const data = getFromLocalStorage(key);
+    if (data && data.timestamp && (now - data.timestamp > CACHE_VALIDITY_MS)) {
+      localStorage.removeItem(key);
+    }
+  });
+};
 
 // Current profile ID for cache validation
 let currentCacheProfileId: string | null = null;
 
 /**
- * Clear all email caches
+ * Clear all email caches (both memory and localStorage)
  */
 export const clearEmailCache = (): void => {
-  console.log('Clearing all email caches');
+  console.log('Clearing all email caches (memory + localStorage)');
+  
+  // Clear in-memory cache
   emailCache.list = undefined;
   emailCache.details = {};
   emailCache.threads = {};
+  
+  // Clear localStorage cache
+  const keys = Object.keys(localStorage);
+  const emailCacheKeys = keys.filter(key => key.startsWith(CACHE_KEY_PREFIX));
+  emailCacheKeys.forEach(key => localStorage.removeItem(key));
+  
   currentCacheProfileId = null;
 };
 
@@ -273,6 +338,50 @@ export const clearEmailCacheForProfileSwitch = (newProfileId: string): void => {
     clearEmailCache();
     currentCacheProfileId = newProfileId;
   }
+};
+
+/**
+ * Get cached email list with localStorage fallback
+ */
+const getCachedEmailList = (query: string): EmailCacheData | null => {
+  // First check in-memory cache
+  if (emailCache.list && 
+      emailCache.list.query === query && 
+      isCacheValidForProfile(emailCache.list.timestamp, emailCache.list.profileId)) {
+    return emailCache.list;
+  }
+  
+  // Then check localStorage
+  const cacheKey = `${CACHE_KEY_PREFIX}list_${query}_${currentCacheProfileId}`;
+  const cachedData = getFromLocalStorage(cacheKey);
+  
+  if (cachedData && isCacheValidForProfile(cachedData.timestamp, cachedData.profileId)) {
+    // Restore to in-memory cache for faster access
+    emailCache.list = cachedData;
+    return cachedData;
+  }
+  
+  return null;
+};
+
+/**
+ * Save email list to cache (both memory and localStorage)
+ */
+const setCachedEmailList = (emails: Email[], query: string, nextPageToken?: string): void => {
+  const cacheData: EmailCacheData = {
+    emails,
+    timestamp: Date.now(),
+    query,
+    profileId: currentCacheProfileId || undefined,
+    nextPageToken
+  };
+  
+  // Save to in-memory cache
+  emailCache.list = cacheData;
+  
+  // Save to localStorage
+  const cacheKey = `${CACHE_KEY_PREFIX}list_${query}_${currentCacheProfileId}`;
+  setToLocalStorage(cacheKey, cacheData);
 };
 
 /**
@@ -411,107 +520,104 @@ export const getEmails = async (
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
   // If pageToken is provided, always fetch new data (don't use cache for pagination)
-  // If force refresh is requested or cache is invalid, fetch new data
-  if (pageToken || forceRefresh || 
-      !emailCache.list || 
-      !isCacheValidForProfile(emailCache.list.timestamp, emailCache.list.profileId) || 
-      emailCache.list.query !== query) {
+  // If force refresh is requested, fetch new data
+  if (pageToken || forceRefresh) {
     console.log('Fetching fresh email list' + 
       (forceRefresh ? ' (forced refresh)' : '') + 
       (pageToken ? ' (pagination)' : '') + 
       ` with query: ${query}`);
+  } else {
+    // Try to get from cache first (with localStorage fallback)
+    const cachedData = getCachedEmailList(query);
+    if (cachedData) {
+      console.log(`📦 Using cached email list for query: ${query} (${cachedData.emails.length} emails)`);
+      return {
+        emails: cachedData.emails,
+        nextPageToken: cachedData.nextPageToken,
+        resultSizeEstimate: cachedData.emails.length
+      };
+    }
     
-    try {
-      // Try to fetch from Gmail
-      console.log('Fetching emails from Gmail API');
-      const gmailResponse = await fetchGmailMessages(query, maxResults, pageToken);
+    console.log('No valid cache found, fetching fresh email list with query:', query);
+  }
+  
+  try {
+    // Fetch from Gmail
+    console.log('Fetching emails from Gmail API');
+    const gmailResponse = await fetchGmailMessages(query, maxResults, pageToken);
+    
+    // If this is not a paginated request (no pageToken), update cache
+    if (!pageToken) {
+      setCachedEmailList(gmailResponse.emails, query, gmailResponse.nextPageToken);
       
-      // If this is not a paginated request (no pageToken), update cache
-      if (!pageToken) {
-        emailCache.list = {
-          emails: gmailResponse.emails,
+      // Also update the details cache for each email
+      gmailResponse.emails.forEach(email => {
+        emailCache.details[email.id] = {
+          email,
           timestamp: Date.now(),
-          query: query,
           profileId: currentCacheProfileId || undefined
         };
         
-        // Also update the details cache for each email
-        gmailResponse.emails.forEach(email => {
-          emailCache.details[email.id] = {
+        // Also update thread cache if threadId is present
+        if (email.threadId) {
+          emailCache.threads[email.threadId] = {
             email,
             timestamp: Date.now(),
             profileId: currentCacheProfileId || undefined
           };
-          
-          // Also update thread cache if threadId is present
-          if (email.threadId) {
-            emailCache.threads[email.threadId] = {
-              email,
-              timestamp: Date.now(),
-              profileId: currentCacheProfileId || undefined
-            };
-          }
-        });
+        }
+      });
+      
+      // Check for auto-reply on new unread emails (only for inbox queries)
+      if (query.includes('in:inbox') && !pageToken) {
+        const unreadEmails = gmailResponse.emails.filter(email => !email.isRead);
         
-        // Check for auto-reply on new unread emails (only for inbox queries)
-        if (query.includes('in:inbox') && !pageToken) {
-          const unreadEmails = gmailResponse.emails.filter(email => !email.isRead);
-          
-          console.log(`Processing ${unreadEmails.length} unread emails for auto-reply`);
-          
-          for (const email of unreadEmails) {
-            try {
-              await checkAndSendAutoReply(email);
-            } catch (error) {
-              console.error('Auto-reply check failed for email:', email.id, error);
-            }
+        console.log(`Processing ${unreadEmails.length} unread emails for auto-reply`);
+        
+        for (const email of unreadEmails) {
+          try {
+            await checkAndSendAutoReply(email);
+          } catch (error) {
+            console.error('Auto-reply check failed for email:', email.id, error);
           }
         }
       }
-      
-      return {
-        emails: gmailResponse.emails,
-        nextPageToken: gmailResponse.nextPageToken,
-        resultSizeEstimate: gmailResponse.resultSizeEstimate
-      };
-    } catch (error) {
-      console.error('Error fetching from Gmail, falling back to mock data:', error);
-      // Fall back to mock data only if not paginating
-      if (!pageToken) {
-        return new Promise((resolve) => {
-          setTimeout(() => {
-            // Still cache the mock data to prevent repeated fallbacks
-            const mockEmailsCopy = [...mockEmails];
-            emailCache.list = {
-              emails: mockEmailsCopy,
-              timestamp: Date.now(),
-              query: query,
-              profileId: currentCacheProfileId || undefined
-            };
-            resolve({
-              emails: mockEmailsCopy,
-              nextPageToken: undefined,
-              resultSizeEstimate: mockEmailsCopy.length
-            });
-          }, 500);
-        });
-      } else {
-        // For pagination, return empty results on error
-        return {
-          emails: [],
-          nextPageToken: undefined,
-          resultSizeEstimate: 0
-        };
-      }
     }
-  } else {
-    // Use cached data (only for non-paginated requests)
-    console.log('Using cached email list');
+    
     return {
-      emails: emailCache.list.emails,
-      nextPageToken: undefined,
-      resultSizeEstimate: emailCache.list.emails.length
+      emails: gmailResponse.emails,
+      nextPageToken: gmailResponse.nextPageToken,
+      resultSizeEstimate: gmailResponse.resultSizeEstimate
     };
+  } catch (error) {
+    console.error('Error fetching from Gmail, falling back to mock data:', error);
+    // Fall back to mock data only if not paginating
+    if (!pageToken) {
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          // Still cache the mock data to prevent repeated fallbacks
+          const mockEmailsCopy = [...mockEmails];
+          emailCache.list = {
+            emails: mockEmailsCopy,
+            timestamp: Date.now(),
+            query: query,
+            profileId: currentCacheProfileId || undefined
+          };
+          resolve({
+            emails: mockEmailsCopy,
+            nextPageToken: undefined,
+            resultSizeEstimate: mockEmailsCopy.length
+          });
+        }, 500);
+      });
+    } else {
+      // For pagination, return empty results on error
+      return {
+        emails: [],
+        nextPageToken: undefined,
+        resultSizeEstimate: 0
+      };
+    }
   }
 };
 

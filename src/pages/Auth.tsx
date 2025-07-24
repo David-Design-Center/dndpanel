@@ -40,19 +40,15 @@ function Auth() {
     setError(null);
     setIsLoading(true);
 
-    console.log('Attempting to sign in with:', formData.email);
-
     try {
       const { error: authError } = await signIn(formData.email, formData.password);
       
       if (!authError) {
-        console.log('Authentication successful, navigating to dashboard');
         // Small delay to ensure auth state has propagated
         setTimeout(() => {
           navigate('/');
         }, 100);
       } else {
-        console.error('Authentication error:', authError);
         setError(authError.message || 'Authentication failed. Please check your credentials.');
       }
     } catch (error) {

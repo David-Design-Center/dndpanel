@@ -320,6 +320,18 @@ export const setAccessToken = (accessToken: string, expiresIn: number): void => 
 };
 
 /**
+ * Get the current Gmail access token
+ * @returns The current access token or null if not available or expired
+ */
+export const getCurrentAccessToken = (): string | null => {
+  // Check if token is still valid (with 5-minute buffer)
+  if (currentAccessToken && Date.now() < tokenExpiryTime - 5 * 60 * 1000) {
+    return currentAccessToken;
+  }
+  return null;
+};
+
+/**
  * Decode HTML entities in a string
  */
 const decodeHtmlEntities = (text: string): string => {
@@ -651,7 +663,8 @@ export const fetchGmailMessages = async (
         const msg = await window.gapi.client.gmail.users.messages.get({
           userId: 'me',
           id: message.id,
-          format: 'full'
+          format: 'metadata', // Use metadata format for inbox list - much faster
+          metadataHeaders: ['Subject', 'From', 'To', 'Date'] // Only get headers we need
         });
 
         if (!msg.result || !msg.result.payload) return null;
@@ -672,60 +685,24 @@ export const fetchGmailMessages = async (
         }
 
         let preview = msg.result.snippet ? decodeHtmlEntities(msg.result.snippet) : '';
-        let body = '';
-
-        const bodyPart = findBodyPart(payload);
-        if (bodyPart) {
-          body = extractTextFromPart(bodyPart);
-        } else {
-          console.warn(`No suitable body part found for message ID (list view): ${message.id}. Snippet: "${preview}"`);
-          if (!body && preview) body = preview.replace(/\n/g, '<br>');
-        }
+        // For inbox list view, use snippet as body to avoid expensive body processing
+        let body = preview;
 
         // Process inline images and replace CID references with data URIs
-        if (body) {
-          try {
-            body = await processInlineImages(message.id, body, payload);
-          } catch (error) {
-            console.warn(`Failed to process inline images for message ${message.id}:`, error);
-            // Continue with original body if inline image processing fails
-          }
-        }
+        // NOTE: Skip inline image processing for inbox list view for performance
+        // Images will be processed when the email is actually opened
+        // if (body) {
+        //   try {
+        //     body = await processInlineImages(message.id, body, payload);
+        //   } catch (error) {
+        //     console.warn(`Failed to process inline images for message ${message.id}:`, error);
+        //     // Continue with original body if inline image processing fails
+        //   }
+        // }
 
+        // Skip attachment processing for inbox list view (metadata format doesn't include payload)
+        // Attachments will be processed when the email is actually opened
         const attachments: NonNullable<Email['attachments']> = [];
-        function findAttachmentsRecursive(currentPart: EmailPart) {
-          if (currentPart.filename && currentPart.filename.length > 0 && currentPart.body?.attachmentId) {
-            let mimeType = currentPart.mimeType || 'application/octet-stream';
-            
-            if (mimeType === 'application/octet-stream' && currentPart.filename) {
-              const ext = currentPart.filename.split('.').pop()?.toLowerCase();
-              if (ext === 'pdf') mimeType = 'application/pdf';
-              else if (ext === 'doc' || ext === 'docx') mimeType = 'application/msword';
-              else if (ext === 'xls' || ext === 'xlsx') mimeType = 'application/vnd.ms-excel';
-              else if (ext === 'ppt' || ext === 'pptx') mimeType = 'application/vnd.ms-powerpoint';
-              else if (ext === 'jpg' || ext === 'jpeg') mimeType = 'image/jpeg';
-              else if (ext === 'png') mimeType = 'image/png';
-              else if (ext === 'gif') mimeType = 'image/gif';
-              else if (ext === 'zip') mimeType = 'application/zip';
-            }
-            
-            attachments.push({
-              name: decodeHeader(currentPart.filename),
-              url: `https://mail.google.com/mail/u/0/#inbox/${message.id}`,
-              size: currentPart.body.size || 0,
-              mimeType: mimeType,
-              attachmentId: currentPart.body.attachmentId,
-              partId: currentPart.partId
-            });
-          }
-          if (currentPart.parts) {
-            for (const subPart of currentPart.parts) {
-              findAttachmentsRecursive(subPart);
-            }
-          }
-        }
-        if (payload.parts) findAttachmentsRecursive(payload);
-        else if (payload.filename && payload.body?.attachmentId) findAttachmentsRecursive(payload);
 
         return {
           id: message.id,

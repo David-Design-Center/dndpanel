@@ -18,14 +18,6 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
   // Convert user from AuthContext to our security model
   const isAuthenticated = !!user;
   
-  // Debug logging
-  console.log('SecurityContext state:', {
-    hasUser: !!user,
-    userEmail: user?.email,
-    isAuthenticated,
-    authLoading
-  });
-  
   // Check if the user's email is in the allowed list
   const isUserAuthorized = React.useMemo(() => {
     if (!user?.email) return false;

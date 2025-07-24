@@ -37,7 +37,7 @@ function Inbox() {
   const [activeId, setActiveId] = useState<string | null>(null);
 
   // Email pagination settings
-  const EMAIL_PAGE_SIZE = 20;
+  const EMAIL_PAGE_SIZE = 50; // Increased from 20 to reduce API calls but still manageable
 
   // Set up sensors for drag and drop
   const sensors = useSensors(

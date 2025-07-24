@@ -127,71 +127,71 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
       {...attributes}
       {...listeners}
       onClick={() => onClick(email.id)}
-      className={`p-3 border-b border-gray-200 cursor-pointer transition-colors hover:bg-gray-50 ${
+      className={`p-2 border-b border-gray-200 cursor-pointer transition-colors hover:bg-gray-50 ${
         !email.isRead ? 'bg-blue-50 border-l-4 border-l-blue-500' : 'bg-white'
       } ${isDragging ? 'opacity-50 z-10' : ''}`}
       data-dragging={isDragging}
     >
       <div className="flex items-center">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between">
-            <h3 className={`text-sm ${!email.isRead ? 'font-bold text-gray-900' : 'font-normal text-gray-700'} truncate`}>
+          <div className="flex items-center justify-between mb-1">
+            <h3 className={`text-xs ${!email.isRead ? 'font-bold text-gray-900' : 'font-normal text-gray-700'} truncate`}>
               {email.from.name}
             </h3>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
               <span className="text-xs text-gray-500">{formattedDate}</span>
               <button
                 onClick={handleToggleReadStatus}
                 disabled={isToggling}
-                className={`p-1 rounded hover:bg-gray-100 transition-colors ${
+                className={`p-0.5 rounded hover:bg-gray-100 transition-colors ${
                   isToggling ? 'opacity-50 cursor-not-allowed' : ''
                 }`}
                 title={email.isRead ? 'Mark as unread' : 'Mark as read'}
               >
                 {email.isRead ? (
-                  <MailOpen size={14} className="text-gray-500" />
+                  <MailOpen size={12} className="text-gray-500" />
                 ) : (
-                  <Mail size={14} className="text-blue-600" />
+                  <Mail size={12} className="text-blue-600" />
                 )}
               </button>
               <button
                 onClick={handleToggleImportance}
                 disabled={isTogglingImportance}
-                className={`p-1 rounded hover:bg-gray-100 transition-colors ${
+                className={`p-0.5 rounded hover:bg-gray-100 transition-colors ${
                   isTogglingImportance ? 'opacity-50 cursor-not-allowed' : ''
                 }`}
                 title={email.isImportant ? 'Mark as unimportant' : 'Mark as important'}
               >
                 {email.isImportant ? (
-                  <Star size={14} className="text-yellow-500 fill-yellow-500" />
+                  <Star size={12} className="text-yellow-500 fill-yellow-500" />
                 ) : (
-                  <Star size={14} className="text-gray-500 hover:text-yellow-400" />
+                  <Star size={12} className="text-gray-500 hover:text-yellow-400" />
                 )}
               </button>
               {isDraft && (
                 <button
                   onClick={handleDelete}
                   disabled={isDeleting}
-                  className={`p-1 rounded hover:bg-red-100 transition-colors ${
+                  className={`p-0.5 rounded hover:bg-red-100 transition-colors ${
                     isDeleting ? 'opacity-50 cursor-not-allowed' : ''
                   }`}
                   title="Delete draft"
                 >
                   {isDeleting ? (
-                    <div className="w-3 h-3 border border-red-500 border-t-transparent rounded-full animate-spin"></div>
+                    <div className="w-2.5 h-2.5 border border-red-500 border-t-transparent rounded-full animate-spin"></div>
                   ) : (
-                    <Trash2 size={14} className="text-red-500 hover:text-red-700" />
+                    <Trash2 size={12} className="text-red-500 hover:text-red-700" />
                   )}
                 </button>
               )}
             </div>
           </div>
-          <p className={`text-sm ${!email.isRead ? 'font-semibold text-gray-900' : 'font-normal text-gray-600'} truncate`}>
+          <p className={`text-xs ${!email.isRead ? 'font-semibold text-gray-900' : 'font-normal text-gray-600'} truncate mb-0.5`}>
             {email.subject}
           </p>
           <p className="text-xs text-gray-500 truncate">
             {email.attachments && email.attachments.length > 0 && (
-              <Paperclip className="inline-block h-3 w-3 mr-1" />
+              <Paperclip className="inline-block h-2.5 w-2.5 mr-1" />
             )}
             {email.preview}
           </p>

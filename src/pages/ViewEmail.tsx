@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Reply, Trash, Paperclip, Tag, ChevronDown, Forward } from 'lucide-react';
 import { formatDistanceToNow, parseISO, format } from 'date-fns';
-import { getEmailById, getAttachmentDownloadUrl, getEmailByThreadId, getThreadEmails, markEmailAsTrash, applyLabelsToEmail, deleteDraft } from '../services/emailService';
+import { getAttachmentDownloadUrl, markEmailAsTrash, applyLabelsToEmail, deleteDraft } from '../services/emailService';
+import { optimizedEmailService } from '../services/optimizedEmailService';
 import { Email } from '../types';
 import { useProfile } from '../contexts/ProfileContext';
 import { useLabel } from '../contexts/LabelContext';
@@ -460,6 +461,71 @@ function ViewEmail() {
     console.log('Current profile in ViewEmail:', currentProfile);
   }, [currentProfile]);
 
+  // Optimized email fetching (no fallback - optimized only)
+  const fetchEmailOptimized = async (emailId: string): Promise<Email | undefined> => {
+    console.log(`🔍 fetchEmailOptimized called for email ID: ${emailId}`);
+    
+    try {
+      // Check if optimized service is available
+      const isOptimizedAvailable = await optimizedEmailService.isAvailable();
+      
+      if (!isOptimizedAvailable) {
+        throw new Error('Optimized service is not available');
+      }
+
+      console.log('🚀 Using optimized server-side email fetching');
+      
+      // Try to fetch as a thread first, then as single message
+      try {
+        const threadEmails = await optimizedEmailService.fetchEmailThread(emailId);
+        if (threadEmails.length > 0) {
+          console.log(`✅ Successfully fetched ${threadEmails.length} emails via optimized service`);
+          return threadEmails[0]; // Return the main email
+        }
+      } catch (threadError) {
+        console.log('Thread fetch failed, trying single message:', threadError);
+        const singleEmail = await optimizedEmailService.fetchSingleEmail(emailId);
+        console.log(`✅ Successfully fetched single email via optimized service`);
+        return singleEmail;
+      }
+    } catch (error) {
+      console.error('❌ Optimized fetch failed:', error);
+      throw error; // Don't fall back, let the caller handle the error
+    }
+  };
+
+  // Optimized thread fetching (no fallback - optimized only)
+  const fetchThreadEmailsOptimized = async (threadId: string) => {
+    try {
+      const isOptimizedAvailable = await optimizedEmailService.isAvailable();
+      
+      if (!isOptimizedAvailable) {
+        throw new Error('Optimized service is not available');
+      }
+
+      console.log('🚀 Using optimized server-side thread fetching');
+      const threadEmails = await optimizedEmailService.fetchEmailThread(threadId);
+      
+      // Sort by date (newest first) to match existing behavior
+      const sortedEmails = threadEmails.sort((a, b) => {
+        return new Date(b.date).getTime() - new Date(a.date).getTime();
+      });
+      
+      console.log(`✅ Server-side processing completed: ${sortedEmails.length} emails`);
+      setProcessedThreadMessages(sortedEmails);
+      
+      // Auto-expand the first (newest/top) message
+      if (sortedEmails.length > 0) {
+        setExpandedMessages(new Set([sortedEmails[0].id]));
+      }
+      
+      return;
+    } catch (error) {
+      console.error('❌ Optimized thread fetch failed:', error);
+      throw error; // Don't fall back, let the caller handle the error
+    }
+  };
+
   // Check if this is a draft from location state
   useEffect(() => {
     if (location.state && (location.state as any).isDraft) {
@@ -477,13 +543,8 @@ function ViewEmail() {
         
         // Check if we're looking at a specific message ID or a thread ID
         if (id) {
-          // First try to interpret the ID as a thread ID
-          fetchedEmail = await getEmailByThreadId(id);
-          
-          // If that fails, try as a regular message ID
-          if (!fetchedEmail) {
-            fetchedEmail = await getEmailById(id);
-          }
+          // Use optimized fetching with fallback
+          fetchedEmail = await fetchEmailOptimized(id);
         }
         
         if (fetchedEmail) {
@@ -492,9 +553,9 @@ function ViewEmail() {
           
           // If this email has a threadId and there are multiple emails in the thread, fetch them
           if (fetchedEmail.threadId) {
-            await fetchThreadEmails(fetchedEmail.threadId);
+            await fetchThreadEmailsOptimized(fetchedEmail.threadId);
           } else {
-            // Single email, process it immediately
+            // Single email, process it immediately using traditional method
             await processMessages([fetchedEmail]);
           }
         } else {
@@ -519,8 +580,8 @@ function ViewEmail() {
       console.log('🔄 Refreshing thread after reply...');
       // Clear the location state to prevent infinite refresh
       window.history.replaceState({}, '', window.location.pathname);
-      // Refetch the thread emails
-      fetchThreadEmails(email.threadId);
+      // Refetch the thread emails using optimized method
+      fetchThreadEmailsOptimized(email.threadId);
     }
   }, [location.state, email?.threadId]);
 
@@ -578,19 +639,6 @@ function ViewEmail() {
       })));
     }
   }, [allThreadMessages]);
-
-  // Function to fetch thread emails
-  const fetchThreadEmails = async (threadId: string) => {
-    try {
-      console.log(`📥 Fetching thread emails for threadId: ${threadId}`);
-      const emails = await getThreadEmails(threadId);
-      console.log(`📬 Fetched ${emails.length} emails in thread`);
-      // Process the thread emails directly
-      await processMessages(emails);
-    } catch (error) {
-      console.error('Error fetching thread emails:', error);
-    }
-  };
 
   // Function to toggle message expansion
   const toggleMessageExpansion = (messageId: string) => {
