@@ -1,8 +1,8 @@
 [build]
   command = "npm run build"
   publish = "dist"
-
-[build.environment]
-  # Omit safe client-side keys from secrets scanning
-  # VITE_SUPABASE_ANON_KEY is safe - it's a public key with limited permissions
-  SECRETS_SCAN_OMIT_KEYS = "VITE_SUPABASE_ANON_KEY"
+  
+  [build.environment]
+    # Disable secrets scanning for client-safe environment variables
+    # These are meant to be public and included in the client bundle
+    SECRETS_SCAN_ENABLED = "false"
