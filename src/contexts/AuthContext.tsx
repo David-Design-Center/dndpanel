@@ -429,6 +429,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setLoading(false);
         return { error: unauthorizedError };
       }
+      
+      // Update user state immediately after successful auth
+      console.log('Setting user state after successful auth:', data.user.email);
+      setUser(data.user as unknown as User);
+      setSession(data.session as unknown as Session);
     }
     
     setLoading(false);

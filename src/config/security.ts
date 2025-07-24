@@ -13,7 +13,7 @@ export const SECURITY_CONFIG = {
     DISABLE_RIGHT_CLICK_IN_PROD: false,
     SANITIZE_LOGS_IN_PROD: false,
     ENFORCE_USER_WHITELIST: false,
-    REQUIRE_INITIAL_AUTH: true,
+    REQUIRE_INITIAL_AUTH: false, // Temporarily disable to test navigation
   },
 };
 

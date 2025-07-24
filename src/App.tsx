@@ -32,17 +32,27 @@ const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { isDataLoadingAllowed, isAuthenticated, isUserAuthorized } = useSecurity();
   
+  console.log('ProtectedRoute check:', {
+    isDataLoadingAllowed,
+    isAuthenticated,
+    isUserAuthorized,
+    requireInitialAuth: SECURITY_CONFIG.FEATURES.REQUIRE_INITIAL_AUTH
+  });
+  
   // SECURITY: Block access if data loading is not allowed (authentication required)
   if (!isDataLoadingAllowed) {
+    console.log('Redirecting to /auth: data loading not allowed');
     return <Navigate to="/auth" replace />;
   }
 
   // SECURITY: Ensure authentication and authorization
   if (SECURITY_CONFIG.FEATURES.REQUIRE_INITIAL_AUTH && 
       (!isAuthenticated || !isUserAuthorized)) {
+    console.log('Redirecting to /auth: authentication or authorization failed');
     return <Navigate to="/auth" replace />;
   }
   
+  console.log('ProtectedRoute: allowing access');
   return <>{children}</>;
 };
 
