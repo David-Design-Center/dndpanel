@@ -90,7 +90,6 @@ export default function PrivacyPolicy() {
               </p>
               <ul className="list-disc list-inside text-muted-foreground space-y-2">
                 <li><strong>Google Services:</strong> Gmail, Google Drive, Google Calendar (subject to Google's Privacy Policy)</li>
-                <li><strong>Microsoft Services:</strong> Outlook, Office 365 (subject to Microsoft's Privacy Policy)</li>
                 <li><strong>Supabase:</strong> Database and authentication services</li>
               </ul>
               <p className="text-muted-foreground leading-relaxed mt-4">

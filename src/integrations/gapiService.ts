@@ -27,6 +27,14 @@ declare global {
               send: (params: any) => Promise<any>;
               modify: (params: any) => Promise<any>;
             };
+            drafts: {
+              list: (params: any) => Promise<any>;
+              get: (params: any) => Promise<any>;
+              create: (params: any) => Promise<any>;
+              update: (params: any) => Promise<any>;
+              delete: (params: any) => Promise<any>;
+              send: (params: any) => Promise<any>;
+            };
             labels: {
               list: (params: any) => Promise<any>;
               create: (params: any) => Promise<any>;
@@ -109,6 +117,8 @@ export const initGapiClient = async (): Promise<void> => {
           ux_mode: 'popup',
           redirect_uri: window.location.origin,
           access_type: 'offline',
+          prompt: 'consent', // Force consent screen to ensure refresh token
+          include_granted_scopes: true,
           callback: (response: any) => {
             if (response.error) {
               console.error('Code client error:', response.error);
@@ -1663,6 +1673,347 @@ export const sendGmailMessage = async (
 };
 
 /**
+ * Save email as draft in Gmail
+ */
+export const saveGmailDraft = async (
+  to: string,
+  cc: string,
+  subject: string,
+  body: string,
+  attachments?: Array<{ name: string; mimeType: string; data: string; cid?: string }>,
+  draftId?: string // For updating existing drafts
+): Promise<{ success: boolean; draftId?: string }> => {
+  try {
+    if (!isGmailSignedIn()) {
+      throw new Error('Not signed in to Gmail');
+    }
+
+    console.log(`📧 saveGmailDraft: Saving draft to ${to}`);
+    console.log(`📧 Subject: ${subject}`);
+    console.log(`📧 Body length: ${body.length}`);
+    console.log(`📧 Attachments: ${attachments?.length || 0}`);
+    console.log(`📧 Existing Draft ID: ${draftId || 'none'}`);
+
+    // Extract inline images from HTML (for Compose-style data: URLs)
+    const { html: processedHtml, inlineImages: extractedImages } = extractInlineImages(body);
+    
+    // Categorize attachments
+    const inlineAttachments = attachments?.filter(att => att.cid) || [];
+    const regularAttachments = attachments?.filter(att => !att.cid) || [];
+    
+    // Merge inline images from both sources
+    const allInlineImages = [...extractedImages, ...inlineAttachments];
+    console.log(`📧 Total inline images: ${allInlineImages.length} (${extractedImages.length} extracted + ${inlineAttachments.length} passed)`);
+    console.log(`📧 Regular attachments: ${regularAttachments.length}`);
+
+    // Generate boundaries using Gmail-style format
+    const mainBoundary = `000000000000${Math.random().toString(36).substring(2, 10)}${Date.now().toString(36)}`;
+    const relatedBoundary = `000000000000${Math.random().toString(36).substring(2, 10)}${Date.now().toString(36)}`;
+    const alternativeBoundary = `000000000000${Math.random().toString(36).substring(2, 10)}${Date.now().toString(36)}`;
+    
+    let emailContent: string[];
+    
+    // Determine message structure based on content
+    const hasRegularAttachments = regularAttachments && regularAttachments.length > 0;
+    const hasInlineImages = allInlineImages.length > 0;
+    
+    if (hasInlineImages && hasRegularAttachments) {
+      // Complex structure: multipart/mixed (main) > multipart/related (content+images) > multipart/alternative (text/html)
+      emailContent = [
+        'MIME-Version: 1.0',
+        `To: ${to}`,
+        cc ? `Cc: ${cc}` : '',
+        `Subject: ${subject}`,
+        `Content-Type: multipart/mixed; boundary="${mainBoundary}"`
+      ].filter(Boolean);
+      
+      // Related part for content + inline images
+      emailContent.push('');
+      emailContent.push(`--${mainBoundary}`);
+      emailContent.push(`Content-Type: multipart/related; boundary="${relatedBoundary}"`);
+      
+      // Alternative part for text/html
+      emailContent.push('');
+      emailContent.push(`--${relatedBoundary}`);
+      emailContent.push(`Content-Type: multipart/alternative; boundary="${alternativeBoundary}"`);
+      
+      // Plain text version
+      const plainText = processedHtml.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+      emailContent.push('');
+      emailContent.push(`--${alternativeBoundary}`);
+      emailContent.push('Content-Type: text/plain; charset=UTF-8');
+      emailContent.push('Content-Transfer-Encoding: 7bit');
+      emailContent.push('');
+      emailContent.push(plainText);
+      
+      // HTML content
+      emailContent.push('');
+      emailContent.push(`--${alternativeBoundary}`);
+      emailContent.push('Content-Type: text/html; charset=UTF-8');
+      emailContent.push('Content-Transfer-Encoding: 7bit');
+      emailContent.push('');
+      emailContent.push(processedHtml);
+      
+      // End boundary
+      emailContent.push('');
+      emailContent.push(`--${alternativeBoundary}--`);
+      
+      // Add inline images
+      for (const image of allInlineImages) {
+        emailContent.push('');
+        emailContent.push(`--${relatedBoundary}`);
+        emailContent.push(`Content-Type: ${image.mimeType}; name="${image.name}"`);
+        emailContent.push(`Content-Disposition: inline; filename="${image.name}"`);
+        emailContent.push(`Content-ID: <${image.cid}>`);
+        emailContent.push(`Content-Transfer-Encoding: base64`);
+        emailContent.push(`X-Attachment-Id: ${image.cid}`);
+        emailContent.push('');
+        
+        // Split base64 data into lines of 76 characters (RFC 2045)
+        const base64Lines = image.data.match(/.{1,76}/g) || [];
+        emailContent.push(base64Lines.join('\r\n'));
+      }
+      
+      // End related boundary
+      emailContent.push('');
+      emailContent.push(`--${relatedBoundary}--`);
+      
+      // Add regular attachments to the mixed section
+      for (const attachment of regularAttachments) {
+        emailContent.push('');
+        emailContent.push(`--${mainBoundary}`);
+        emailContent.push(`Content-Type: ${attachment.mimeType}; name="${attachment.name}"`);
+        emailContent.push(`Content-Disposition: attachment; filename="${attachment.name}"`);
+        emailContent.push('Content-Transfer-Encoding: base64');
+        emailContent.push('');
+        
+        const base64Lines = attachment.data.match(/.{1,76}/g) || [];
+        emailContent.push(base64Lines.join('\r\n'));
+      }
+      
+      // End main boundary
+      emailContent.push('');
+      emailContent.push(`--${mainBoundary}--`);
+      
+    } else if (hasInlineImages) {
+      // Inline images only: multipart/related > multipart/alternative
+      emailContent = [
+        'MIME-Version: 1.0',
+        `To: ${to}`,
+        cc ? `Cc: ${cc}` : '',
+        `Subject: ${subject}`,
+        `Content-Type: multipart/related; boundary="${relatedBoundary}"`
+      ].filter(Boolean);
+      
+      // Alternative part for text/html
+      emailContent.push('');
+      emailContent.push(`--${relatedBoundary}`);
+      emailContent.push(`Content-Type: multipart/alternative; boundary="${alternativeBoundary}"`);
+      
+      // Plain text version
+      const plainText = processedHtml.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+      emailContent.push('');
+      emailContent.push(`--${alternativeBoundary}`);
+      emailContent.push('Content-Type: text/plain; charset=UTF-8');
+      emailContent.push('Content-Transfer-Encoding: 7bit');
+      emailContent.push('');
+      emailContent.push(plainText);
+      
+      // HTML content
+      emailContent.push('');
+      emailContent.push(`--${alternativeBoundary}`);
+      emailContent.push('Content-Type: text/html; charset=UTF-8');
+      emailContent.push('Content-Transfer-Encoding: 7bit');
+      emailContent.push('');
+      emailContent.push(processedHtml);
+      
+      // End alternative boundary
+      emailContent.push('');
+      emailContent.push(`--${alternativeBoundary}--`);
+      
+      // Add inline images
+      for (const image of allInlineImages) {
+        emailContent.push('');
+        emailContent.push(`--${relatedBoundary}`);
+        emailContent.push(`Content-Type: ${image.mimeType}; name="${image.name}"`);
+        emailContent.push(`Content-Disposition: inline; filename="${image.name}"`);
+        emailContent.push(`Content-ID: <${image.cid}>`);
+        emailContent.push(`Content-Transfer-Encoding: base64`);
+        emailContent.push(`X-Attachment-Id: ${image.cid}`);
+        emailContent.push('');
+        
+        const base64Lines = image.data.match(/.{1,76}/g) || [];
+        emailContent.push(base64Lines.join('\r\n'));
+      }
+      
+      // End related boundary
+      emailContent.push('');
+      emailContent.push(`--${relatedBoundary}--`);
+      
+    } else if (hasRegularAttachments) {
+      // Multipart/mixed for regular attachments only
+      emailContent = [
+        'MIME-Version: 1.0',
+        `To: ${to}`,
+        cc ? `Cc: ${cc}` : '',
+        `Subject: ${subject}`,
+        `Content-Type: multipart/mixed; boundary="${mainBoundary}"`
+      ].filter(Boolean);
+      
+      // Add email body part with alternative structure
+      emailContent.push('');
+      emailContent.push(`--${mainBoundary}`);
+      emailContent.push(`Content-Type: multipart/alternative; boundary="${alternativeBoundary}"`);
+      
+      // Plain text version
+      const plainText = processedHtml.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+      emailContent.push('');
+      emailContent.push(`--${alternativeBoundary}`);
+      emailContent.push('Content-Type: text/plain; charset=UTF-8');
+      emailContent.push('Content-Transfer-Encoding: 7bit');
+      emailContent.push('');
+      emailContent.push(plainText);
+      
+      // HTML content
+      emailContent.push('');
+      emailContent.push(`--${alternativeBoundary}`);
+      emailContent.push('Content-Type: text/html; charset=UTF-8');
+      emailContent.push('Content-Transfer-Encoding: 7bit');
+      emailContent.push('');
+      emailContent.push(processedHtml);
+      
+      // End alternative boundary
+      emailContent.push('');
+      emailContent.push(`--${alternativeBoundary}--`);
+      
+      // Add attachments
+      for (const attachment of regularAttachments) {
+        emailContent.push('');
+        emailContent.push(`--${mainBoundary}`);
+        emailContent.push(`Content-Type: ${attachment.mimeType}; name="${attachment.name}"`);
+        emailContent.push(`Content-Disposition: attachment; filename="${attachment.name}"`);
+        emailContent.push('Content-Transfer-Encoding: base64');
+        emailContent.push('');
+        
+        const base64Lines = attachment.data.match(/.{1,76}/g) || [];
+        emailContent.push(base64Lines.join('\r\n'));
+      }
+      
+      // End main boundary
+      emailContent.push('');
+      emailContent.push(`--${mainBoundary}--`);
+      
+    } else {
+      // Simple HTML message with alternative structure for better compatibility
+      emailContent = [
+        'MIME-Version: 1.0',
+        `To: ${to}`,
+        cc ? `Cc: ${cc}` : '',
+        `Subject: ${subject}`,
+        `Content-Type: multipart/alternative; boundary="${alternativeBoundary}"`
+      ].filter(Boolean);
+      
+      // Plain text version
+      const plainText = processedHtml.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+      emailContent.push('');
+      emailContent.push(`--${alternativeBoundary}`);
+      emailContent.push('Content-Type: text/plain; charset=UTF-8');
+      emailContent.push('Content-Transfer-Encoding: 7bit');
+      emailContent.push('');
+      emailContent.push(plainText);
+      
+      // HTML content
+      emailContent.push('');
+      emailContent.push(`--${alternativeBoundary}`);
+      emailContent.push('Content-Type: text/html; charset=UTF-8');
+      emailContent.push('Content-Transfer-Encoding: 7bit');
+      emailContent.push('');
+      emailContent.push(processedHtml);
+      
+      // End boundary
+      emailContent.push('');
+      emailContent.push(`--${alternativeBoundary}--`);
+    }
+
+    // Create the raw email string
+    const rawEmail = emailContent.join('\r\n');
+    console.log(`📧 Raw draft email length: ${rawEmail.length}`);
+
+    // Encode the email in base64url format
+    const emailBytes = new TextEncoder().encode(rawEmail);
+    let binaryString = '';
+    for (let i = 0; i < emailBytes.length; i++) {
+      binaryString += String.fromCharCode(emailBytes[i]);
+    }
+    
+    const encodedEmail = btoa(binaryString)
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+
+    // Prepare the draft request body
+    const draftBody = {
+      message: {
+        raw: encodedEmail
+      }
+    };
+
+    console.log(`📧 Saving draft via Gmail API...`);
+
+    let response;
+    if (draftId) {
+      // Update existing draft
+      response = await window.gapi.client.gmail.users.drafts.update({
+        userId: 'me',
+        id: draftId,
+        resource: draftBody
+      });
+    } else {
+      // Create new draft
+      response = await window.gapi.client.gmail.users.drafts.create({
+        userId: 'me',
+        resource: draftBody
+      });
+    }
+
+    console.log(`✅ Draft saved successfully:`, response);
+
+    return { 
+      success: true, 
+      draftId: response.result.id 
+    };
+
+  } catch (error) {
+    console.error('❌ Error saving draft via Gmail:', error);
+    throw error;
+  }
+};
+
+/**
+ * Delete a Gmail draft
+ */
+export const deleteGmailDraft = async (draftId: string): Promise<void> => {
+  try {
+    if (!isGmailSignedIn()) {
+      throw new Error('Not signed in to Gmail');
+    }
+
+    console.log(`🗑️ Deleting draft: ${draftId}`);
+
+    await window.gapi.client.gmail.users.drafts.delete({
+      userId: 'me',
+      id: draftId
+    });
+
+    console.log(`✅ Draft deleted successfully: ${draftId}`);
+
+  } catch (error) {
+    console.error('❌ Error deleting draft:', error);
+    throw error;
+  }
+};
+
+/**
  * Fetch Gmail labels
  */
 export const fetchGmailLabels = async (): Promise<GmailLabel[]> => {
@@ -2108,6 +2459,90 @@ export const fetchOtherContacts = async (): Promise<any[]> => {
     return response.result.otherContacts || [];
   } catch (error) {
     console.error('Error fetching other contacts:', error);
+    throw error;
+  }
+};
+
+/**
+ * List Gmail filters
+ */
+export const listGmailFilters = async (): Promise<any[]> => {
+  try {
+    if (!isGmailSignedIn()) {
+      throw new Error('Not signed in to Gmail');
+    }
+
+    const response = await window.gapi.client.request({
+      path: 'https://gmail.googleapis.com/gmail/v1/users/me/settings/filters'
+    });
+
+    return response.result.filter || [];
+  } catch (error) {
+    console.error('Error listing Gmail filters:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get a specific Gmail filter
+ */
+export const getGmailFilter = async (filterId: string): Promise<any> => {
+  try {
+    if (!isGmailSignedIn()) {
+      throw new Error('Not signed in to Gmail');
+    }
+
+    const response = await window.gapi.client.request({
+      path: `https://gmail.googleapis.com/gmail/v1/users/me/settings/filters/${filterId}`
+    });
+
+    return response.result;
+  } catch (error) {
+    console.error('Error getting Gmail filter:', error);
+    throw error;
+  }
+};
+
+/**
+ * Create a new Gmail filter
+ */
+export const createGmailFilter = async (criteria: any, action: any): Promise<any> => {
+  try {
+    if (!isGmailSignedIn()) {
+      throw new Error('Not signed in to Gmail');
+    }
+
+    const response = await window.gapi.client.request({
+      path: 'https://gmail.googleapis.com/gmail/v1/users/me/settings/filters',
+      method: 'POST',
+      body: {
+        criteria,
+        action
+      }
+    });
+
+    return response.result;
+  } catch (error) {
+    console.error('Error creating Gmail filter:', error);
+    throw error;
+  }
+};
+
+/**
+ * Delete a Gmail filter
+ */
+export const deleteGmailFilter = async (filterId: string): Promise<void> => {
+  try {
+    if (!isGmailSignedIn()) {
+      throw new Error('Not signed in to Gmail');
+    }
+
+    await window.gapi.client.request({
+      path: `https://gmail.googleapis.com/gmail/v1/users/me/settings/filters/${filterId}`,
+      method: 'DELETE'
+    });
+  } catch (error) {
+    console.error('Error deleting Gmail filter:', error);
     throw error;
   }
 };

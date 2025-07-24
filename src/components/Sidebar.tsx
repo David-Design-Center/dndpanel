@@ -387,7 +387,7 @@ function Sidebar({ onCompose }: SidebarProps) {
                 ) : (
                   <div className="flex items-center text-green-600">
                     <div className="w-1.5 h-1.5 bg-green-500 rounded-full mr-1.5"></div>
-                    Active
+                    In Office
                   </div>
                 )}
               </div>

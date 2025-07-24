@@ -14,7 +14,9 @@ import {
   markGmailMessageAsStarred,
   markGmailMessageAsUnstarred,
   applyGmailLabels,
-  getGmailUserProfile
+  getGmailUserProfile,
+  saveGmailDraft,
+  deleteGmailDraft
 } from '../integrations/gapiService';
 
 // Auto-reply functionality for out-of-office
@@ -675,6 +677,59 @@ export const getThreadEmails = async (threadId: string): Promise<Email[]> => {
   } catch (error) {
     console.error(`Error fetching thread emails for thread ID ${threadId}:`, error);
     return [];
+  }
+};
+
+/**
+ * Save email as draft
+ */
+export const saveDraft = async (
+  email: Omit<Email, 'id' | 'date' | 'isRead' | 'preview'>, 
+  attachments?: Array<{ name: string; mimeType: string; data: string; cid?: string }>,
+  draftId?: string // For updating existing drafts
+): Promise<{success: boolean; draftId?: string}> => {
+  try {
+    // Try to save via Gmail
+    const to = email.to.map(recipient => recipient.email).join(',');
+    const cc = "";
+    
+    const result = await saveGmailDraft(to, cc, email.subject, email.body, attachments, draftId);
+    
+    if (result.success) {
+      // Invalidate the drafts cache to ensure the saved draft appears on next refresh
+      if (emailCache.list && emailCache.list.query.includes('in:drafts')) {
+        emailCache.list.timestamp = 0;
+      }
+      return { 
+        success: true,
+        draftId: result.draftId 
+      };
+    }
+    
+    throw new Error('Failed to save draft via Gmail');
+  } catch (error) {
+    console.error('Error saving draft:', error);
+    // For now, don't fall back to mock for drafts since we want real draft functionality
+    throw error;
+  }
+};
+
+/**
+ * Delete a draft
+ */
+export const deleteDraft = async (draftId: string): Promise<void> => {
+  try {
+    await deleteGmailDraft(draftId);
+    
+    // Invalidate the drafts cache to ensure the deleted draft is removed immediately
+    if (emailCache.list && emailCache.list.query.includes('in:drafts')) {
+      emailCache.list.timestamp = 0;
+    }
+    
+    console.log(`Successfully deleted draft ${draftId}`);
+  } catch (error) {
+    console.error('Error deleting draft:', error);
+    throw error;
   }
 };
 

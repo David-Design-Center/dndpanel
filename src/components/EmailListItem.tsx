@@ -1,9 +1,9 @@
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import { Email } from '../types';
-import { Paperclip, Mail, MailOpen, Star } from 'lucide-react';
+import { Paperclip, Mail, MailOpen, Star, Trash2 } from 'lucide-react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { markAsRead, markAsUnread, markAsImportant, markAsUnimportant } from '../services/emailService';
+import { markAsRead, markAsUnread, markAsImportant, markAsUnimportant, deleteDraft } from '../services/emailService';
 import { useState } from 'react';
 
 interface EmailListItemProps {
@@ -11,11 +11,14 @@ interface EmailListItemProps {
   onClick: (id: string) => void;
   isDraggable?: boolean;
   onEmailUpdate?: (email: Email) => void;
+  onEmailDelete?: (emailId: string) => void;
+  isDraft?: boolean;
 }
 
-function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate }: EmailListItemProps) {
+function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEmailDelete, isDraft = false }: EmailListItemProps) {
   const [isToggling, setIsToggling] = useState(false);
   const [isTogglingImportance, setIsTogglingImportance] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const formattedDate = formatDistanceToNow(parseISO(email.date), { addSuffix: true });
   
   const {
@@ -96,6 +99,27 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate }: Em
     }
   };
 
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent email click
+    
+    if (!confirm('Are you sure you want to delete this draft?')) {
+      return;
+    }
+    
+    setIsDeleting(true);
+    
+    try {
+      await deleteDraft(email.id);
+      onEmailDelete?.(email.id);
+      console.log(`✅ Successfully deleted draft ${email.id}`);
+    } catch (error) {
+      console.error('Error deleting draft:', error);
+      alert('Failed to delete draft. Please try again.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <div 
       ref={setNodeRef}
@@ -144,6 +168,22 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate }: Em
                   <Star size={14} className="text-gray-500 hover:text-yellow-400" />
                 )}
               </button>
+              {isDraft && (
+                <button
+                  onClick={handleDelete}
+                  disabled={isDeleting}
+                  className={`p-1 rounded hover:bg-red-100 transition-colors ${
+                    isDeleting ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
+                  title="Delete draft"
+                >
+                  {isDeleting ? (
+                    <div className="w-3 h-3 border border-red-500 border-t-transparent rounded-full animate-spin"></div>
+                  ) : (
+                    <Trash2 size={14} className="text-red-500 hover:text-red-700" />
+                  )}
+                </button>
+              )}
             </div>
           </div>
           <p className={`text-sm ${!email.isRead ? 'font-semibold text-gray-900' : 'font-normal text-gray-600'} truncate`}>

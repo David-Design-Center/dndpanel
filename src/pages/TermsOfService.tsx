@@ -58,7 +58,7 @@ export default function TermsOfService() {
               
               <h3 className="text-xl font-medium mb-2">3.2 Third-Party Authentication</h3>
               <p className="text-muted-foreground leading-relaxed">
-                Our Service integrates with Google and Microsoft authentication systems. By using these integrations, you agree to comply with their respective terms of service.
+                Our Service integrates with Google authentication systems. By using these integrations, you agree to comply with their respective terms of service.
               </p>
             </section>
 

@@ -18,6 +18,113 @@
 }
 
 /* Strong email content isolation to prevent style leakage while preserving email appearance */
+
+/* Settings expandable sections - compact styling */
+.settings-expandable-content {
+  font-size: 0.75rem; /* 12px */
+  line-height: 1.2;
+}
+
+.settings-expandable-content input,
+.settings-expandable-content textarea,
+.settings-expandable-content select,
+.settings-expandable-content button {
+  font-size: 0.75rem !important;
+  padding: 0.25rem 0.5rem !important;
+  min-height: 1.5rem !important;
+}
+
+.settings-expandable-content .rich-text-editor [contenteditable] {
+  font-size: 0.75rem !important;
+  line-height: 1.2 !important;
+  padding: 0.25rem !important;
+  min-height: 2rem !important;
+}
+
+.settings-expandable-content .rich-text-toolbar {
+  padding: 0.125rem !important;
+}
+
+.settings-expandable-content .rich-text-toolbar button {
+  padding: 0.125rem 0.25rem !important;
+  font-size: 0.625rem !important;
+  min-height: 1.25rem !important;
+}
+
+.settings-expandable-content h1,
+.settings-expandable-content h2,
+.settings-expandable-content h3,
+.settings-expandable-content h4 {
+  font-size: 0.75rem !important;
+  margin: 0.25rem 0 !important;
+}
+
+.settings-expandable-content p,
+.settings-expandable-content div,
+.settings-expandable-content span {
+  font-size: 0.75rem !important;
+  margin: 0.125rem 0 !important;
+}
+
+.settings-expandable-content .space-y-4 > * + * {
+  margin-top: 0.5rem !important;
+}
+
+.settings-expandable-content .space-y-3 > * + * {
+  margin-top: 0.375rem !important;
+}
+
+.settings-expandable-content .space-y-2 > * + * {
+  margin-top: 0.25rem !important;
+}
+
+.settings-expandable-content .mb-4 {
+  margin-bottom: 0.5rem !important;
+}
+
+.settings-expandable-content .mb-3 {
+  margin-bottom: 0.375rem !important;
+}
+
+.settings-expandable-content .mb-2 {
+  margin-bottom: 0.25rem !important;
+}
+
+.settings-expandable-content .p-4 {
+  padding: 0.5rem !important;
+}
+
+.settings-expandable-content .p-3 {
+  padding: 0.375rem !important;
+}
+
+.settings-expandable-content .p-2 {
+  padding: 0.25rem !important;
+}
+
+.settings-expandable-content .py-2 {
+  padding-top: 0.25rem !important;
+  padding-bottom: 0.25rem !important;
+}
+
+.settings-expandable-content .px-3 {
+  padding-left: 0.375rem !important;
+  padding-right: 0.375rem !important;
+}
+
+.settings-expandable-content .rounded-lg {
+  border-radius: 0.25rem !important;
+}
+
+/* Animation for settings sections */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.2s ease-out forwards;
+}
 .email-isolation-container {
   /* Create a strong isolation boundary */
   isolation: isolate;

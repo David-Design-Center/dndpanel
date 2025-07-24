@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { X, Paperclip, Minimize, Maximize, CheckCircle } from 'lucide-react';
-import { sendEmail, getThreadEmails, clearEmailCache } from '../services/emailService';
+import { sendEmail, getThreadEmails, clearEmailCache, saveDraft, deleteDraft } from '../services/emailService';
 import { Email, Contact } from '../types';
 import { getProfileInitial } from '../lib/utils';
 import Modal from '../components/common/Modal';
@@ -60,6 +60,13 @@ function Compose() {
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
   const [successRecipient, setSuccessRecipient] = useState('');
   
+  // Draft auto-save states
+  const [currentDraftId, setCurrentDraftId] = useState<string | undefined>(undefined);
+  const [isDraftDirty, setIsDraftDirty] = useState(false);
+  const [isAutoSaving, setIsAutoSaving] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const location = useLocation();
@@ -110,23 +117,36 @@ function Compose() {
         originalBody: htmlBody,
         replyToId: incomingReplyToId, 
         threadId,
-        attachments: incomingAttachments 
+        attachments: incomingAttachments,
+        draftId,
+        isDraft 
       } = location.state as any;
       
       if (replyTo) setTo(replyTo);
       if (replySubject) setSubject(replySubject);
       
-      // Set the user's editable text (convert plain text to HTML if needed)
-      if (plainTextBody) {
-        // Convert plain text to HTML for rich text editor
-        const htmlBody = convertPlainTextToHtml(plainTextBody);
-        setNewBodyHtml(htmlBody);
+      // If this is a draft being edited, set the draft ID
+      if (isDraft && draftId) {
+        setCurrentDraftId(draftId);
+        setIsDraftDirty(false); // Start clean since we're loading existing draft
       }
       
-      // Set the original HTML content (for final sending)
-      if (htmlBody) setOriginalEmailHtml(htmlBody);
+      // Set the user's editable text
+      if (plainTextBody) {
+        if (isDraft) {
+          // For drafts, the body is already plain text - use it directly
+          setNewBodyHtml(convertPlainTextToHtml(plainTextBody));
+        } else {
+          // For replies, convert plain text to HTML for rich text editor
+          const htmlBody = convertPlainTextToHtml(plainTextBody);
+          setNewBodyHtml(htmlBody);
+        }
+      }
       
-      // If this is a reply, fetch the thread emails
+      // Set the original HTML content (for final sending) - but not for drafts
+      if (htmlBody && !isDraft) setOriginalEmailHtml(htmlBody);
+      
+      // If this is a reply or draft with thread, fetch the thread emails
       if (incomingReplyToId || threadId) {
         setIsReply(true);
         
@@ -161,6 +181,135 @@ function Compose() {
       setThreadLoading(false);
     }
   };
+
+  // Auto-save draft functionality
+  const autoSaveDraft = async () => {
+    // Only auto-save if there's meaningful content and we have changes
+    if (!isDraftDirty || (!newBodyHtml.trim() && !subject.trim() && !to.trim()) || isSending) {
+      return;
+    }
+
+    try {
+      setIsAutoSaving(true);
+      
+      // Process attachments for draft saving
+      const processedAttachments = await Promise.all(
+        attachments.map(async (attachment) => {
+          if (attachment.file) {
+            // Handle File object uploads
+            return new Promise<{
+              name: string;
+              mimeType: string;
+              data: string;
+            }>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => {
+                // Extract base64 data without the prefix
+                const base64data = reader.result as string;
+                const base64Content = base64data.split(',')[1];
+                
+                resolve({
+                  name: attachment.name,
+                  mimeType: attachment.mimeType,
+                  data: base64Content
+                });
+              };
+              reader.onerror = reject;
+              reader.readAsDataURL(attachment.file!);
+            });
+          } else if (attachment.data) {
+            // Handle generated attachments (already have base64 data)
+            return {
+              name: attachment.name,
+              mimeType: attachment.mimeType,
+              data: attachment.data
+            };
+          }
+          
+          throw new Error('Invalid attachment format');
+        })
+      );
+
+      // Prepare draft content
+      let finalBodyHtml = '';
+      
+      if (newBodyHtml.trim()) {
+        finalBodyHtml = newBodyHtml;
+      }
+      
+      if (originalEmailHtml) {
+        if (finalBodyHtml) {
+          finalBodyHtml += '<br><br>' + originalEmailHtml;
+        } else {
+          finalBodyHtml = originalEmailHtml;
+        }
+      }
+      
+      // Add signature if available
+      if (currentProfile?.signature) {
+        if (finalBodyHtml) {
+          finalBodyHtml += '<br><br>' + currentProfile.signature;
+        } else {
+          finalBodyHtml = currentProfile.signature;
+        }
+      }
+      
+      // Fallback if no content
+      if (!finalBodyHtml) {
+        finalBodyHtml = '<div style="font-family: Arial, sans-serif; color: #333;"></div>';
+      }
+
+      const result = await saveDraft({
+        from: {
+          name: 'Me',
+          email: 'me@example.com'
+        },
+        to: [
+          {
+            name: '',
+            email: to
+          }
+        ],
+        subject,
+        body: finalBodyHtml
+      }, processedAttachments, currentDraftId);
+
+      if (result.success) {
+        setCurrentDraftId(result.draftId);
+        setIsDraftDirty(false);
+        setLastSavedAt(new Date());
+        console.log('✅ Draft auto-saved successfully');
+      }
+    } catch (error) {
+      console.error('❌ Error auto-saving draft:', error);
+    } finally {
+      setIsAutoSaving(false);
+    }
+  };
+
+  // Trigger auto-save when content changes
+  const handleContentChange = () => {
+    setIsDraftDirty(true);
+    
+    // Clear existing timeout
+    if (autoSaveTimeoutRef.current) {
+      clearTimeout(autoSaveTimeoutRef.current);
+    }
+    
+    // Set new timeout for auto-save (3 seconds after user stops typing)
+    autoSaveTimeoutRef.current = setTimeout(() => {
+      autoSaveDraft();
+    }, 3000);
+  };
+
+  // Clean up timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -256,6 +405,17 @@ function Compose() {
         body: finalBodyHtml
       }, processedAttachments, currentThreadId);
       
+      // Delete the draft if it exists (since we just sent the email)
+      if (currentDraftId) {
+        try {
+          await deleteDraft(currentDraftId);
+          console.log('✅ Draft deleted after sending email');
+        } catch (draftError) {
+          console.error('❌ Error deleting draft after sending:', draftError);
+          // Continue anyway since the email was sent successfully
+        }
+      }
+      
       // Clear email cache to ensure fresh data when returning to thread
       clearEmailCache();
       
@@ -263,17 +423,27 @@ function Compose() {
       setSuccessRecipient(to);
       setShowSuccessMessage(true);
       
-      // Determine navigation destination based on whether this is a reply
+      // Determine navigation destination - ALWAYS stay in thread if we have a threadId
       const isThreadReply = !!currentThreadId;
       const navigationDestination = isThreadReply ? `/email/${currentThreadId}` : '/inbox';
       
-      // Hide success message and navigate after 2 seconds (reduced for better UX)
-      setTimeout(() => {
-        setShowSuccessMessage(false);
-        navigate(navigationDestination, { 
-          state: isThreadReply ? { refresh: true } : undefined 
-        });
-      }, 2000);
+      // For thread replies, navigate immediately with refresh state
+      // For new emails, still show success message for 2 seconds
+      if (isThreadReply) {
+        // Navigate immediately to thread with refresh state
+        setTimeout(() => {
+          setShowSuccessMessage(false);
+          navigate(navigationDestination, { 
+            state: { refresh: true } 
+          });
+        }, 500); // Shorter delay for thread replies
+      } else {
+        // For new emails, wait 2 seconds
+        setTimeout(() => {
+          setShowSuccessMessage(false);
+          navigate(navigationDestination);
+        }, 2000);
+      }
       
     } catch (error) {
       console.error('Error sending email:', error);
@@ -281,8 +451,24 @@ function Compose() {
     }
   };
 
-  const handleCancel = () => {
+  const handleCancel = async () => {
+    // Save as draft before canceling
+    if (isDraftDirty && (to || subject || newBodyHtml)) {
+      try {
+        await autoSaveDraft();
+      } catch (error) {
+        console.error('Error saving draft on cancel:', error);
+      }
+    }
     navigate('/inbox');
+  };
+
+  const handleManualSaveDraft = async () => {
+    try {
+      await autoSaveDraft();
+    } catch (error) {
+      console.error('Error manually saving draft:', error);
+    }
   };
 
   const handleAttachmentClick = () => {
@@ -325,6 +511,7 @@ function Compose() {
   const handleToInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setTo(value);
+    handleContentChange();
 
     // Update filtered contacts based on input
     const contacts = searchContacts(value, 5);
@@ -412,7 +599,7 @@ function Compose() {
       <div className="fixed bottom-0 right-4 w-64 bg-white rounded-t-lg shadow-lg z-10">
         <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
           <h3 className="text-sm font-medium truncate">
-            {subject || 'New Message'}
+            {subject || (currentDraftId ? 'Edit Draft' : 'New Message')}
           </h3>
           <div className="flex space-x-2">
             <button 
@@ -457,7 +644,9 @@ function Compose() {
           <div className="flex-1 max-w-4xl bg-white rounded-lg shadow-md overflow-hidden">
             <div className="px-4 py-3 bg-gray-100 border-b border-gray-200 flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-medium">New Message</h2>
+                <h2 className="text-lg font-medium">
+                  {currentDraftId ? 'Edit Draft' : 'New Message'}
+                </h2>
               </div>
               <div className="flex space-x-2">
                 <button 
@@ -539,7 +728,10 @@ function Compose() {
                 <input
                   type="text"
                   value={subject}
-                  onChange={(e) => setSubject(e.target.value)}
+                  onChange={(e) => {
+                    setSubject(e.target.value);
+                    handleContentChange();
+                  }}
                   className="flex-1 outline-none text-sm"
                   placeholder="Subject"
                 />
@@ -548,7 +740,10 @@ function Compose() {
               <div className="pt-2">
                 <RichTextEditor
                   value={newBodyHtml}
-                  onChange={setNewBodyHtml}
+                  onChange={(value) => {
+                    setNewBodyHtml(value);
+                    handleContentChange();
+                  }}
                   placeholder="Compose your message..."
                   minHeight="400px"
                   disabled={isSending}
@@ -586,25 +781,54 @@ function Compose() {
                 >
                   Cancel
                 </button>
-              </div>
-              
-              <div>
-                {/* Hidden file input */}
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleFileChange}
-                  multiple
-                  style={{ display: 'none' }}
-                />
                 <button
                   type="button"
-                  onClick={handleAttachmentClick}
-                  className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full"
-                  title="Attach files"
+                  onClick={handleManualSaveDraft}
+                  disabled={isAutoSaving || !isDraftDirty}
+                  className="px-4 py-2 border border-yellow-500 text-yellow-700 rounded-md hover:bg-yellow-50 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
-                  <Paperclip size={18} />
+                  {isAutoSaving ? 'Saving...' : 'Save Draft'}
                 </button>
+              </div>
+              
+              <div className="flex items-center space-x-4">
+                {/* Draft status indicator */}
+                <div className="text-sm text-gray-500">
+                  {isAutoSaving && (
+                    <span className="flex items-center">
+                      <div className="w-3 h-3 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mr-2"></div>
+                      Saving draft...
+                    </span>
+                  )}
+                  {!isAutoSaving && lastSavedAt && (
+                    <span>
+                      Draft saved {formatDistanceToNow(lastSavedAt, { addSuffix: true })}
+                    </span>
+                  )}
+                  {!isAutoSaving && !lastSavedAt && isDraftDirty && (
+                    <span className="text-amber-600">Unsaved changes</span>
+                  )}
+                </div>
+                
+                {/* Attachment button */}
+                <div>
+                  {/* Hidden file input */}
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileChange}
+                    multiple
+                    style={{ display: 'none' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAttachmentClick}
+                    className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full"
+                    title="Attach files"
+                  >
+                    <Paperclip size={18} />
+                  </button>
+                </div>
               </div>
             </div>
           </form>

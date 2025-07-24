@@ -23,8 +23,8 @@
    ```
    http://localhost:5173
    https://your-domain.com
-   http://localhost:5173/microsoft-auth-redirect.html
-   https://your-domain.com/microsoft-auth-redirect.html
+   http://localhost:5173/auth
+   https://your-domain.com/auth
    ```
 
 ### 3. Important Configuration

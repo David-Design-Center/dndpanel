@@ -173,7 +173,7 @@ const FilePreview: React.FC<FilePreviewProps> = ({
         attachment.mimeType.includes('word') ||
         attachment.mimeType.includes('powerpoint')) {
       
-      // Microsoft Office Online viewer
+      // Office Online viewer
       const officeViewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(previewUrl)}`;
       
       return (

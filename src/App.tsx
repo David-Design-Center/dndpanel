@@ -25,7 +25,6 @@ const InvoiceView = lazy(() => import('./pages/InvoiceView'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Shipments = lazy(() => import('./pages/Shipments'));
 const Calendar = lazy(() => import('./pages/Calendar'));
-const MicrosoftAuthRedirect = lazy(() => import('./pages/MicrosoftAuthRedirect'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 
@@ -87,7 +86,6 @@ function App() {
       <Suspense fallback={<Loading />}>
         <Routes>
           <Route path="/auth" element={<Auth />} />
-          <Route path="/microsoft-auth-redirect" element={<MicrosoftAuthRedirect />} />
           
           {/* Public routes - accessible without authentication */}
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />

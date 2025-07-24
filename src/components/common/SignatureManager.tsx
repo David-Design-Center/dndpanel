@@ -117,37 +117,8 @@ function SignatureManager() {
 
   return (
     <div className="bg-white p-6 rounded-lg shadow-sm">
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-lg font-semibold mb-1">Email Signature</h2>
-          <p className="text-sm text-gray-600">
-            Your signature will be automatically added to the emails you send.
-          </p>
-        </div>
-        <div className="flex space-x-2">
-          <Button 
-            variant="outline" 
-            size="sm"
-            onClick={handleUseDefault}
-          >
-            Use Default
-          </Button>
-          <Button 
-            variant="outline" 
-            size="sm"
-            onClick={handleReset}
-          >
-            <RotateCcw size={14} className="mr-1" />
-            Reset
-          </Button>
-          <Button 
-            variant="outline" 
-            size="sm"
-            onClick={() => setShowPreview(true)}
-          >
-            <Eye size={14} className="mr-1" />
-            Preview
-          </Button>
         </div>
       </div>
 
@@ -167,7 +138,7 @@ function SignatureManager() {
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Edit Signature
         </label>
-        <div className="border border-gray-200 rounded-lg overflow-hidden">
+        <div className="rounded-lg overflow-hidden">
           <RichTextEditor
             value={signature}
             onChange={setSignature}
@@ -177,7 +148,7 @@ function SignatureManager() {
         </div>
       </div>
 
-      <div className="flex justify-end">
+      <div className="flex justify-start pt-4">
         <Button
           onClick={handleSave}
           disabled={isSaving}
@@ -195,37 +166,7 @@ function SignatureManager() {
             </>
           )}
         </Button>
-      </div>
-
-      {/* Preview Modal */}
-      <Modal
-        isOpen={showPreview}
-        onClose={() => setShowPreview(false)}
-        title="Signature Preview"
-        size="lg"
-      >
-        <div className="p-6 bg-white">
-          <div className="border-t border-gray-200 pt-4 mt-4">
-            <div className="text-sm text-gray-600 mb-4">
-              This is how your signature will appear in emails:
-            </div>
-            <div 
-              className="email-isolation-container p-4 border border-gray-200 rounded-lg bg-gray-50"
-              dangerouslySetInnerHTML={{ __html: signature }}
-            />
-          </div>
-          <div className="flex justify-end mt-6">
-            <Button
-              variant="outline"
-              onClick={() => setShowPreview(false)}
-              className="flex items-center"
-            >
-              <X size={16} className="mr-2" />
-              Close Preview
-            </Button>
-          </div>
-        </div>
-      </Modal>
+      </div> 
     </div>
   );
 }

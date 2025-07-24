@@ -230,3 +230,32 @@ export interface Contact {
   isFrequentlyContacted?: boolean;
   photoUrl?: string;
 }
+
+// Gmail Filter-related types
+export interface GmailFilterCriteria {
+  from?: string;
+  to?: string;
+  subject?: string;
+  query?: string;
+  hasAttachment?: boolean;
+  size?: number;
+  sizeComparison?: 'larger' | 'smaller';
+  excludeChats?: boolean;
+}
+
+export interface GmailFilterAction {
+  addLabelIds?: string[];
+  removeLabelIds?: string[];
+  forward?: string;
+  markAsRead?: boolean;
+  markAsSpam?: boolean;
+  markAsImportant?: boolean;
+  delete?: boolean;
+  neverSpam?: boolean;
+}
+
+export interface GmailFilter {
+  id: string;
+  criteria: GmailFilterCriteria;
+  action: GmailFilterAction;
+}

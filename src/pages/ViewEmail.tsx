@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Reply, Trash, Paperclip, Tag, ChevronDown, Forward } from 'lucide-react';
 import { formatDistanceToNow, parseISO, format } from 'date-fns';
-import { getEmailById, getAttachmentDownloadUrl, getEmailByThreadId, getThreadEmails, markEmailAsTrash, applyLabelsToEmail } from '../services/emailService';
+import { getEmailById, getAttachmentDownloadUrl, getEmailByThreadId, getThreadEmails, markEmailAsTrash, applyLabelsToEmail, deleteDraft } from '../services/emailService';
 import { Email } from '../types';
 import { useProfile } from '../contexts/ProfileContext';
 import { useLabel } from '../contexts/LabelContext';
@@ -438,6 +438,7 @@ function ViewEmail() {
     attachment: NonNullable<Email['attachments']>[0];
     emailId: string;
   } | null>(null);
+  const [isDraft, setIsDraft] = useState(false);
   const navigate = useNavigate();
   const { currentProfile } = useProfile();
   const { labels } = useLabel();
@@ -458,6 +459,13 @@ function ViewEmail() {
   useEffect(() => {
     console.log('Current profile in ViewEmail:', currentProfile);
   }, [currentProfile]);
+
+  // Check if this is a draft from location state
+  useEffect(() => {
+    if (location.state && (location.state as any).isDraft) {
+      setIsDraft(true);
+    }
+  }, [location.state]);
 
   useEffect(() => {
     const fetchEmail = async () => {
@@ -803,19 +811,29 @@ ${threadMessage.body}
   const handleDelete = async () => {
     if (!email || !email.id) return;
     
-    if (!confirm('Are you sure you want to delete this email? It will be moved to the trash.')) {
+    const deleteMessage = isDraft 
+      ? 'Are you sure you want to delete this draft?' 
+      : 'Are you sure you want to delete this email? It will be moved to the trash.';
+    
+    if (!confirm(deleteMessage)) {
       return;
     }
     
     try {
       setDeleting(true);
-      await markEmailAsTrash(email.id);
       
-      // Navigate back to inbox after successful deletion
-      navigate('/inbox');
+      if (isDraft) {
+        await deleteDraft(email.id);
+        // Navigate back to drafts after successful deletion
+        navigate('/drafts');
+      } else {
+        await markEmailAsTrash(email.id);
+        // Navigate back to inbox after successful deletion
+        navigate('/inbox');
+      }
     } catch (error) {
       console.error('Error deleting email:', error);
-      alert('Failed to delete email. Please try again.');
+      alert(`Failed to delete ${isDraft ? 'draft' : 'email'}. Please try again.`);
     } finally {
       setDeleting(false);
     }
@@ -960,7 +978,7 @@ ${threadMessage.body}
             <button 
               className="p-1 rounded-full hover:bg-gray-100"
               onClick={handleDelete}
-              title="Delete"
+              title={isDraft ? "Delete draft" : "Delete"}
               disabled={deleting}
             >
               {deleting ? <span className="animate-spin">🗑️</span> : <Trash size={14} />}

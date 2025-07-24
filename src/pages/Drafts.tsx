@@ -42,7 +42,39 @@ function Drafts() {
   };
 
   const handleEmailClick = (id: string) => {
-    navigate(`/email/${id}`);
+    // Find the draft email by ID
+    const draftEmail = emails.find(email => email.id === id);
+    if (draftEmail) {
+      // Convert HTML body to plain text for editing
+      const convertHtmlToPlainText = (html: string): string => {
+        if (!html) return '';
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = html;
+        const plainText = tempDiv.textContent || tempDiv.innerText || '';
+        return plainText.replace(/\s+/g, ' ').trim();
+      };
+      
+      const plainTextBody = convertHtmlToPlainText(draftEmail.body);
+      
+      // Navigate to compose page with draft data pre-filled
+      navigate('/compose', {
+        state: {
+          to: draftEmail.to.map(recipient => recipient.email).join(', '),
+          subject: draftEmail.subject,
+          body: plainTextBody, // Plain text version for editing
+          originalBody: '', // Clear original body since this is a draft
+          draftId: draftEmail.id, // Include draft ID so it can be updated instead of creating new
+          isDraft: true, // Flag to indicate this is editing an existing draft
+          threadId: draftEmail.threadId, // Include thread ID if it exists
+          replyToId: draftEmail.threadId ? draftEmail.id : undefined // Set reply ID for thread context
+        }
+      });
+    } else {
+      // Fallback to email view if draft not found
+      navigate(`/email/${id}`, {
+        state: { isDraft: true }
+      });
+    }
   };
 
   const handleEmailUpdate = (updatedEmail: Email) => {
@@ -50,6 +82,12 @@ function Drafts() {
       prevEmails.map(email => 
         email.id === updatedEmail.id ? updatedEmail : email
       )
+    );
+  };
+
+  const handleEmailDelete = (emailId: string) => {
+    setEmails(prevEmails => 
+      prevEmails.filter(email => email.id !== emailId)
     );
   };
 
@@ -115,6 +153,8 @@ function Drafts() {
               email={email} 
               onClick={handleEmailClick}
               onEmailUpdate={handleEmailUpdate}
+              onEmailDelete={handleEmailDelete}
+              isDraft={true}
             />
           ))
         ) : (

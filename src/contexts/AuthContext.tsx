@@ -6,6 +6,15 @@ import { initGapiClient, isGmailSignedIn as checkGmailSignedIn, signInToGmail, s
 // Initialize Supabase client with persistent session storage
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://your-project-url.supabase.co';
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'your-anon-key';
+
+// Debug logging for production
+console.log('Supabase Config:', {
+  url: supabaseUrl?.substring(0, 30) + '...',
+  hasKey: !!supabaseKey,
+  keyLength: supabaseKey?.length || 0,
+  environment: import.meta.env.MODE
+});
+
 const supabase = createClient(supabaseUrl, supabaseKey, {
   auth: {
     storage: window.localStorage,
@@ -387,9 +396,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signIn = async (email: string, password: string) => {
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    console.log('Attempting sign in with Supabase client configuration:', {
+      url: supabaseUrl?.substring(0, 30) + '...',
+      hasKey: !!supabaseKey,
+      environment: import.meta.env.MODE
+    });
+    
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    
+    if (error) {
+      console.error('Supabase auth error:', {
+        message: error.message,
+        status: error.status,
+        code: error.code
+      });
+      setLoading(false);
+      return { error };
+    }
+    
+    // Check if user is authorized after successful Supabase auth
+    if (data?.user?.email) {
+      const { isAuthorizedUser } = await import('../utils/security');
+      const { SECURITY_CONFIG } = await import('../config/security');
+      
+      if (SECURITY_CONFIG.FEATURES.ENFORCE_USER_WHITELIST && !isAuthorizedUser(data.user.email)) {
+        console.warn(`User ${data.user.email} successfully authenticated with Supabase but is not in the allowed users list`);
+        
+        // Sign out the user since they're not authorized
+        await supabase.auth.signOut();
+        
+        const unauthorizedError = new Error(`Access denied. User ${data.user.email} is not authorized to access this application.`);
+        setLoading(false);
+        return { error: unauthorizedError };
+      }
+    }
+    
     setLoading(false);
-    return { error };
+    return { error: null };
   };
 
   const signOut = async () => {
