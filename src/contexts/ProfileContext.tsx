@@ -301,9 +301,16 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
 
     initializeProfiles();
 
-    // Clean up function (no auth listener to unsubscribe since we don't use it)
+    // Listen for manual auth state changes (since we disabled the automatic listener)
+    const handleAuthStateChanged = () => {
+      devLog.debug('ProfileContext: Received auth state change event, re-initializing');
+      initializeProfiles();
+    };
+
+    window.addEventListener('auth-state-changed', handleAuthStateChanged);
+
     return () => {
-      // No cleanup needed since we disabled the auth state listener to prevent page refreshes
+      window.removeEventListener('auth-state-changed', handleAuthStateChanged);
     };
   }, [user]);
 

@@ -379,8 +379,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Initialize auth on app start
     initializeAuth();
 
-    // Note: Supabase auth state listener is disabled to prevent page refresh issues.
-    // Manual session checks are performed in initializeAuth instead.
+    // Note: Supabase auth state listener is DISABLED to prevent tab refresh issues.
+    // User state is managed manually in signIn/signOut methods.
     
     return () => {
       // No auth state listener cleanup needed since it's disabled
@@ -434,6 +434,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.log('Setting user state after successful auth:', data.user.email);
       setUser(data.user as unknown as User);
       setSession(data.session as unknown as Session);
+      
+      // Notify ProfileContext to fetch profiles after successful auth
+      window.dispatchEvent(new CustomEvent('auth-state-changed', {
+        detail: { user: data.user, session: data.session }
+      }));
     }
     
     setLoading(false);

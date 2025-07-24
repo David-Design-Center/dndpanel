@@ -47,7 +47,10 @@ function Auth() {
       
       if (!authError) {
         console.log('Authentication successful, navigating to dashboard');
-        navigate('/');
+        // Small delay to ensure auth state has propagated
+        setTimeout(() => {
+          navigate('/');
+        }, 100);
       } else {
         console.error('Authentication error:', authError);
         setError(authError.message || 'Authentication failed. Please check your credentials.');

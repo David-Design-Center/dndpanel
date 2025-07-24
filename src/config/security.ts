@@ -12,8 +12,8 @@ export const SECURITY_CONFIG = {
     DISABLE_DEVTOOLS_IN_PROD: false,
     DISABLE_RIGHT_CLICK_IN_PROD: false,
     SANITIZE_LOGS_IN_PROD: false,
-    ENFORCE_USER_WHITELIST: false,
-    REQUIRE_INITIAL_AUTH: false, // Temporarily disable to test navigation
+    ENFORCE_USER_WHITELIST: false, // Disabled - allow any authenticated user
+    REQUIRE_INITIAL_AUTH: false, // Disabled - no auth restrictions
   },
 };
 
