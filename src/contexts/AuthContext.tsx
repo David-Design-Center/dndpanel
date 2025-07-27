@@ -1,7 +1,9 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { User, Session } from '../types';
 import { supabase } from '../lib/supabase';
-import { initGapiClient, isGmailSignedIn as checkGmailSignedIn, signInToGmail, signOutFromGmail, setAccessToken } from '../integrations/gapiService';
+import { initGapiClient, isGmailSignedIn as checkGmailSignedIn, signOutFromGmail, setAccessToken } from '../integrations/gapiService';
+import { fetchGmailAccessToken } from '../lib/gmail';
+import { authCoordinator } from '../utils/authCoordinator';
 
 interface AuthContextType {
   user: User | null;
@@ -68,72 +70,48 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const refreshGmailToken = useCallback(async (profileId: string, refreshToken: string): Promise<boolean> => {
-    console.log('Refreshing Gmail token for profile:', profileId);
-    console.log('Refresh token available:', !!refreshToken);
+  const refreshGmailToken = useCallback(async (userEmail: string): Promise<boolean> => {
+    console.log('🔑 Fetching fresh Gmail token using domain-wide delegation for:', userEmail);
     
     try {
-      const requestBody = {
-        refreshToken: refreshToken,
-        profileId: profileId
-      };
+      // Ensure gapi client is initialized before setting token
+      console.log('🔧 Initializing Google API client...');
+      await initGapiClient();
       
-      console.log('Sending request to refresh-gmail-token function:', { 
-        profileId, 
-        hasRefreshToken: !!refreshToken 
-      });
-
-      const { data, error } = await supabase.functions.invoke('refresh-gmail-token', {
-        body: requestBody
-      });
-
-      console.log('Function response:', { data, error });
-
-      if (error) {
-        console.error('Error calling refresh token function:', error);
+      // Use the new domain-wide delegation approach
+      const accessToken = await fetchGmailAccessToken(userEmail);
+      
+      if (accessToken) {
+        console.log('✅ Successfully received new access token via domain-wide delegation');
+        
+        // Set the new access token in the gapi client (expires in 1 hour by default)
+        setAccessToken(accessToken, 3600);
+        
+        setIsGmailSignedIn(true);
+        setIsGmailApiReady(true);
+        return true;
+      } else {
+        console.error('❌ No access token received');
         return false;
       }
 
-      if (data.access_token) {
-        console.log('Successfully received new access token from edge function');
-        
-        // Set the new access token in the gapi client
-        setAccessToken(data.access_token, data.expires_in || 3600);
-        
-        // Update the profile with new token info
-        const expiryDate = new Date(Date.now() + (data.expires_in || 3600) * 1000).toISOString();
-        
-        const success = await updateProfileGmailTokens(
-          profileId,
-          data.access_token,
-          null, // Don't update refresh token
-          expiryDate
-        );
-
-        if (!success) {
-          console.error('Error updating profile with new token');
-          return false;
-        }
-
-        setIsGmailSignedIn(true);
-        setIsGmailApiReady(true); // Mark API as ready after successful token refresh
-        return true;
-      }
+      setIsGmailApiReady(false);
+      return false;
     } catch (error) {
-      console.error('Error refreshing Gmail token:', error);
+      console.error('❌ Error fetching Gmail token via domain-wide delegation:', error);
+      setIsGmailApiReady(false);
+      return false;
     }
-
-    setIsGmailApiReady(false);
-    return false;
-  }, [updateProfileGmailTokens]);
+  }, []);
 
   const initGmail = useCallback(async (profile: any) => {
-    console.log('Initializing Gmail API for profile:', profile?.name || 'unknown');
-
+    console.log('🔄 initGmail called with profile:', profile?.name);
+    console.log('🔄 Current user object:', user);
+    console.log('🔄 User email available:', user?.email);
+    
     try {
-      setIsGmailApiReady(false); // Mark API as not ready at start
-      console.log('Initializing Gmail API...');
-      await initGapiClient();
+      // Reset authentication state when switching profiles
+      authCoordinator.reset();
       
       // If no profile provided, we can't initialize Gmail
       if (!profile) {
@@ -144,30 +122,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       console.log('Checking Gmail tokens for profile:', profile.name);
+      console.log('User email:', user?.email);
       
-      // Check if we have a valid access token for the current profile
-      if (profile.gmail_access_token && profile.gmail_token_expiry) {
-        const expiryTime = new Date(profile.gmail_token_expiry).getTime();
-        const now = Date.now();
-        
-        if (expiryTime > now + 5 * 60 * 1000) { // 5-minute buffer
-          // Token is still valid, use it
-          console.log('Using existing valid access token');
-          setAccessToken(profile.gmail_access_token, Math.floor((expiryTime - now) / 1000));
-          setIsGmailSignedIn(true);
-          setIsGmailApiReady(true); // Mark API as ready after setting token
+      if (!user?.email) {
+        console.log('❌ No user email found, cannot initialize Gmail');
+        setIsGmailSignedIn(false);
+        setIsGmailApiReady(false);
+        return;
+      }
+
+      // With domain-wide delegation, we always fetch a fresh token
+      // No need to check expiry or stored tokens
+      console.log('🔄 Using domain-wide delegation to get fresh Gmail token...');
+      
+      try {
+        const refreshed = await refreshGmailToken(user.email);
+        if (refreshed) {
+          console.log('✅ Successfully initialized Gmail with fresh token');
           return;
-        } else if (profile.gmail_refresh_token) {
-          // Token is expired, try to refresh it
-          console.log('Access token expired, attempting to refresh...');
-          const refreshed = await refreshGmailToken(profile.id, profile.gmail_refresh_token);
-          if (refreshed) {
-            console.log('Successfully refreshed access token');
-            return;
-          } else {
-            console.log('Failed to refresh access token');
-          }
+        } else {
+          console.log('❌ Failed to get fresh Gmail token');
         }
+      } catch (error) {
+        console.error('❌ Error getting fresh Gmail token:', error);
       }
       
       // No valid token available
@@ -180,152 +157,63 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setIsGmailSignedIn(false);
       setIsGmailApiReady(false);
     }
-  }, [refreshGmailToken]);
+  }, [refreshGmailToken, user]); // Add user to dependency array
 
   const signInGmail = useCallback(async (profile: any) => {
-    console.log('signInGmail called');
+    console.log('🔐 Signing in to Gmail using domain-wide delegation for profile:', profile.name);
 
     try {
       if (!profile) {
         throw new Error('No profile provided');
       }
 
-      console.log('Signing in to Gmail for profile:', profile.name);
-      const authResponse = await signInToGmail();
-      
-      if (authResponse.code) {
-        // Authorization Code Flow - exchange code for tokens via backend
-        console.log('Exchanging authorization code for tokens via backend...');
-        
-        try {
-          const { data, error } = await supabase.functions.invoke('exchange-gmail-code', {
-            body: {
-              code: authResponse.code,
-              redirectUri: window.location.origin,
-              profileId: profile.id
-            }
-          });
-
-          if (error) {
-            console.error('Error exchanging code for tokens:', error);
-            throw new Error('Failed to exchange authorization code for tokens');
-          }
-
-          if (data.access_token) {
-            console.log('Successfully received tokens from backend');
-            
-            // Set the access token in the gapi client
-            setAccessToken(data.access_token, data.expires_in || 3600);
-            
-            // Update the profile with Gmail tokens
-            const expiryDate = new Date(Date.now() + (data.expires_in || 3600) * 1000).toISOString();
-            
-            const success = await updateProfileGmailTokens(
-              profile.id,
-              data.access_token,
-              data.refresh_token || null,
-              expiryDate
-            );
-
-            if (!success) {
-              throw new Error('Failed to update profile with Gmail tokens');
-            }
-
-            console.log('Successfully updated profile with Gmail tokens');
-            setIsGmailSignedIn(true);
-            setIsGmailApiReady(true); // Mark API as ready after successful sign-in
-          } else {
-            throw new Error('No access token received from backend');
-          }
-        } catch (backendError) {
-          console.error('Backend exchange failed, falling back to direct token flow:', backendError);
-          
-          // Fallback: if backend exchange fails, the authResponse should have direct tokens
-          if (authResponse.access_token) {
-            const expiryDate = new Date(authResponse.expires_at).toISOString();
-            
-            const success = await updateProfileGmailTokens(
-              profile.id,
-              authResponse.access_token,
-              null, // GIS rarely provides refresh tokens directly
-              expiryDate
-            );
-
-            if (!success) {
-              throw new Error('Failed to update profile with Gmail tokens');
-            }
-
-            console.log('Successfully updated profile with direct tokens');
-            setIsGmailSignedIn(true);
-            setIsGmailApiReady(true); // Mark API as ready after successful fallback
-          } else {
-            throw backendError;
-          }
-        }
-      } else if (authResponse.access_token) {
-        // Direct token flow
-        const expiryDate = new Date(authResponse.expires_at).toISOString();
-        
-        console.log('Received direct tokens, updating profile...');
-        
-        const success = await updateProfileGmailTokens(
-          profile.id,
-          authResponse.access_token,
-          null, // GIS rarely provides refresh tokens directly
-          expiryDate
-        );
-
-        if (!success) {
-          throw new Error('Failed to update profile with Gmail tokens');
-        }
-
-        console.log('Successfully updated profile with Gmail tokens');
-        setIsGmailSignedIn(true);
-        setIsGmailApiReady(true); // Mark API as ready after successful direct sign-in
-      } else {
-        throw new Error('No valid tokens received from Gmail');
+      if (!user?.email) {
+        throw new Error('No user email found');
       }
+
+      console.log('🚀 Using domain-wide delegation - no user consent required');
+      
+      // Use domain-wide delegation to get access token directly
+      const refreshed = await refreshGmailToken(user.email);
+      
+      if (refreshed) {
+        console.log('✅ Successfully signed in to Gmail via domain-wide delegation');
+        setIsGmailSignedIn(true);
+        setIsGmailApiReady(true);
+      } else {
+        throw new Error('Failed to get Gmail access token via domain-wide delegation');
+      }
+      
     } catch (error) {
-      console.error('Error signing in to Gmail:', error);
+      console.error('❌ Error signing in to Gmail:', error);
       setIsGmailApiReady(false);
       throw error;
     }
-  }, [updateProfileGmailTokens]);
+  }, [refreshGmailToken, user]); // Add user to dependency array
 
   const signOutGmail = useCallback(async (profile: any) => {
-    console.log('signOutGmail called');
+    console.log('🔓 Signing out of Gmail for profile:', profile?.name || 'unknown');
 
     try {
       if (!profile) {
         throw new Error('No profile provided');
       }
 
-      console.log('Signing out of Gmail for profile:', profile.name);
+      console.log('🚪 Clearing Gmail session...');
       await signOutFromGmail();
       
-      // Clear Gmail tokens from the profile
-      const success = await updateProfileGmailTokens(
-        profile.id,
-        null,
-        null,
-        null
-      );
-
-      if (!success) {
-        console.error('Error clearing Gmail tokens from profile');
-        throw new Error('Failed to clear Gmail tokens from profile');
-      }
+      // With domain-wide delegation, no need to clear stored tokens since they're generated on-demand
+      console.log('✅ Gmail sign-out completed');
       
-      console.log('Successfully cleared Gmail tokens from profile');
       setIsGmailSignedIn(false);
-      setIsGmailApiReady(false); // Ensure API is marked as not ready after sign-out
+      setIsGmailApiReady(false);
+      
     } catch (error) {
-      console.error('Error signing out from Gmail:', error);
-      throw error;
+      console.error('❌ Error signing out of Gmail:', error);
+      setIsGmailSignedIn(false);
+      setIsGmailApiReady(false);
     }
-  }, [updateProfileGmailTokens]);
-
-  // Initialize authentication with Supabase
+  }, []);  // Initialize authentication with Supabase
   const initializeAuth = useCallback(async () => {  
     setLoading(true);
     setIsGmailApiReady(false); // Mark API as not ready during initialization
@@ -429,13 +317,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const wrappedRefreshGmailToken = useCallback(async (profile: any): Promise<boolean> => {
-    if (!profile?.gmail_refresh_token) {
-      console.log('No refresh token available for profile');
+    if (!user?.email) {
+      console.log('❌ No email available for user');
       return false;
     }
 
-    return await refreshGmailToken(profile.id, profile.gmail_refresh_token);
-  }, [refreshGmailToken]);
+    console.log('🔄 Refreshing Gmail token for profile:', profile.name);
+    return await refreshGmailToken(user.email);
+  }, [refreshGmailToken, user?.email]);
 
   const value = {
     user,

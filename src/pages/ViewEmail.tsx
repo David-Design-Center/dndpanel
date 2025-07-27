@@ -302,44 +302,129 @@ const IframeEmailRenderer = ({
             <style>
               body {
                 margin: 0;
-                padding: 16px;
+                padding: 20px;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
                 line-height: 1.6;
-                color: #333;
+                color: #374151;
                 background: white;
                 word-wrap: break-word;
-                overflow-x: hidden;
+                overflow-wrap: break-word;
+                hyphens: auto;
+                max-width: 100%;
+                box-sizing: border-box;
               }
+              
+              /* Typography improvements */
+              h1, h2, h3, h4, h5, h6 {
+                margin: 1.5em 0 0.5em 0;
+                line-height: 1.3;
+                font-weight: 600;
+                color: #1f2937;
+              }
+              
+              p {
+                margin: 0.75em 0;
+                line-height: 1.6;
+                max-width: 100%;
+              }
+              
+              /* Improved image handling */
               img {
                 max-width: 100% !important;
                 height: auto !important;
                 display: block !important;
-                margin: 10px auto !important;
-                border-radius: 4px !important;
+                margin: 15px auto !important;
+                border-radius: 6px !important;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
               }
+              
               img[src=""], img:not([src]) {
                 display: none !important;
               }
+              
               /* Handle broken images gracefully */
               img:broken {
                 display: none !important;
               }
+              
               /* Responsive image sizes */
               img.inline-image-small { max-width: 200px !important; }
               img.inline-image-medium { max-width: 400px !important; }
               img.inline-image-large { max-width: 600px !important; }
               img.inline-image-full { max-width: 100% !important; }
+              
+              /* Table improvements */
               table {
                 max-width: 100% !important;
-                table-layout: fixed !important;
+                width: 100% !important;
+                table-layout: auto !important;
+                border-collapse: collapse !important;
+                margin: 1em 0 !important;
               }
+              
+              td, th {
+                padding: 8px 12px !important;
+                vertical-align: top !important;
+                word-wrap: break-word !important;
+                max-width: 300px !important;
+              }
+              
+              /* Link styling */
+              a {
+                color: #3b82f6 !important;
+                text-decoration: underline !important;
+                word-wrap: break-word !important;
+              }
+              
+              a:hover {
+                color: #1d4ed8 !important;
+              }
+              
+              /* Text content improvements */
+              div, span, p {
+                max-width: 100% !important;
+                word-wrap: break-word !important;
+                overflow-wrap: break-word !important;
+                hyphens: auto !important;
+              }
+              
+              /* List styling */
+              ul, ol {
+                margin: 1em 0 !important;
+                padding-left: 2em !important;
+              }
+              
+              li {
+                margin: 0.5em 0 !important;
+                line-height: 1.5 !important;
+              }
+              
+              /* Blockquote styling */
+              blockquote {
+                margin: 1em 0 !important;
+                padding: 1em 1.5em !important;
+                border-left: 4px solid #e5e7eb !important;
+                background: #f9fafb !important;
+                font-style: italic !important;
+                border-radius: 0 6px 6px 0 !important;
+              }
+              
+              /* Force all elements to respect container width */
               * {
                 max-width: 100% !important;
                 box-sizing: border-box !important;
-              }
-              /* Prevent any positioning that could break out */
-              * {
                 position: static !important;
+              }
+              
+              /* Hide any elements that might cause overflow */
+              [style*="position: fixed"],
+              [style*="position: absolute"] {
+                position: relative !important;
+              }
+              
+              /* Ensure long URLs don't break layout */
+              *[href] {
+                word-break: break-all !important;
               }
             </style>
             <script>
@@ -376,11 +461,11 @@ const IframeEmailRenderer = ({
         doc.write(fullHtml);
         doc.close();
         
-        // Adjust iframe height to content with max height
+        // Adjust iframe height to content with responsive max height
         const resizeIframe = () => {
           if (doc.body) {
-            const contentHeight = Math.min(doc.body.scrollHeight, 400); // Max height of 400px
-            iframe.style.height = contentHeight + 'px';
+            const contentHeight = Math.min(doc.body.scrollHeight, window.innerHeight * 0.6); // Max 60% of viewport
+            iframe.style.height = Math.max(contentHeight, 200) + 'px'; // Min height of 200px
           }
         };
         
@@ -968,55 +1053,61 @@ ${threadMessage.body}
   }
 
   return (
-    <div className="slide-in max-w-3xl mx-auto px-2">
-      <div className="flex items-center mb-2">
-        <button 
-          onClick={() => navigate('/inbox')}
-          className="mr-1.5 p-1 rounded-full hover:bg-gray-200"
-        >
-          <ArrowLeft size={16} />
-        </button>
-        <div className="flex-1">
-          <h1 className="text-base font-semibold text-gray-800">{email.subject}</h1>
-          <p className="text-xs text-gray-600">{allThreadMessages.length} message{allThreadMessages.length !== 1 ? 's' : ''} in conversation</p>
-        </div>
+    <div className="slide-in h-full overflow-y-auto">
+      <div className="max-w-4xl mx-auto px-6 py-6">
+        <div className="flex items-center mb-6">
+          <button 
+            onClick={() => navigate('/inbox')}
+            className="mr-4 p-2 rounded-lg hover:bg-gray-100 transition-colors"
+          >
+            <ArrowLeft size={18} />
+          </button>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-xl font-semibold text-gray-900 truncate mb-1">{email.subject}</h1>
+            <p className="text-sm text-gray-600">{allThreadMessages.length} message{allThreadMessages.length !== 1 ? 's' : ''} in conversation</p>
+          </div>
         
         {/* Action buttons */}
-        <div className="flex space-x-1">
+        <div className="flex items-center space-x-2">
           <button 
-            className="p-1 rounded-full hover:bg-gray-100"
+            className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
             onClick={handleReply}
             title="Reply"
           >
-            <Reply size={14} />
+            <Reply size={16} />
           </button>
           
           {/* Label Dropdown */}
           <div className="relative">
             <button 
-              className="p-1 rounded-full hover:bg-gray-100 flex items-center"
+              className="p-2 rounded-lg hover:bg-gray-100 flex items-center transition-colors"
               title="Add Label"
               onClick={() => setLabelDropdownOpen(!labelDropdownOpen)}
             >
-              <Tag size={14} className="mr-0.5" />
-              <ChevronDown size={10} />
+              <Tag size={16} className="mr-1" />
+              <ChevronDown size={12} />
             </button>
             
             {labelDropdownOpen && (
-              <div className="absolute z-10 mt-1 w-40 bg-white rounded-md shadow-lg py-1 border border-gray-200 right-0">
+              <div className="absolute z-10 mt-2 w-48 bg-white rounded-lg shadow-lg py-2 border border-gray-200 right-0 max-h-60 overflow-y-auto">
                 {labels.length > 0 ? (
                   labels.map(label => (
                     <button
                       key={label.id}
-                      className="block w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100"
+                      className="flex items-center w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
                       onClick={() => handleAssignLabel(label.id)}
                       disabled={isApplyingLabel === label.id}
                     >
-                      {isApplyingLabel === label.id ? 'Applying...' : label.name}
+                      <div 
+                        className="w-3 h-3 rounded-full mr-3 flex-shrink-0 bg-blue-500"
+                      ></div>
+                      <span className="truncate">
+                        {isApplyingLabel === label.id ? 'Applying...' : label.name}
+                      </span>
                     </button>
                   ))
                 ) : (
-                  <div className="px-3 py-1.5 text-xs text-gray-500">No labels found</div>
+                  <div className="px-3 py-2 text-sm text-gray-500">No labels found</div>
                 )}
               </div>
             )}
@@ -1024,19 +1115,19 @@ ${threadMessage.body}
           
           {currentProfile?.name === 'David' && (
             <button 
-              className="p-1 rounded-full hover:bg-gray-100"
+              className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
               onClick={handleDelete}
               title={isDraft ? "Delete draft" : "Delete"}
               disabled={deleting}
             >
-              {deleting ? <span className="animate-spin">🗑️</span> : <Trash size={14} />}
+              {deleting ? <span className="animate-spin">🗑️</span> : <Trash size={16} />}
             </button>
           )}
         </div>
       </div>
 
       {/* Thread Messages */}
-      <div className="space-y-3">
+      <div className="space-y-6">
         {allThreadMessages.map((threadMessage, index) => {
           const previewText = extractPreviewText(threadMessage.body, 120);
           const isLastMessage = index === allThreadMessages.length - 1;
@@ -1047,30 +1138,30 @@ ${threadMessage.body}
           return (
             <div 
               key={threadMessage.id} 
-              className={`bg-white rounded-lg border hover:shadow-md transition-all duration-200 ${
-                isLastMessage ? 'border-blue-200 shadow-sm' : 'border-gray-200'
+              className={`bg-white rounded-xl border shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden ${
+                isLastMessage ? 'border-blue-200 ring-1 ring-blue-100' : 'border-gray-200'
               }`}
             >
-              <div className="p-4">
-                <div className="flex items-start space-x-3">
+              <div className="p-6">
+                <div className="flex items-start space-x-4">
                   {/* Avatar/Bubble */}
-                  <div className={`h-10 w-10 rounded-full bg-gradient-to-br ${getSenderColor(threadMessage.from.email)} flex items-center justify-center text-white text-sm font-semibold shadow-sm flex-shrink-0`}>
+                  <div className={`h-12 w-12 rounded-full bg-gradient-to-br ${getSenderColor(threadMessage.from.email)} flex items-center justify-center text-white text-base font-semibold shadow-sm flex-shrink-0`}>
                     {getProfileInitial(threadMessage.from.name, threadMessage.from.email)}
                   </div>
                   
                   {/* Message Content */}
                   <div className="flex-1 min-w-0">
                     {/* Header with sender and date */}
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center space-x-2">
-                        <span className="text-sm font-medium text-gray-900">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center space-x-2 min-w-0 flex-1">
+                        <span className="text-base font-semibold text-gray-900 truncate">
                           {threadMessage.from.name || threadMessage.from.email}
                         </span>
-                        <span className="text-xs text-gray-500">
+                        <span className="text-sm text-gray-500 truncate">
                           &lt;{threadMessage.from.email}&gt;
                         </span>
                       </div>
-                      <span className="text-xs text-gray-500 flex-shrink-0" title={format(parseISO(threadMessage.date), 'PPpp')}>
+                      <span className="text-sm text-gray-500 flex-shrink-0 ml-2" title={format(parseISO(threadMessage.date), 'PPpp')}>
                         {formatDistanceToNow(parseISO(threadMessage.date), { addSuffix: true })}
                       </span>
                     </div>
@@ -1078,40 +1169,46 @@ ${threadMessage.body}
                     {/* Message Preview or Full Content */}
                     <div className="cursor-pointer" onClick={() => toggleMessageExpansion(threadMessage.id)}>
                       {isExpanded ? (
-                        <div className="border border-gray-200 rounded-lg p-3 bg-gray-50">
-                          <IframeEmailRenderer 
-                            html={threadMessage.body} 
-                            attachments={threadMessage.attachments}
-                            className="w-full"
-                          />
+                        <div className="border border-gray-200 rounded-xl p-6 bg-gray-50 overflow-hidden">
+                          <div className="prose prose-sm max-w-none overflow-hidden">
+                            <div className="email-content-container max-w-full overflow-hidden">
+                              <IframeEmailRenderer 
+                                html={threadMessage.body} 
+                                attachments={threadMessage.attachments}
+                                className="w-full max-w-full overflow-hidden rounded-lg"
+                              />
+                            </div>
+                          </div>
                         </div>
                       ) : (
-                        <div className="text-sm text-gray-600 leading-relaxed mb-2 hover:text-gray-800 transition-colors">
-                          {previewText}
+                        <div className="text-base text-gray-700 leading-relaxed mb-3 hover:text-gray-900 transition-colors">
+                          <div className="line-clamp-3 break-words">
+                            {previewText}
+                          </div>
                         </div>
                       )}
                     </div>
                     
                     {/* Toggle Button and Action Buttons */}
-                    <div className="flex items-center justify-between mt-2">
+                    <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
                       <button 
                         onClick={() => toggleMessageExpansion(threadMessage.id)}
-                        className="text-xs text-blue-600 hover:text-blue-800"
+                        className="text-sm text-blue-600 hover:text-blue-800 font-medium transition-colors"
                       >
                         {isExpanded ? 'Show less' : 'Show more'}
                       </button>
                       
                       {/* Message Action Buttons */}
-                      <div className="flex items-center space-x-2">
+                      <div className="flex items-center space-x-3">
                         <button 
                           onClick={(e) => {
                             e.stopPropagation();
                             handleReplyToMessage(threadMessage);
                           }}
-                          className="flex items-center px-2 py-1 text-xs text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                          className="flex items-center px-3 py-1.5 text-sm text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                           title="Reply to this message"
                         >
-                          <Reply size={12} className="mr-1" />
+                          <Reply size={14} className="mr-1.5" />
                           Reply
                         </button>
                         
@@ -1120,10 +1217,10 @@ ${threadMessage.body}
                             e.stopPropagation();
                             handleForwardMessage(threadMessage);
                           }}
-                          className="flex items-center px-2 py-1 text-xs text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                          className="flex items-center px-3 py-1.5 text-sm text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                           title="Forward this message"
                         >
-                          <Forward size={12} className="mr-1" />
+                          <Forward size={14} className="mr-1.5" />
                           Forward
                         </button>
                       </div>
@@ -1148,15 +1245,15 @@ ${threadMessage.body}
       {(() => {
         const uniqueAttachments = getUniqueAttachments(allThreadMessages);
         return uniqueAttachments.length > 0 ? (
-          <div className="mt-3 p-2 bg-blue-50 border border-blue-200 rounded-lg">
-            <h4 className="text-sm font-semibold text-blue-800 mb-2 flex items-center">
-              <Paperclip size={14} className="mr-1.5" />
+          <div className="mt-8 p-6 bg-blue-50 border border-blue-200 rounded-xl shadow-sm">
+            <h4 className="text-base font-semibold text-blue-900 mb-4 flex items-center">
+              <Paperclip size={16} className="mr-2" />
               All Files in Conversation ({uniqueAttachments.length})
             </h4>
-            <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-7 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
               {uniqueAttachments.map((attachment, index) => (
-                <div key={index} className="bg-white border border-blue-200 rounded-lg p-1.5 hover:shadow-sm transition-shadow">
-                  <div className="flex justify-center mb-1.5">
+                <div key={index} className="bg-white border border-blue-200 rounded-xl p-4 hover:shadow-md transition-all duration-200">
+                  <div className="flex justify-center mb-3">
                     <FileThumbnail
                       attachment={attachment}
                       emailId={attachment.emailId}
@@ -1165,24 +1262,24 @@ ${threadMessage.body}
                       onPreviewClick={() => setPreviewFile({ attachment, emailId: attachment.emailId })}
                     />
                   </div>
-                  <p className="text-xs font-medium text-gray-900 truncate mb-0.5" title={attachment.name}>
+                  <p className="text-sm font-medium text-gray-900 truncate mb-1" title={attachment.name}>
                     {attachment.name}
                   </p>
-                  <p className="text-xs text-gray-500 mb-0.5">{(attachment.size / 1000).toFixed(0)} KB</p>
-                  <p className="text-xs text-blue-600 truncate mb-1.5" title={`From: ${attachment.emailFrom}`}>
+                  <p className="text-xs text-gray-500 mb-1">{(attachment.size / 1000).toFixed(0)} KB</p>
+                  <p className="text-xs text-blue-600 truncate mb-3" title={`From: ${attachment.emailFrom}`}>
                     From: {attachment.emailFrom}
                   </p>
-                  <div className="flex flex-col space-y-0.5">
+                  <div className="flex flex-col space-y-2">
                     <button 
                       onClick={() => setPreviewFile({ attachment, emailId: attachment.emailId })}
-                      className="w-full px-1 py-0.5 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
+                      className="w-full px-3 py-1.5 text-xs bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
                       title="Preview file"
                     >
                       Preview
                     </button>
                     <button 
                       onClick={() => handleDownloadAttachment(attachment, attachment.emailId)}
-                      className="w-full px-1 py-0.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                      className="w-full px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                       disabled={downloadingAttachment === attachment.name}
                     >
                       {downloadingAttachment === attachment.name ? 'Downloading...' : 'Download'}
@@ -1209,6 +1306,7 @@ ${threadMessage.body}
           }}
         />
       )}
+      </div>
     </div>
   );
 }

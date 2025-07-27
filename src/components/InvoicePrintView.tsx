@@ -436,7 +436,7 @@ function InvoicePrintView({ invoice, innerRef, showInternalView = false }: Invoi
               marginBottom: '8px',
               fontSize: '11px'
             }}>
-              <span style={{ fontWeight: '600' }}>NY Sales tax @ 8.875%:</span>
+              <span style={{ fontWeight: '600' }}>Tax %:</span>
               <span style={{ fontWeight: 'bold' }} data-field="tax">${invoice.tax.toFixed(2)}</span>
             </div>
             <div style={{

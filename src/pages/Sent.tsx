@@ -2,9 +2,11 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { RefreshCw, Settings } from 'lucide-react';
 import EmailListItem from '../components/EmailListItem';
+import AnimatedThreeColumnLayout from '../components/AnimatedThreeColumnLayout';
 import { Email } from '../types';
 import { getSentEmails } from '../services/emailService';
 import { useAuth } from '../contexts/AuthContext';
+import { useInboxLayout } from '../contexts/InboxLayoutContext';
 
 function Sent() {
   const [emails, setEmails] = useState<Email[]>([]);
@@ -12,6 +14,7 @@ function Sent() {
   const [refreshing, setRefreshing] = useState(false);
   const navigate = useNavigate();
   const { isGmailSignedIn } = useAuth();
+  const { selectEmail } = useInboxLayout();
 
   const fetchEmails = async (forceRefresh = false) => {
     try {
@@ -42,7 +45,8 @@ function Sent() {
   };
 
   const handleEmailClick = (id: string) => {
-    navigate(`/email/${id}`);
+    navigate(`/sent/email/${id}`);
+    selectEmail(id);
   };
 
   const handleEmailUpdate = (updatedEmail: Email) => {
@@ -94,36 +98,40 @@ function Sent() {
   }
 
   return (
-    <div className="fade-in">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-semibold text-gray-800">Sent</h1>
-        <button 
-          onClick={handleRefresh}
-          className="btn btn-secondary flex items-center"
-          disabled={refreshing}
-        >
-          <RefreshCw size={18} className={`mr-2 ${refreshing ? 'animate-spin' : ''}`} />
-          {refreshing ? 'Refreshing...' : 'Refresh'}
-        </button>
+    <AnimatedThreeColumnLayout onEmailUpdate={handleEmailUpdate}>
+      <div className="fade-in h-full flex flex-col">
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="text-2xl font-semibold text-gray-800">Sent</h1>
+          <button 
+            onClick={handleRefresh}
+            className="btn btn-secondary flex items-center"
+            disabled={refreshing}
+          >
+            <RefreshCw size={18} className={`mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? 'Refreshing...' : 'Refresh'}
+          </button>
+        </div>
+        
+        <div className="bg-white rounded-lg shadow-sm overflow-hidden flex-1 flex flex-col">
+          {emails.length > 0 ? (
+            <div className="flex-1 overflow-y-auto">
+              {emails.map((email) => (
+                <EmailListItem 
+                  key={email.id} 
+                  email={email} 
+                  onClick={handleEmailClick}
+                  onEmailUpdate={handleEmailUpdate}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="p-8 text-center">
+              <p className="text-gray-500">No sent emails</p>
+            </div>
+          )}
+        </div>
       </div>
-      
-      <div className="bg-white rounded-lg shadow-sm overflow-hidden">
-        {emails.length > 0 ? (
-          emails.map((email) => (
-            <EmailListItem 
-              key={email.id} 
-              email={email} 
-              onClick={handleEmailClick}
-              onEmailUpdate={handleEmailUpdate}
-            />
-          ))
-        ) : (
-          <div className="p-8 text-center">
-            <p className="text-gray-500">No sent emails</p>
-          </div>
-        )}
-      </div>
-    </div>
+    </AnimatedThreeColumnLayout>
   );
 }
 

@@ -3,8 +3,10 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import HeaderBar from './components/HeaderBar';
 import NewOrderButton from './components/NewOrderButton';
 import OrdersSpreadsheet from './components/OrdersSpreadsheet';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, Search } from 'lucide-react';
+import { Input } from '@/components/ui/input';
 import { createClient } from '@supabase/supabase-js';
+import { searchInvoices } from '../../utils/searchUtils';
 
 // Initialize Supabase client
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
@@ -42,6 +44,9 @@ function Orders() {
   const navigate = useNavigate();
   const location = useLocation();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [filteredInvoices, setFilteredInvoices] = useState<Invoice[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
@@ -76,6 +81,7 @@ function Orders() {
       }
 
       setInvoices(invoiceData || []);
+      setFilteredInvoices(invoiceData || []);
       setLastRefreshed(new Date());
       
       console.log('Invoices refreshed successfully:', invoiceData);
@@ -94,6 +100,36 @@ function Orders() {
     await fetchInvoices();
   }, []);
 
+  // Handle search functionality
+  const handleSearch = useCallback(async (term: string) => {
+    setSearchTerm(term);
+    
+    if (!term.trim()) {
+      setFilteredInvoices(invoices);
+      return;
+    }
+
+    setIsSearching(true);
+    try {
+      const filtered = await searchInvoices(invoices, term);
+      setFilteredInvoices(filtered);
+    } catch (error) {
+      console.error('Error searching invoices:', error);
+      setFilteredInvoices(invoices); // Fallback to showing all invoices
+    } finally {
+      setIsSearching(false);
+    }
+  }, [invoices]);
+
+  // Update filtered invoices when invoices change
+  useEffect(() => {
+    if (searchTerm.trim()) {
+      handleSearch(searchTerm);
+    } else {
+      setFilteredInvoices(invoices);
+    }
+  }, [invoices, searchTerm, handleSearch]);
+
   // Navigation handlers
   const handleOrderUpdate = useCallback((updatedInvoice: Invoice) => {
     setInvoices(prevInvoices => 
@@ -103,7 +139,13 @@ function Orders() {
     );
   }, []);
 
-  const handleViewInvoices = (invoiceId: string) => {
+  const handleOrderDeleted = useCallback((deletedOrderId: string) => {
+    setInvoices(prevInvoices => 
+      prevInvoices.filter(invoice => invoice.id !== deletedOrderId)
+    );
+  }, []);
+
+  const handleViewInvoices = (_invoiceId: string) => {
     navigate('/invoices');
   };
 
@@ -192,19 +234,53 @@ function Orders() {
         </div>
       ) : (
         <div className="flex-1">
+          {/* Search Bar */}
+          <div className="mb-6">
+            <div className="relative max-w-md">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+              <Input
+                type="text"
+                placeholder="Search by customer, order #, date, items, or brand..."
+                value={searchTerm}
+                onChange={(e) => handleSearch(e.target.value)}
+                className="pl-10"
+              />
+              {isSearching && (
+                <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-primary-500"></div>
+                </div>
+              )}
+            </div>
+            {searchTerm && (
+              <p className="text-sm text-gray-500 mt-2">
+                Showing {filteredInvoices.length} of {invoices.length} orders
+              </p>
+            )}
+          </div>
+          
           {/* Invoices Table View */}
           <div>
             <h2 className="text-xl font-semibold mb-4">Invoices</h2>
-            {invoices.length > 0 ? (
+            {filteredInvoices.length > 0 ? (
               <OrdersSpreadsheet 
-                orders={invoices} 
+                orders={filteredInvoices} 
                 onViewInvoices={handleViewInvoices}
                 onOrderUpdate={handleOrderUpdate}
+                onOrderDeleted={handleOrderDeleted}
               />
             ) : (
               <div className="bg-white rounded-lg shadow-sm p-8 text-center">
-                <p className="text-gray-500 mb-4">No invoices to display</p>
-                <p className="text-sm text-gray-400">Invoices will appear here once they are created in the system.</p>
+                {searchTerm ? (
+                  <>
+                    <p className="text-gray-500 mb-4">No orders found matching "{searchTerm}"</p>
+                    <p className="text-sm text-gray-400">Try adjusting your search terms or clearing the search.</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-gray-500 mb-4">No invoices to display</p>
+                    <p className="text-sm text-gray-400">Invoices will appear here once they are created in the system.</p>
+                  </>
+                )}
               </div>
             )}
           </div>

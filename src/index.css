@@ -2,6 +2,144 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Panel Animation Keyframes */
+@keyframes slideInFromLeft {
+  from {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slideOutToLeft {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+}
+
+@keyframes slideInFromRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slideOutToRight {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+/* Panel Animation Classes */
+.panel-slide-in-left {
+  animation: slideInFromLeft 0.5s ease-in-out;
+}
+
+.panel-slide-out-left {
+  animation: slideOutToLeft 0.5s ease-in-out;
+}
+
+.panel-slide-in-right {
+  animation: slideInFromRight 0.5s ease-in-out;
+}
+
+.panel-slide-out-right {
+  animation: slideOutToRight 0.5s ease-in-out;
+}
+
+/* Smooth width transitions for folders column - Slower, smoother animation */
+.folders-column-collapsed {
+  width: 48px;
+  min-width: 48px;
+  max-width: 48px;
+  overflow: hidden;
+  transition: width 0.4s ease-out;
+}
+
+.folders-column-expanded {
+  width: 100%;
+  min-width: 200px;
+  overflow: hidden;
+  transition: width 0.4s ease-out;
+}
+
+/* Content visibility - No animations, just instant show/hide */
+.folders-content-collapsed {
+  display: none;
+}
+
+.folders-content-expanded {
+  display: block;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+}
+
+/* Resize Handle Improvements - Smooth visual feedback only */
+.resize-handle {
+  position: relative;
+  background-color: #e5e7eb;
+  transition: background-color 0.15s ease;
+  z-index: 10;
+}
+
+.resize-handle:hover {
+  background-color: #d1d5db;
+}
+
+.resize-handle:active {
+  background-color: #9ca3af;
+}
+
+/* Ensure panels don't overlap */
+.panel-group {
+  position: relative;
+  overflow: hidden;
+}
+
+/* Vertical text for collapsed folders */
+.writing-mode-vertical {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+}
+
 /* Invoice preview scaling for two-column layout */
 .invoice-preview-wrapper {
   transform-origin: top left;
@@ -15,6 +153,63 @@
     transform: scale(0.5);
     width: 200%; /* 100% / 0.5 to compensate for scale */
   }
+}
+
+/* Email content styling - handle images and prevent overflow */
+.email-content {
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+  hyphens: auto;
+  font-size: 0.875rem; /* 14px */
+  line-height: 1.5;
+}
+
+.email-content p {
+  font-size: 0.875rem !important; /* 14px */
+  line-height: 1.5 !important;
+  margin-bottom: 0.75rem !important;
+}
+
+.email-content h1, .email-content h2, .email-content h3, .email-content h4, .email-content h5, .email-content h6 {
+  font-size: 1rem !important; /* 16px for headings */
+  margin-bottom: 0.5rem !important;
+  margin-top: 1rem !important;
+}
+
+.email-content img {
+  max-width: 100% !important;
+  height: auto !important;
+  display: block !important;
+  margin: 8px 0 !important;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.email-content table {
+  max-width: 100% !important;
+  table-layout: auto !important;
+  word-break: break-word !important;
+  overflow-x: auto;
+}
+
+.email-content * {
+  max-width: 100% !important;
+}
+
+/* Email tabs styling */
+.email-tabs [data-state=active] {
+  border-bottom: 2px solid #3b82f6 !important;
+  position: relative;
+}
+
+.email-tabs [data-state=active]::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background-color: #3b82f6;
 }
 
 /* Strong email content isolation to prevent style leakage while preserving email appearance */
@@ -126,22 +321,181 @@
   animation: fadeIn 0.2s ease-out forwards;
 }
 .email-isolation-container {
-  /* Create a strong isolation boundary */
+  /* Create an ultra-strong isolation boundary */
   isolation: isolate;
-  contain: layout style paint;
+  contain: layout style paint size;
   overflow: hidden;
+  position: relative;
   
-  /* Reset any potential inherited values that could affect children */
-  all: initial;
+  /* Create a completely isolated stacking context */
+  transform: translateZ(0);
+  will-change: transform;
   
-  /* Restore essential styles for the container */
-  display: block;
-  width: 100%;
-  height: auto;
-  box-sizing: border-box;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-  background: white;
-  border-radius: 0.5rem;
+  /* Reset and lock down the container */
+  display: block !important;
+  width: 100% !important;
+  height: auto !important;
+  box-sizing: border-box !important;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif !important;
+  background: white !important;
+  border-radius: 0.5rem !important;
+  padding: 1rem !important;
+  margin: 0 !important;
+  
+  /* Prevent any email styles from bubbling up */
+  z-index: 0 !important;
+}
+
+/* Isolate all children of email content */
+.email-isolation-container * {
+  /* Reset dangerous properties that could affect parent elements */
+  position: static !important;
+  z-index: auto !important;
+  
+  /* Prevent layout escape */
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  
+  /* Lock font inheritance */
+  font-family: inherit !important;
+}
+
+/* Additional wrapper for email content */
+.email-content-wrapper {
+  /* Create another isolation boundary */
+  isolation: isolate !important;
+  contain: layout style paint !important;
+  position: relative !important;
+  z-index: 0 !important;
+  display: block !important;
+  width: 100% !important;
+  overflow: hidden !important;
+}
+
+/* Lock down email body content specifically */
+.email-body-content {
+  /* Prevent any styles from leaking out */
+  isolation: isolate !important;
+  contain: layout style paint !important;
+  position: relative !important;
+  z-index: auto !important;
+  display: block !important;
+  
+  /* Completely isolate all child elements */
+  transform: translateZ(0) !important;
+  will-change: transform !important;
+}
+
+.email-body-content * {
+  /* Force containment for all email elements */
+  position: static !important;
+  z-index: auto !important;
+  max-width: 100% !important;
+  overflow: visible !important;
+  
+  /* Prevent font and color inheritance issues */
+  font-family: inherit !important;
+  color: inherit !important;
+}
+
+/* Global protection against email style leakage */
+.email-isolation-container h1,
+.email-isolation-container h2,
+.email-isolation-container h3,
+.email-isolation-container h4,
+.email-isolation-container h5,
+.email-isolation-container h6 {
+  /* Reset heading styles that emails might override */
+  font-size: inherit !important;
+  font-weight: bold !important;
+  margin: 0.5em 0 !important;
+  line-height: 1.4 !important;
+  color: inherit !important;
+}
+
+.email-isolation-container p {
+  margin: 0.5em 0 !important;
+  line-height: 1.5 !important;
+  color: inherit !important;
+}
+
+.email-isolation-container div,
+.email-isolation-container span,
+.email-isolation-container table,
+.email-isolation-container td,
+.email-isolation-container th {
+  /* Prevent email CSS from escaping the container */
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  position: static !important;
+  z-index: auto !important;
+  background-attachment: local !important;
+}
+
+/* Isolated Email Content - Ultimate Protection */
+.isolated-email-content {
+  /* Create the strongest possible isolation boundary */
+  isolation: isolate !important;
+  contain: layout style paint size !important;
+  overflow: hidden !important;
+  position: relative !important;
+  z-index: 0 !important;
+  transform: translateZ(0) !important;
+  will-change: transform !important;
+  
+  /* Lock down dimensions */
+  display: block !important;
+  width: 100% !important;
+  height: auto !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  
+  /* Prevent any style leakage */
+  background: white !important;
+  color: #374151 !important;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif !important;
+  font-size: 14px !important;
+  line-height: 1.5 !important;
+}
+
+/* Force complete isolation for all children */
+.isolated-email-content * {
+  /* Remove all dangerous properties */
+  position: static !important;
+  z-index: auto !important;
+  top: auto !important;
+  left: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  
+  /* Lock sizing */
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  
+  /* Prevent inheritance issues */
+  font-family: inherit !important;
+  color: inherit !important;
+  background-attachment: local !important;
+  
+  /* Remove any potential transform or animation issues */
+  transform: none !important;
+  animation: none !important;
+  transition: none !important;
+}
+
+/* Specifically target elements that commonly cause issues */
+.isolated-email-content div,
+.isolated-email-content span,
+.isolated-email-content p,
+.isolated-email-content table,
+.isolated-email-content td,
+.isolated-email-content th,
+.isolated-email-content img {
+  /* Ultimate lockdown */
+  position: static !important;
+  z-index: auto !important;
+  max-width: 100% !important;
+  overflow: visible !important;
 }
 
 .email-body-content {
@@ -651,4 +1005,368 @@ div[class*="flex"][class*="min-h-full"] {
 
 .custom-scrollbar::-webkit-scrollbar-corner {
   background: #f8fafc;
+}
+
+/* Resizable panel handles */
+.resize-handle {
+  position: relative;
+  background-color: transparent;
+  transition: all 0.2s ease;
+}
+
+.resize-handle:hover {
+  background-color: #3b82f6;
+}
+
+.resize-handle:active {
+  background-color: #2563eb;
+}
+
+.resize-handle::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 20px;
+  background-color: #d1d5db;
+  border-radius: 1px;
+  transition: background-color 0.2s ease;
+}
+
+.resize-handle:hover::before {
+  background-color: white;
+}
+
+/* Smooth resizable panel transitions with enhanced performance */
+[data-panel-group] {
+  transition: all 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+
+[data-panel] {
+  transition: width 0.3s cubic-bezier(0.4, 0.0, 0.2, 1),
+              min-width 0.3s cubic-bezier(0.4, 0.0, 0.2, 1),
+              max-width 0.3s cubic-bezier(0.4, 0.0, 0.2, 1),
+              transform 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+  will-change: transform, width;
+}
+
+/* Enhanced folder column animations */
+[data-panel]:first-child {
+  transform-origin: left center;
+  transition: width 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+
+/* Force collapsed width styling - Universal 4% for any screen */
+[data-panel]:first-child.folders-collapsed {
+  width: 4% !important;
+  max-width: 4% !important;
+  min-width: 4% !important;
+  flex: 0 0 4% !important;
+  overflow: visible; /* Allow the outline to show */
+}
+
+/* Collapsed folders styling */
+.folders-collapsed {
+  position: relative;
+}
+
+.folders-collapsed::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 2px;
+  background: linear-gradient(to bottom, #e5e7eb, #d1d5db, #e5e7eb);
+  z-index: 1;
+}
+
+/* Additional safety net for very small widths - MacBook-optimized */
+[data-panel]:first-child[style*="width: 4.4%"] {
+  overflow: hidden;
+}
+
+/* Hide resize handle when folders are collapsed with smooth transition */
+[data-panel-group]:has([data-panel]:first-child[data-panel-size="4"]) [data-panel-resize-handle] {
+  opacity: 0;
+  pointer-events: none;
+  width: 0 !important;
+  min-width: 0 !important;
+  transition: opacity 0.3s ease, width 0.3s ease;
+}
+
+/* Remove gaps when folders are collapsed */
+[data-panel-group]:has([data-panel]:first-child[data-panel-size="4"]) {
+  gap: 0;
+}
+
+/* Enhanced panel alignment and professional appearance with text truncation */
+[data-panel-group] {
+  overflow: hidden !important; /* Prevent page-level scrolling */
+  max-width: 100vw !important;
+  width: 100% !important;
+  height: 100% !important;
+  box-sizing: border-box !important;
+  align-items: stretch !important; /* Ensure all panels have same height */
+}
+
+[data-panel] {
+  overflow: hidden !important; /* Contain each panel */
+  max-width: 100% !important;
+  height: 100% !important;
+  box-sizing: border-box !important;
+  display: flex !important;
+  flex-direction: column !important;
+  min-width: 0 !important; /* Critical for text truncation */
+}
+
+/* Specific constraints for email list panel (middle panel) */
+[data-panel]:nth-child(2) {
+  max-width: min(600px, 50vw) !important; /* Constrain inbox width */
+  overflow: hidden !important;
+}
+
+/* When email panel is open, make inbox even narrower */
+[data-panel-group]:has([data-panel]:nth-child(4)) [data-panel]:nth-child(2) {
+  max-width: min(450px, 35vw) !important; /* Narrower when email is open */
+}
+
+/* Force all content within panels to respect width limits */
+[data-panel] > * {
+  max-width: 100% !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+
+/* Email content container - prevent overflow in ViewEmail */
+.email-content-container {
+  max-width: 100% !important;
+  overflow: hidden !important;
+  word-wrap: break-word !important;
+  overflow-wrap: break-word !important;
+  hyphens: auto !important;
+}
+
+.email-content-container iframe {
+  max-width: 100% !important;
+  width: 100% !important;
+  border: none !important;
+  border-radius: 8px !important;
+  overflow: hidden !important;
+}
+
+/* Line clamp utility for better text truncation */
+.line-clamp-3 {
+  display: -webkit-box !important;
+  -webkit-line-clamp: 3 !important;
+  line-clamp: 3 !important;
+  -webkit-box-orient: vertical !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+/* Break words utility for long text content */
+.break-words {
+  word-wrap: break-word !important;
+  overflow-wrap: break-word !important;
+  word-break: break-word !important;
+  hyphens: auto !important;
+}
+
+/* Specific email panel containment */
+[data-panel]:last-child {
+  overflow: hidden !important;
+  max-width: 100% !important;
+  height: 100% !important;
+  contain: layout style size !important;
+}
+
+/* Email content within panels must be contained */
+[data-panel] .email-content,
+[data-panel] .email-view,
+[data-panel] [class*="email"] {
+  max-width: 100% !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+
+/* Ensure all column content takes full height and aligns properly */
+[data-panel] > div {
+  height: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  min-width: 0 !important; /* Critical for text truncation */
+  overflow: hidden !important; /* Contain content within panel */
+}
+
+/* Force folders column to match height and align borders */
+[data-panel]:first-child > div {
+  height: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  border-right: 1px solid var(--border, #e5e7eb) !important;
+  min-width: 0 !important;
+  overflow: hidden !important; /* Prevent folders from overflowing */
+}
+
+/* Force inbox column to match height and maintain border alignment */
+[data-panel]:nth-child(2) > div {
+  height: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  border-right: 1px solid var(--border, #e5e7eb) !important;
+  min-width: 0 !important;
+  overflow: hidden !important; /* Prevent inbox from overflowing */
+}
+
+/* Force email view column to match height */
+[data-panel]:last-child > div {
+  height: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  min-width: 0 !important;
+  overflow: hidden !important; /* Prevent email view from overflowing */
+}
+
+/* Professional border alignment - remove duplicate borders */
+[data-panel]:first-child .border-r {
+  border-right: none !important;
+}
+
+[data-panel]:nth-child(2) .border-r {
+  border-right: none !important;
+}
+
+/* Ensure professional spacing and alignment */
+.panel-group {
+  gap: 0 !important;
+  border: none !important;
+}
+
+/* Universal text truncation rules for all panel content */
+[data-panel] * {
+  box-sizing: border-box !important;
+}
+
+/* Text truncation for any text elements within panels */
+[data-panel] .truncate {
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+/* Force truncation for common text containers - but exclude scrollable areas */
+[data-panel] span:not(.flex-shrink-0):not([class*="w-"]):not([class*="h-"]):not([class*="overflow"]),
+[data-panel] p:not(.flex-shrink-0):not([class*="overflow"]),
+[data-panel] h1:not(.flex-shrink-0):not([class*="overflow"]),
+[data-panel] h2:not(.flex-shrink-0):not([class*="overflow"]),
+[data-panel] h3:not(.flex-shrink-0):not([class*="overflow"]),
+[data-panel] h4:not(.flex-shrink-0):not([class*="overflow"]) {
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  min-width: 0 !important;
+}
+
+/* Exception: Don't apply truncation to elements that should scroll */
+[data-panel] .overflow-y-auto *,
+[data-panel] [class*="overflow-y-auto"] * {
+  overflow: visible !important;
+  text-overflow: clip !important;
+  white-space: normal !important;
+}
+
+/* Ensure flex containers handle text truncation properly */
+[data-panel] .flex {
+  min-width: 0 !important;
+}
+
+[data-panel] .flex-1 {
+  min-width: 0 !important;
+  /* Allow vertical scrolling, only prevent horizontal overflow */
+}
+
+/* Exception: Allow overflow-y-auto elements to scroll INTERNALLY */
+[data-panel] .overflow-y-auto {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  /* These elements can scroll within their containers */
+}
+
+/* Exception: Allow specific scrollable containers */
+[data-panel] .flex-1.overflow-y-auto,
+[data-panel] [class*="overflow-y-auto"] {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  /* Internal scrolling allowed */
+}
+
+/* Ensure email list containers can scroll WITHIN their panel */
+[data-panel] .bg-white.rounded-lg.shadow-sm .flex-1.overflow-y-auto {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  max-height: none !important;
+  /* This allows the email list to scroll within the inbox panel */
+}
+
+/* Ensure folders list can scroll WITHIN its panel */
+[data-panel] .flex-1.overflow-y-auto.custom-scrollbar {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  max-height: none !important;
+  /* This allows the folders list to scroll within the folders panel */
+}
+
+/* Override any restrictive overflow rules for scrollable content - SCOPED TO PANELS ONLY */
+[data-panel] .overflow-y-auto {
+  overflow-y: auto !important;
+}
+
+[data-panel] .overflow-x-hidden {
+  overflow-x: hidden !important;
+}
+
+/* Force scrollable behavior on main email containers - WITHIN PANELS ONLY */
+[data-panel] .bg-white.rounded-lg.shadow-sm,
+[data-panel] .bg-white.rounded-lg.shadow-sm .flex-1 {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+
+/* Specific fixes for sidebar text truncation */
+aside .flex.items-center {
+  min-width: 0 !important;
+  overflow: hidden !important;
+}
+
+aside .flex.items-center span:not(.flex-shrink-0) {
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  min-width: 0 !important;
+}
+
+/* Prevent unwanted layout shifts during animations */
+[data-panel-group] > * {
+  backface-visibility: hidden;
+  transform: translateZ(0);
+}
+
+/* Smooth layout transitions for email panel changes */
+.layout-transition {
+  transition: all 0.3s ease-in-out;
+}
+
+/* Email view isolation - prevents email styles from affecting the app */
+.email-view-isolation {
+  isolation: isolate;
+  contain: layout style paint;
+  position: relative;
+  z-index: 1;
+}
+
+.resize-handle:active::before {
+  background-color: white;
 }

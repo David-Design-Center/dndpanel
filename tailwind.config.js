@@ -87,10 +87,12 @@ export default {
   			'slide-in': 'slideIn 0.3s ease-in-out',
   			'ripple': 'ripple 2s ease calc(var(--i, 0) * 0.2s) infinite',
   			'orbit': 'orbit calc(var(--duration) * 1s) linear infinite',
+  			'accordion-down': 'accordion-down 0.2s ease-out',
+  			'accordion-up': 'accordion-up 0.2s ease-out',
   		},
   		keyframes: {
   			ripple: {
-  				'0%, 100%': { transform: 'translate(-50%, -50%) scale(1)' },
+  				'0%, 100%': { transform: 'translate(-50%, -50) scale(1)' },
   				'50%': { transform: 'translate(-50%, -50%) scale(0.9)' },
   			},
   			orbit: {
@@ -100,7 +102,15 @@ export default {
   				'100%': {
   					transform: 'rotate(360deg) translateY(calc(var(--radius) * 1px)) rotate(-360deg)',
   				},
-  			}
+  			},
+  			'accordion-down': {
+  				from: { height: '0' },
+  				to: { height: 'var(--radix-accordion-content-height)' },
+  			},
+  			'accordion-up': {
+  				from: { height: 'var(--radix-accordion-content-height)' },
+  				to: { height: '0' },
+  			},
   		},
   		boxShadow: {
   			input: [

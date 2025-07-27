@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthContext';
 import { Profile } from '../types';
 import { devLog } from '../utils/logging';
+import { configureDomainWideAuth, configureTraditionalAuth } from '../services/domainWideGmailService';
 
 interface ProfileContextType {
   profiles: Profile[];
@@ -35,7 +36,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
   const PROFILE_RESTORE_THROTTLE_MS = 2000; // 2 second throttle
 
   // Get authentication context and Gmail functions
-  const { user, initGmail } = useAuth();
+  const { user, initGmail, loading: authLoading } = useAuth();
 
   const fetchProfiles = async () => {
     // Only fetch profiles if user is authenticated
@@ -84,6 +85,13 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
             
             // Initialize Gmail if the profile has tokens, but handle failures gracefully
             if (fullProfile.gmail_access_token || fullProfile.gmail_refresh_token) {
+              // Ensure we have a user with email before initializing Gmail
+              if (!user?.email) {
+                devLog.debug('No user email available, skipping Gmail initialization for restored profile');
+                setError('User email not available. Please refresh the page and try again.');
+                return;
+              }
+              
               try {
                 await initGmail(fullProfile);
                 devLog.debug('Gmail initialized for restored profile');
@@ -170,20 +178,33 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
       
       devLog.info('selectProfile: Successfully selected profile:', profileToSelect.name);
       
-      // Automatically initialize Gmail if profile has tokens
-      if (profileToSelect.gmail_access_token || profileToSelect.gmail_refresh_token) {
-        devLog.debug('selectProfile: Profile has Gmail tokens, initializing Gmail connection...');
-        try {
-          await initGmail(profileToSelect);
-          devLog.debug('selectProfile: Gmail initialization completed for profile:', profileToSelect.name);
-        } catch (gmailError) {
-          devLog.debug('selectProfile: Error initializing Gmail for profile:', gmailError);
-          // Set a user-friendly error message but don't fail the profile selection
-          setError('Gmail authentication failed. You may need to reconnect Gmail for this profile.');
-          // Don't fail profile selection - user can still access the app
-        }
+      // Configure domain-wide auth using the authenticated user's email
+      if (user?.email) {
+        devLog.debug('🔑 Configuring domain-wide Gmail auth for user:', user.email);
+        configureDomainWideAuth(user.email);
       } else {
-        devLog.debug('selectProfile: Profile has no Gmail tokens, skipping Gmail initialization');
+        devLog.debug('🔑 No user email found, using traditional auth');
+        configureTraditionalAuth();
+      }
+      
+      // Automatically initialize Gmail 
+      devLog.debug('selectProfile: Initializing Gmail connection...');
+      
+      // Ensure we have a user with email before initializing Gmail
+      if (!user?.email) {
+        devLog.debug('selectProfile: No user email available, skipping Gmail initialization');
+        setError('User email not available. Please refresh the page and try again.');
+        return false;
+      }
+      
+      try {
+        await initGmail(profileToSelect);
+        devLog.debug('selectProfile: Gmail initialization completed for profile:', profileToSelect.name);
+      } catch (gmailError) {
+        devLog.debug('selectProfile: Error initializing Gmail for profile:', gmailError);
+        // Set a user-friendly error message but don't fail the profile selection
+        setError('Gmail authentication failed. You may need to reconnect Gmail for this profile.');
+        // Don't fail profile selection - user can still access the app
       }
       
       return true;
@@ -257,11 +278,21 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     sessionStorage.removeItem('selectedProfileId');
     sessionStorage.removeItem('currentProfileId');
     setError(null);
+    
+    // Configure back to traditional auth when no profile is selected
+    devLog.debug('🔑 Clearing profile, switching to traditional auth');
+    configureTraditionalAuth();
   };
 
   // Check authentication status on mount and listen for auth changes
   useEffect(() => {
     async function initializeProfiles() {
+      // Wait for auth to finish loading before proceeding
+      if (authLoading) {
+        devLog.debug('ProfileContext: Auth still loading, waiting...');
+        return;
+      }
+
       if (!user) {
         devLog.debug('ProfileContext: User not authenticated');
         setProfiles([]);
@@ -312,7 +343,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     return () => {
       window.removeEventListener('auth-state-changed', handleAuthStateChanged);
     };
-  }, [user]);
+  }, [user, authLoading]); // Add authLoading to dependency array
 
   // DEBUG: Log currentProfile changes (keep minimal debugging)
   useEffect(() => {

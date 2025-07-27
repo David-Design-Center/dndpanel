@@ -1,4 +1,4 @@
-import { PriceRequest, PriceRequestTeam, OrderStatus, CustomerOrder, Shipment, GeneralDocument, SupabaseInvoice, SupabaseInvoiceLineItem } from '../types';
+import { PriceRequest, OrderStatus, CustomerOrder, Shipment, GeneralDocument, SupabaseInvoice, SupabaseInvoiceLineItem } from '../types';
 import { createClient } from '@supabase/supabase-js';
 import { getUnreadEmails, markEmailAsRead } from './emailService';
 
@@ -87,6 +87,18 @@ let underDepositInvoicesCache: {
   timestamp: number;
 } | null = null;
 
+// Cache for brand analytics
+let brandAnalyticsCache: {
+  data: BrandAnalytics[];
+  timestamp: number;
+} | null = null;
+
+// Cache for item analytics
+let itemAnalyticsCache: {
+  data: ItemAnalytics[];
+  timestamp: number;
+} | null = null;
+
 // Variable to track the current fetch operation
 let currentFetchPromise: Promise<PriceRequest[]> | null = null;
 let currentCustomerOrdersFetchPromise: Promise<CustomerOrder[]> | null = null;
@@ -95,7 +107,6 @@ let currentMonthlyRevenueFetchPromise: Promise<MonthlyRevenue[]> | null = null;
 let currentRecentOrdersFetchPromise: Promise<RecentOrder[]> | null = null;
 let currentShipmentsFetchPromise: Promise<Shipment[]> | null = null;
 let currentGeneralDocumentsFetchPromise: Promise<GeneralDocument[]> | null = null;
-let currentInvoiceFetchPromise: Promise<SupabaseInvoice | null> | null = null;
 
 // Cache duration: 12 hours in milliseconds
 const CACHE_DURATION_MS = 12 * 60 * 60 * 1000;
@@ -103,7 +114,6 @@ const CACHE_DURATION_MS = 12 * 60 * 60 * 1000;
 // Dashboard metrics interface
 export interface DashboardMetrics {
   totalOrders: number;
-  priceRequests: number;
   customerOrders: number;
   totalRevenue: number;
   averageOrderValue: number;
@@ -111,7 +121,6 @@ export interface DashboardMetrics {
   staffMetrics: {
     [staffName: string]: {
       totalOrders: number;
-      priceRequests: number;
       customerOrders: number;
       totalRevenue: number;
       customers: number;
@@ -142,6 +151,25 @@ export interface RecentOrder {
   amount: number;
   date: string;
   createdBy: string;
+}
+
+// Brand analytics interface
+export interface BrandAnalytics {
+  brandName: string;
+  totalItems: number;
+  totalRevenue: number;
+  itemCount: number;
+  averageItemValue: number;
+}
+
+// Item analytics interface
+export interface ItemAnalytics {
+  itemDescription: string;
+  brand: string;
+  totalQuantity: number;
+  totalRevenue: number;
+  orderCount: number;
+  averagePrice: number;
 }
 
 /**
@@ -245,9 +273,19 @@ export const fetchUnderDepositInvoices = async (forceRefresh = false): Promise<a
     
     // Filter invoices where deposit is less than 50% of total amount
     const underDepositInvoices = (data || []).filter(invoice => {
-      const depositAmount = parseFloat(invoice.deposit_amount) || 0;
       const totalAmount = parseFloat(invoice.total_amount) || 0;
-      return depositAmount < (totalAmount * 0.5);
+      
+      // Calculate deposit from payments_history
+      let depositAmount = 0;
+      if (invoice.payments_history && Array.isArray(invoice.payments_history)) {
+        depositAmount = invoice.payments_history.reduce((sum: number, payment: any) => {
+          return sum + (parseFloat(payment.amount) || 0);
+        }, 0);
+      }
+      
+      // Check if deposit is less than 50% of total
+      const requiredDeposit = totalAmount * 0.5;
+      return depositAmount < requiredDeposit;
     });
     
     // Update cache
@@ -477,7 +515,8 @@ const convertPriceRequestToRow = (request: Omit<PriceRequest, 'id' | 'date'>) =>
  */
 export const saveInvoiceToSupabase = async (
   invoice: SupabaseInvoice, 
-  lineItems: Omit<SupabaseInvoiceLineItem, 'invoice_id'>[]
+  lineItems: Omit<SupabaseInvoiceLineItem, 'invoice_id'>[],
+  createdBy?: string
 ): Promise<SupabaseInvoice | null> => {
   try {
     console.log('Saving invoice to Supabase:', invoice);
@@ -508,7 +547,8 @@ export const saveInvoiceToSupabase = async (
           total_amount: invoice.total_amount,
           deposit_amount: invoice.deposit_amount,
           balance_due: invoice.balance_due,
-          payments_history: invoice.payments_history
+          payments_history: invoice.payments_history,
+          ...(createdBy && { created_by: createdBy })
         })
         .eq('id', invoice.id)
         .select()
@@ -557,7 +597,8 @@ export const saveInvoiceToSupabase = async (
           balance_due: invoice.balance_due,
           payments_history: invoice.payments_history,
           is_edited: invoice.is_edited || false,
-          original_invoice_id: invoice.original_invoice_id
+          original_invoice_id: invoice.original_invoice_id,
+          created_by: createdBy || 'Unknown Staff'
         })
         .select()
         .single();
@@ -875,13 +916,22 @@ export const fetchRecentOrders = async (date?: Date, forceRefresh: boolean = fal
       let query = supabase
         .from('invoices')
         .select('*')
-        .order('created_at', { ascending: false })
-        .limit(5); // Limit to 5 recent invoices
+        .order('created_at', { ascending: false });
       
       // If a specific date is provided, filter invoices by that date
       if (date) {
         const formattedDate = date.toISOString().split('T')[0];
-        query = query.eq('invoice_date', formattedDate);
+        query = query.eq('invoice_date', formattedDate).limit(10);
+      } else {
+        // For latest orders, get orders from this week
+        const today = new Date();
+        const startOfWeek = new Date(today.setDate(today.getDate() - today.getDay()));
+        const endOfWeek = new Date(today.setDate(today.getDate() - today.getDay() + 6));
+        
+        query = query
+          .gte('invoice_date', startOfWeek.toISOString().split('T')[0])
+          .lte('invoice_date', endOfWeek.toISOString().split('T')[0])
+          .limit(10);
       }
       
       const { data: invoiceData, error } = await query;
@@ -903,7 +953,7 @@ export const fetchRecentOrders = async (date?: Date, forceRefresh: boolean = fal
         customerEmail: invoice.customer_email || 'no-email@example.com',
         amount: parseFloat(invoice.total_amount) || 0,
         date: invoice.invoice_date || invoice.created_at.split('T')[0],
-        createdBy: 'Staff' // invoices don't have created_by field, use default
+        createdBy: invoice.created_by || 'Unknown Staff'
       }));
 
       console.log('Successfully fetched recent orders:', recentOrders);
@@ -1007,13 +1057,15 @@ export const fetchDashboardMetrics = async (forceRefresh: boolean = false): Prom
  * @returns Calculated dashboard metrics
  */
 const calculateDashboardMetrics = (invoices: any[]): DashboardMetrics => {
-  // Calculate total revenue from all invoices
-  const totalRevenue = invoices.reduce((sum, invoice) => {
+  // Calculate total revenue from all invoices with proper rounding
+  const totalRevenue = Math.round(invoices.reduce((sum, invoice) => {
     return sum + (parseFloat(invoice.total_amount) || 0);
-  }, 0);
+  }, 0) * 100) / 100;
   
-  // Calculate average order value
-  const averageOrderValue = invoices.length > 0 ? totalRevenue / invoices.length : 0;
+  // Calculate average order value with proper rounding
+  const averageOrderValue = invoices.length > 0 
+    ? Math.round((totalRevenue / invoices.length) * 100) / 100 
+    : 0;
   
   // Get unique customers (by email or name)
   const uniqueCustomers = new Set();
@@ -1022,6 +1074,37 @@ const calculateDashboardMetrics = (invoices: any[]): DashboardMetrics => {
     if (identifier) {
       uniqueCustomers.add(identifier.toLowerCase());
     }
+  });
+  
+  // Calculate staff metrics from created_by field
+  const staffMetrics: { [staffName: string]: any } = {};
+  invoices.forEach(invoice => {
+    const staff = invoice.created_by || 'Unknown Staff';
+    const totalAmount = parseFloat(invoice.total_amount) || 0;
+    const customerIdentifier = invoice.customer_email || invoice.customer_name;
+    
+    if (!staffMetrics[staff]) {
+      staffMetrics[staff] = {
+        totalOrders: 0,
+        customerOrders: 0,
+        totalRevenue: 0,
+        customers: new Set()
+      };
+    }
+    
+    staffMetrics[staff].totalOrders++;
+    staffMetrics[staff].customerOrders++;
+    staffMetrics[staff].totalRevenue += totalAmount;
+    
+    if (customerIdentifier) {
+      staffMetrics[staff].customers.add(customerIdentifier.toLowerCase());
+    }
+  });
+  
+  // Round staff revenue to avoid floating point precision issues
+  Object.keys(staffMetrics).forEach(staff => {
+    staffMetrics[staff].totalRevenue = Math.round(staffMetrics[staff].totalRevenue * 100) / 100;
+    staffMetrics[staff].customers = staffMetrics[staff].customers.size;
   });
   
   // Calculate payment status breakdown based on balance_due
@@ -1045,12 +1128,11 @@ const calculateDashboardMetrics = (invoices: any[]): DashboardMetrics => {
   
   return {
     totalOrders: invoices.length,
-    priceRequests: 0, // No longer applicable with invoices
     customerOrders: invoices.length, // All invoices are customer orders
     totalRevenue,
     averageOrderValue,
     totalCustomers: uniqueCustomers.size,
-    staffMetrics: {}, // Could be added later if needed
+    staffMetrics,
     statusBreakdown: {}, // Could be added later if needed
     paymentStatusBreakdown
   };
@@ -1063,7 +1145,6 @@ const calculateDashboardMetrics = (invoices: any[]): DashboardMetrics => {
 const getEmptyDashboardMetrics = (): DashboardMetrics => {
   return {
     totalOrders: 0,
-    priceRequests: 0,
     customerOrders: 0,
     totalRevenue: 0,
     averageOrderValue: 0,
@@ -1787,3 +1868,285 @@ export const checkThreadForUpdates = async (threadId: string): Promise<boolean> 
 
 // Legacy function name for backward compatibility
 export const sendPriceRequestToMake = createPriceRequest;
+
+/**
+ * Delete a customer order from Supabase
+ * @param id The ID of the customer order to delete
+ * @returns Boolean indicating success
+ */
+export const deleteCustomerOrder = async (id: string): Promise<boolean> => {
+  try {
+    console.log('Deleting customer order from Supabase:', id);
+    
+    const { error } = await supabase
+      .from('orders')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Error deleting customer order from Supabase:', error);
+      return false;
+    }
+
+    console.log('Successfully deleted customer order from Supabase');
+    
+    // Clear caches to ensure fresh data on next fetch
+    clearCustomerOrdersCache();
+    clearDashboardMetricsCache();
+    clearMonthlyRevenueCache();
+    clearRecentOrdersCache();
+    
+    return true;
+  } catch (error) {
+    console.error('Error deleting customer order from Supabase:', error);
+    return false;
+  }
+};
+
+/**
+ * Delete an invoice from Supabase
+ * @param id The ID of the invoice to delete
+ * @returns Boolean indicating success
+ */
+export const deleteInvoice = async (id: string): Promise<boolean> => {
+  try {
+    console.log('Deleting invoice from Supabase:', id);
+    
+    // First delete line items associated with the invoice
+    const { error: lineItemsError } = await supabase
+      .from('invoice_line_items')
+      .delete()
+      .eq('invoice_id', id);
+
+    if (lineItemsError) {
+      console.error('Error deleting invoice line items from Supabase:', lineItemsError);
+      return false;
+    }
+
+    // Then delete the invoice itself
+    const { error } = await supabase
+      .from('invoices')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Error deleting invoice from Supabase:', error);
+      return false;
+    }
+
+    console.log('Successfully deleted invoice from Supabase');
+    
+    // Clear caches to ensure fresh data on next fetch
+    clearInvoiceByOrderIdCaches();
+    clearDashboardMetricsCache();
+    clearMonthlyRevenueCache();
+    clearRecentOrdersCache();
+    
+    return true;
+  } catch (error) {
+    console.error('Error deleting invoice from Supabase:', error);
+    return false;
+  }
+};
+
+/**
+ * Clear all invoice by order ID caches
+ */
+const clearInvoiceByOrderIdCaches = () => {
+  Object.keys(invoiceByOrderIdCache).forEach(orderId => {
+    delete invoiceByOrderIdCache[orderId];
+  });
+};
+
+/**
+ * Fetch brand analytics from invoice line items
+ * @param forceRefresh If true, bypass the cache and fetch fresh data
+ * @returns Array of brand analytics
+ */
+export const fetchBrandAnalytics = async (forceRefresh: boolean = false): Promise<BrandAnalytics[]> => {
+  // Check cache validity
+  if (!forceRefresh && brandAnalyticsCache && 
+      (Date.now() - brandAnalyticsCache.timestamp) < CACHE_DURATION_MS) {
+    console.log('Using cached brand analytics data');
+    return brandAnalyticsCache.data;
+  }
+
+  try {
+    console.log('Fetching brand analytics from Supabase');
+    
+    // Fetch all line items with their brands
+    const { data: lineItems, error } = await supabase
+      .from('invoice_line_items')
+      .select('brand, quantity, unit_price, description');
+
+    if (error) {
+      console.error('Error fetching line items for brand analytics:', error);
+      return [];
+    }
+
+    if (!lineItems) {
+      return [];
+    }
+
+    // Group by brand and calculate analytics
+    const brandMap = new Map<string, {
+      totalItems: number;
+      totalRevenue: number;
+      itemCount: number;
+      descriptions: Set<string>;
+    }>();
+
+    lineItems.forEach(item => {
+      const brand = item.brand || 'Unknown Brand';
+      const quantity = item.quantity || 0;
+      const unitPrice = item.unit_price || 0;
+      const revenue = quantity * unitPrice;
+
+      if (!brandMap.has(brand)) {
+        brandMap.set(brand, {
+          totalItems: 0,
+          totalRevenue: 0,
+          itemCount: 0,
+          descriptions: new Set()
+        });
+      }
+
+      const brandData = brandMap.get(brand)!;
+      brandData.totalItems += quantity;
+      brandData.totalRevenue += revenue;
+      brandData.itemCount += 1;
+      if (item.description) {
+        brandData.descriptions.add(item.description);
+      }
+    });
+
+    // Convert to analytics format
+    const analytics: BrandAnalytics[] = Array.from(brandMap.entries()).map(([brandName, data]) => ({
+      brandName,
+      totalItems: data.totalItems,
+      totalRevenue: data.totalRevenue,
+      itemCount: data.itemCount,
+      averageItemValue: data.itemCount > 0 ? data.totalRevenue / data.itemCount : 0
+    }));
+
+    // Sort by total revenue descending
+    analytics.sort((a, b) => b.totalRevenue - a.totalRevenue);
+
+    // Cache the results
+    brandAnalyticsCache = {
+      data: analytics,
+      timestamp: Date.now()
+    };
+
+    console.log('Successfully calculated brand analytics:', analytics);
+    return analytics;
+  } catch (error) {
+    console.error('Error fetching brand analytics:', error);
+    return [];
+  }
+};
+
+/**
+ * Fetch item analytics from invoice line items
+ * @param forceRefresh If true, bypass the cache and fetch fresh data
+ * @returns Array of item analytics
+ */
+export const fetchItemAnalytics = async (forceRefresh: boolean = false): Promise<ItemAnalytics[]> => {
+  // Check cache validity
+  if (!forceRefresh && itemAnalyticsCache && 
+      (Date.now() - itemAnalyticsCache.timestamp) < CACHE_DURATION_MS) {
+    console.log('Using cached item analytics data');
+    return itemAnalyticsCache.data;
+  }
+
+  try {
+    console.log('Fetching item analytics from Supabase');
+    
+    // Fetch all line items
+    const { data: lineItems, error } = await supabase
+      .from('invoice_line_items')
+      .select('description, brand, quantity, unit_price, invoice_id');
+
+    if (error) {
+      console.error('Error fetching line items for item analytics:', error);
+      return [];
+    }
+
+    if (!lineItems) {
+      return [];
+    }
+
+    // Group by item description and calculate analytics
+    const itemMap = new Map<string, {
+      brand: string;
+      totalQuantity: number;
+      totalRevenue: number;
+      orderCount: number;
+      invoiceIds: Set<string>;
+    }>();
+
+    lineItems.forEach(item => {
+      const description = item.description || 'Unknown Item';
+      const brand = item.brand || 'Unknown Brand';
+      const quantity = item.quantity || 0;
+      const unitPrice = item.unit_price || 0;
+      const revenue = quantity * unitPrice;
+
+      if (!itemMap.has(description)) {
+        itemMap.set(description, {
+          brand,
+          totalQuantity: 0,
+          totalRevenue: 0,
+          orderCount: 0,
+          invoiceIds: new Set()
+        });
+      }
+
+      const itemData = itemMap.get(description)!;
+      itemData.totalQuantity += quantity;
+      itemData.totalRevenue += revenue;
+      if (item.invoice_id) {
+        itemData.invoiceIds.add(item.invoice_id);
+      }
+    });
+
+    // Convert to analytics format
+    const analytics: ItemAnalytics[] = Array.from(itemMap.entries()).map(([itemDescription, data]) => ({
+      itemDescription,
+      brand: data.brand,
+      totalQuantity: data.totalQuantity,
+      totalRevenue: data.totalRevenue,
+      orderCount: data.invoiceIds.size,
+      averagePrice: data.totalQuantity > 0 ? data.totalRevenue / data.totalQuantity : 0
+    }));
+
+    // Sort by total revenue descending
+    analytics.sort((a, b) => b.totalRevenue - a.totalRevenue);
+
+    // Cache the results
+    itemAnalyticsCache = {
+      data: analytics,
+      timestamp: Date.now()
+    };
+
+    console.log('Successfully calculated item analytics:', analytics);
+    return analytics;
+  } catch (error) {
+    console.error('Error fetching item analytics:', error);
+    return [];
+  }
+};
+
+/**
+ * Clear brand analytics cache
+ */
+export const clearBrandAnalyticsCache = (): void => {
+  brandAnalyticsCache = null;
+};
+
+/**
+ * Clear item analytics cache
+ */
+export const clearItemAnalyticsCache = (): void => {
+  itemAnalyticsCache = null;
+};

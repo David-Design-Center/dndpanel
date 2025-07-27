@@ -55,6 +55,17 @@ function InvoiceGenerator({ orderId: propOrderId, onClose, isModal = false }: In
   const [orderLoadError, setOrderLoadError] = useState<string | null>(null);
   const [isSavingInvoice, setIsSavingInvoice] = useState(false);
 
+  // Tax calculation mode state
+  const [isManualTax, setIsManualTax] = useState(false);
+  const [manualTaxType, setManualTaxType] = useState<'percentage' | 'amount'>('percentage');
+  const [manualTaxPercentage, setManualTaxPercentage] = useState(8.875);
+  
+  // Discount visibility state
+  const [showDiscount, setShowDiscount] = useState(false);
+  
+  // Tax visibility state
+  const [showTax, setShowTax] = useState(true); // Default to true since tax is typically needed
+
   // Auto-generate PO number on mount for new invoices
   useEffect(() => {
     const generatePoNumber = async () => {
@@ -156,6 +167,40 @@ function InvoiceGenerator({ orderId: propOrderId, onClose, isModal = false }: In
             balance: Number(invoiceData.balance_due) || 0,
             payments: invoiceData.payments_history || []
           });
+          
+          // Check if tax was manually set by comparing with auto-calculated tax
+          const discountedSubtotal = (Number(invoiceData.subtotal) || 0) - (Number(invoiceData.discount_amount) || 0);
+          const autoCalculatedTax = discountedSubtotal * 0.08875;
+          const actualTax = Number(invoiceData.tax_amount) || 0;
+          
+          // If tax differs significantly from auto-calculated (more than 1 cent), it's manual
+          const isManualTaxDetected = Math.abs(actualTax - autoCalculatedTax) > 0.01;
+          setIsManualTax(isManualTaxDetected);
+          
+          // Show discount checkbox if there's a discount amount
+          const hasDiscount = (Number(invoiceData.discount_amount) || 0) > 0;
+          setShowDiscount(hasDiscount);
+          
+          // Show tax checkbox if there's a tax amount
+          const hasTax = (Number(invoiceData.tax_amount) || 0) > 0;
+          setShowTax(hasTax);
+          
+          // If manual, try to detect if it's a percentage or fixed amount
+          if (isManualTaxDetected && discountedSubtotal > 0) {
+            const impliedPercentage = (actualTax / discountedSubtotal) * 100;
+            // If the implied percentage is a reasonable tax rate (0-20%) and results in the exact tax amount
+            if (impliedPercentage >= 0 && impliedPercentage <= 20) {
+              const calculatedTaxFromPercentage = discountedSubtotal * (impliedPercentage / 100);
+              if (Math.abs(calculatedTaxFromPercentage - actualTax) < 0.01) {
+                setManualTaxType('percentage');
+                setManualTaxPercentage(Number(impliedPercentage.toFixed(3)));
+              } else {
+                setManualTaxType('amount');
+              }
+            } else {
+              setManualTaxType('amount');
+            }
+          }
         } catch (error) {
           console.error('Error loading invoice for editing:', error);
           setOrderLoadError('Failed to load invoice for editing');
@@ -214,6 +259,40 @@ function InvoiceGenerator({ orderId: propOrderId, onClose, isModal = false }: In
             balance: Number(supabaseInvoice.balance_due) || 0,
             payments: supabaseInvoice.payments_history || []
           });
+          
+          // Check if tax was manually set by comparing with auto-calculated tax
+          const discountedSubtotal = (Number(supabaseInvoice.subtotal) || 0) - (Number(supabaseInvoice.discount_amount) || 0);
+          const autoCalculatedTax = discountedSubtotal * 0.08875;
+          const actualTax = Number(supabaseInvoice.tax_amount) || 0;
+          
+          // If tax differs significantly from auto-calculated (more than 1 cent), it's manual
+          const isManualTaxDetected = Math.abs(actualTax - autoCalculatedTax) > 0.01;
+          setIsManualTax(isManualTaxDetected);
+          
+          // Show discount checkbox if there's a discount amount
+          const hasDiscount = (Number(supabaseInvoice.discount_amount) || 0) > 0;
+          setShowDiscount(hasDiscount);
+          
+          // Show tax checkbox if there's a tax amount
+          const hasTax = (Number(supabaseInvoice.tax_amount) || 0) > 0;
+          setShowTax(hasTax);
+          
+          // If manual, try to detect if it's a percentage or fixed amount
+          if (isManualTaxDetected && discountedSubtotal > 0) {
+            const impliedPercentage = (actualTax / discountedSubtotal) * 100;
+            // If the implied percentage is a reasonable tax rate (0-20%) and results in the exact tax amount
+            if (impliedPercentage >= 0 && impliedPercentage <= 20) {
+              const calculatedTaxFromPercentage = discountedSubtotal * (impliedPercentage / 100);
+              if (Math.abs(calculatedTaxFromPercentage - actualTax) < 0.01) {
+                setManualTaxType('percentage');
+                setManualTaxPercentage(Number(impliedPercentage.toFixed(3)));
+              } else {
+                setManualTaxType('amount');
+              }
+            } else {
+              setManualTaxType('amount');
+            }
+          }
           
           setIsLoadingOrder(false);
           return;
@@ -280,7 +359,22 @@ function InvoiceGenerator({ orderId: propOrderId, onClose, isModal = false }: In
   useEffect(() => {
     const subtotal = invoice.lineItems.reduce((sum, item) => sum + (item.quantity * item.price), 0);
     const discountedSubtotal = subtotal - invoice.discount;
-    const tax = discountedSubtotal * 0.08875; // NYC sales tax rate (8.875%)
+    
+    // Calculate tax based on mode and visibility
+    let tax = 0;
+    if (showTax) {
+      if (!isManualTax) {
+        // Auto mode: use default 8.875%
+        tax = discountedSubtotal * 0.08875;
+      } else if (manualTaxType === 'percentage') {
+        // Manual percentage mode: use custom percentage
+        tax = discountedSubtotal * (manualTaxPercentage / 100);
+      } else {
+        // Manual amount mode: keep the existing tax value
+        tax = invoice.tax;
+      }
+    }
+    
     const total = discountedSubtotal + tax;
     const totalPayments = invoice.payments.reduce((sum, payment) => sum + payment.amount, 0);
     const balance = total - totalPayments;
@@ -292,7 +386,7 @@ function InvoiceGenerator({ orderId: propOrderId, onClose, isModal = false }: In
       total,
       balance
     }));
-  }, [invoice.lineItems, invoice.discount, invoice.payments]);
+  }, [invoice.lineItems, invoice.discount, invoice.payments, isManualTax, manualTaxType, manualTaxPercentage, invoice.tax, showTax]);
   
   // Add a new line item
   const handleAddLineItem = () => {
@@ -838,21 +932,182 @@ function InvoiceGenerator({ orderId: propOrderId, onClose, isModal = false }: In
                 Add Payment
               </button>
 
-              {/* Discount */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Discount Amount</label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-sm">$</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    value={invoice.discount}
-                    onChange={(e) => handleInvoiceChange('discount', parseFloat(e.target.value) || 0)}
-                    min="0"
-                  />
-                </div>
+              {/* Discount Checkbox */}
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="discount-checkbox"
+                  checked={showDiscount}
+                  onChange={(e) => {
+                    setShowDiscount(e.target.checked);
+                    if (!e.target.checked) {
+                      // Reset discount to 0 when hiding
+                      handleInvoiceChange('discount', 0);
+                    }
+                  }}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                />
+                <label htmlFor="discount-checkbox" className="text-sm font-medium text-gray-700">
+                  Discount
+                </label>
               </div>
+
+              {/* Discount Amount - Conditionally Rendered */}
+              {showDiscount && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Discount Amount</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-sm">$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      value={invoice.discount}
+                      onChange={(e) => handleInvoiceChange('discount', parseFloat(e.target.value) || 0)}
+                      min="0"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Tax Checkbox */}
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="tax-checkbox"
+                  checked={showTax}
+                  onChange={(e) => {
+                    setShowTax(e.target.checked);
+                    if (!e.target.checked) {
+                      // Reset tax to 0 when hiding
+                      handleInvoiceChange('tax', 0);
+                      setIsManualTax(false);
+                    }
+                  }}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                />
+                <label htmlFor="tax-checkbox" className="text-sm font-medium text-gray-700">
+                  Tax
+                </label>
+              </div>
+
+              {/* Tax - Conditionally Rendered */}
+              {showTax && (
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-sm font-medium text-gray-700">Tax Amount</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsManualTax(!isManualTax);
+                        if (!isManualTax) {
+                          // When switching to manual, keep current calculated tax as starting point
+                          const currentTax = invoice.tax;
+                          handleInvoiceChange('tax', currentTax);
+                          // Default to percentage mode when switching to manual
+                          setManualTaxType('percentage');
+                        }
+                      }}
+                      className={`px-2 py-1 text-xs rounded-md transition-colors ${
+                        isManualTax 
+                          ? 'bg-gray-100 text-gray-600 hover:bg-gray-200' 
+                          : 'bg-blue-100 text-blue-800 hover:bg-blue-200'
+                      }`}
+                    >
+                      {isManualTax ? 'Manual' : 'Auto (8.875%)'}
+                    </button>
+                  </div>
+                  
+                  {/* Manual Tax Type Toggle */}
+                  {isManualTax && (
+                    <div className="flex bg-gray-100 rounded-md p-1 mb-2">
+                      <button
+                        type="button"
+                        onClick={() => setManualTaxType('percentage')}
+                        className={`flex-1 px-2 py-1 text-xs font-medium rounded transition-colors ${
+                          manualTaxType === 'percentage'
+                            ? 'bg-white text-gray-900 shadow-sm'
+                            : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                      >
+                        Percentage
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setManualTaxType('amount')}
+                        className={`flex-1 px-2 py-1 text-xs font-medium rounded transition-colors ${
+                          manualTaxType === 'amount'
+                            ? 'bg-white text-gray-900 shadow-sm'
+                            : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                      >
+                        Fixed Amount
+                      </button>
+                    </div>
+                  )}
+                  
+                  {/* Tax Input - Percentage Mode */}
+                  {isManualTax && manualTaxType === 'percentage' && (
+                    <div className="relative mb-2">
+                      <input
+                        type="number"
+                        step="0.001"
+                        className="w-full pl-3 pr-8 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        value={manualTaxPercentage.toFixed(3)}
+                        onChange={(e) => setManualTaxPercentage(parseFloat(e.target.value) || 0)}
+                        min="0"
+                        max="100"
+                        placeholder="Enter tax percentage"
+                      />
+                      <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-sm">%</span>
+                    </div>
+                  )}
+                  
+                  {/* Tax Input - Amount Mode or Auto Mode */}
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-sm">$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      className={`w-full pl-8 pr-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                        isManualTax && manualTaxType === 'amount' ? '' : 'bg-gray-50 cursor-not-allowed'
+                      }`}
+                      value={isManualTax && manualTaxType === 'amount' ? invoice.tax : invoice.tax.toFixed(2)}
+                      onChange={(e) => {
+                        if (isManualTax && manualTaxType === 'amount') {
+                          handleInvoiceChange('tax', parseFloat(e.target.value) || 0);
+                        }
+                      }}
+                      min="0"
+                      disabled={!isManualTax || manualTaxType !== 'amount'}
+                      placeholder={
+                        !isManualTax 
+                          ? "Auto-calculated" 
+                          : manualTaxType === 'percentage' 
+                            ? "Calculated from percentage"
+                            : "Enter tax amount"
+                      }
+                    />
+                  </div>
+                  
+                  {/* Helper Text */}
+                  {!isManualTax && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      Automatically calculated at 8.875% of discounted subtotal
+                    </p>
+                  )}
+                  {isManualTax && manualTaxType === 'percentage' && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      Tax calculated at {manualTaxPercentage.toFixed(3)}% of discounted subtotal
+                    </p>
+                  )}
+                  {isManualTax && manualTaxType === 'amount' && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      Fixed tax amount
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Summary */}
               <div className="pt-3 border-t border-gray-200">

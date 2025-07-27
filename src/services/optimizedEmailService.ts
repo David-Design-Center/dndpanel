@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { getCurrentAccessToken } from '@/integrations/gapiService';
+import { fetchGmailAccessToken } from '@/lib/gmail';
 import type { Email } from '@/types';
 
 interface ProcessedEmail {
@@ -23,10 +24,29 @@ interface ProcessedEmail {
 }
 
 /**
- * Get the current Gmail access token
+ * Get the current Gmail access token, or fetch a fresh one using domain-wide delegation
  */
-function getAccessToken(): string | null {
-  return getCurrentAccessToken();
+async function getAccessToken(userEmail?: string): Promise<string | null> {
+  // First try to get the current token from gapi client
+  const currentToken = getCurrentAccessToken();
+  
+  if (currentToken) {
+    return currentToken;
+  }
+  
+  // If no current token and we have user email, fetch fresh token via domain-wide delegation
+  if (userEmail) {
+    try {
+      console.log('🔄 Fetching fresh Gmail token via domain-wide delegation...');
+      const freshToken = await fetchGmailAccessToken(userEmail);
+      return freshToken;
+    } catch (error) {
+      console.error('❌ Failed to fetch fresh Gmail token:', error);
+      return null;
+    }
+  }
+  
+  return null;
 }
 
 /**
@@ -62,13 +82,14 @@ export class OptimizedEmailService {  /**
    * Fetch a single email thread using the optimized server-side processing
    * 
    * @param threadId - The Gmail thread ID
+   * @param userEmail - User email for token generation (optional)
    * @returns Promise<Email[]> - Array of emails in the thread
    */
-  async fetchEmailThread(threadId: string): Promise<Email[]> {
+  async fetchEmailThread(threadId: string, userEmail?: string): Promise<Email[]> {
     console.log(`🚀 OptimizedEmailService: Fetching thread ${threadId} via server-side processing`);
     
     try {
-      const accessToken = getAccessToken();
+      const accessToken = await getAccessToken(userEmail);
       if (!accessToken) {
         throw new Error('No Gmail access token available');
       }
@@ -111,13 +132,14 @@ export class OptimizedEmailService {  /**
    * Fetch a single email using the optimized server-side processing
    * 
    * @param messageId - The Gmail message ID
+   * @param userEmail - User email for token generation (optional)
    * @returns Promise<Email> - The processed email
    */
-  async fetchSingleEmail(messageId: string): Promise<Email> {
+  async fetchSingleEmail(messageId: string, userEmail?: string): Promise<Email> {
     console.log(`🚀 OptimizedEmailService: Fetching message ${messageId} via server-side processing`);
     
     try {
-      const accessToken = getAccessToken();
+      const accessToken = await getAccessToken(userEmail);
       if (!accessToken) {
         throw new Error('No Gmail access token available');
       }
@@ -156,12 +178,12 @@ export class OptimizedEmailService {  /**
    * Check if the optimized service is available
    * Falls back to traditional client-side processing if not
    */
-  async isAvailable(): Promise<boolean> {
+  async isAvailable(userEmail?: string): Promise<boolean> {
     try {
       console.log('🔍 Checking if optimized email service is available...');
       
       // Check if we have a valid access token first
-      const accessToken = getAccessToken();
+      const accessToken = await getAccessToken(userEmail);
       if (!accessToken) {
         console.warn('⚠️ No Gmail access token available, using traditional processing');
         return false;

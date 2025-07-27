@@ -5,6 +5,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { createClient } from '@supabase/supabase-js';
 import { InvoiceCards } from '../components/InvoiceCards';
+import { useProfile } from '../contexts/ProfileContext';
+import { deleteInvoice } from '../services/backendApi';
+import { searchInvoicesForList } from '../utils/searchUtils';
 
 // Initialize Supabase client
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
@@ -26,10 +29,14 @@ interface Invoice {
 
 function InvoicesList() {
   const navigate = useNavigate();
+  const { currentProfile } = useProfile();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [filteredInvoices, setFilteredInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deletingInvoice, setDeletingInvoice] = useState<string | null>(null);
 
   // Load invoices from database
   useEffect(() => {
@@ -83,6 +90,7 @@ function InvoicesList() {
         });
         
         setInvoices(transformedInvoices);
+        setFilteredInvoices(transformedInvoices);
         
         console.log('Loaded invoices from Supabase:', transformedInvoices); // Debug log
         
@@ -98,11 +106,35 @@ function InvoicesList() {
     loadInvoices();
   }, []);
 
-  // Filter invoices based on search term
-  const filteredInvoices = invoices.filter(invoice =>
-    invoice.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    invoice.orderNumber.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Handle search functionality
+  const handleSearch = async (term: string) => {
+    setSearchTerm(term);
+    
+    if (!term.trim()) {
+      setFilteredInvoices(invoices);
+      return;
+    }
+
+    setIsSearching(true);
+    try {
+      const filtered = await searchInvoicesForList(invoices, term);
+      setFilteredInvoices(filtered);
+    } catch (error) {
+      console.error('Error searching invoices:', error);
+      setFilteredInvoices(invoices); // Fallback to showing all invoices
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // Update filtered invoices when invoices change
+  useEffect(() => {
+    if (searchTerm.trim()) {
+      handleSearch(searchTerm);
+    } else {
+      setFilteredInvoices(invoices);
+    }
+  }, [invoices]);
 
   // Transform invoices for the 3D cards component
   const transformedInvoicesFor3D = (() => {
@@ -195,6 +227,31 @@ function InvoicesList() {
     });
   };
 
+  const handleDeleteInvoice = async (invoiceId: string, orderNumber: string) => {
+    if (!window.confirm(`Are you sure you want to delete invoice ${orderNumber}? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      setDeletingInvoice(invoiceId);
+      
+      const success = await deleteInvoice(invoiceId);
+      
+      if (success) {
+        // Remove the deleted invoice from both lists
+        setInvoices(prev => prev.filter(invoice => invoice.id !== invoiceId));
+        setFilteredInvoices(prev => prev.filter(invoice => invoice.id !== invoiceId));
+      } else {
+        alert('Failed to delete invoice. Please try again.');
+      }
+    } catch (error) {
+      console.error('Error deleting invoice:', error);
+      alert('Failed to delete invoice. Please try again.');
+    } finally {
+      setDeletingInvoice(null);
+    }
+  };
+
   const handleCreateOrder = () => {
     navigate('/invoice-generator');
   };
@@ -252,12 +309,22 @@ function InvoicesList() {
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
           <Input
             type="text"
-            placeholder="Search by customer name or order number..."
+            placeholder="Search by customer, order #, date, items, or brand..."
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(e) => handleSearch(e.target.value)}
             className="pl-10"
           />
+          {isSearching && (
+            <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+              <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-primary-500"></div>
+            </div>
+          )}
         </div>
+        {searchTerm && (
+          <p className="text-sm text-gray-500 mt-2">
+            Showing {filteredInvoices.length} of {invoices.length} invoices
+          </p>
+        )}
       </div>
 
       {/* Invoice cards grid */}
@@ -290,7 +357,13 @@ function InvoicesList() {
         {console.log('transformedInvoicesFor3D:', transformedInvoicesFor3D)}
         
         {/* 3D Cards View */}
-        <InvoiceCards invoices={transformedInvoicesFor3D} onEditInvoice={handleEditInvoice} />
+        <InvoiceCards 
+          invoices={transformedInvoicesFor3D} 
+          onEditInvoice={handleEditInvoice} 
+          onDeleteInvoice={handleDeleteInvoice}
+          showDeleteButton={currentProfile?.name === 'David'}
+          deletingInvoice={deletingInvoice}
+        />
         </>
       )}
 

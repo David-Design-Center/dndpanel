@@ -5,6 +5,7 @@ import EmailListItem from '../components/EmailListItem';
 import { Email } from '../types';
 import { getDraftEmails } from '../services/emailService';
 import { useAuth } from '../contexts/AuthContext';
+import { useInboxLayout } from '../contexts/InboxLayoutContext';
 
 function Drafts() {
   const [emails, setEmails] = useState<Email[]>([]);
@@ -12,6 +13,7 @@ function Drafts() {
   const [refreshing, setRefreshing] = useState(false);
   const navigate = useNavigate();
   const { isGmailSignedIn } = useAuth();
+  const { selectEmail } = useInboxLayout();
 
   const fetchEmails = async (forceRefresh = false) => {
     try {

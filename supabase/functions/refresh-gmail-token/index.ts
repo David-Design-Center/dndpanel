@@ -1,107 +1,134 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { importPKCS8, SignJWT } from "https://deno.land/x/jose@v4.15.0/index.ts";
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type"
+};
+
+const SCOPES = [
+  // Gmail - Full access (most important for email operations)
+  "https://mail.google.com/",
+  "https://www.googleapis.com/auth/gmail.modify",
+  "https://www.googleapis.com/auth/gmail.compose", 
+  "https://www.googleapis.com/auth/gmail.send",
+  "https://www.googleapis.com/auth/gmail.labels",
+  "https://www.googleapis.com/auth/gmail.insert",
+  "https://www.googleapis.com/auth/gmail.settings.basic",
+  "https://www.googleapis.com/auth/gmail.settings.sharing",
+  
+  // User info
+  "https://www.googleapis.com/auth/userinfo.email",
+  "https://www.googleapis.com/auth/userinfo.profile",
+  "https://www.googleapis.com/auth/user.emails.read",
+  
+  // Contacts
+  "https://www.googleapis.com/auth/contacts",
+  "https://www.googleapis.com/auth/contacts.readonly",
+  "https://www.googleapis.com/auth/contacts.other.readonly",
+  
+  // Drive
+  "https://www.googleapis.com/auth/drive",
+  "https://www.googleapis.com/auth/drive.file",
+  "https://www.googleapis.com/auth/drive.appdata",
+  "https://www.googleapis.com/auth/drive.meet.readonly",
+  "https://www.googleapis.com/auth/drive.readonly",
+  "https://www.googleapis.com/auth/drive.metadata",
+  "https://www.googleapis.com/auth/drive.metadata.readonly",
+  
+  // Docs
+  "https://www.googleapis.com/auth/docs"
+];
 
 serve(async (req) => {
-  // Handle CORS preflight requests
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
+  if (req.method === "OPTIONS") {
+    return new Response("ok", {
+      headers: corsHeaders
+    });
   }
 
   try {
-    const { refreshToken, profileId } = await req.json()
+    const { userEmail } = await req.json();
+    console.log("ℹ️ Generating Gmail token for userEmail:", userEmail);
     
-    console.log('Received request body:', { refreshToken: refreshToken ? '***' : null, profileId })
-    
-    if (!refreshToken) {
-      console.error('Missing refresh token in request')
-      return new Response(
-        JSON.stringify({ error: 'Refresh token is required' }),
-        { 
-          status: 400, 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+    if (!userEmail) {
+      return new Response(JSON.stringify({
+        error: "userEmail is required"
+      }), {
+        status: 400,
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/json"
         }
-      )
+      });
     }
 
-    // Get environment variables (these should be set in Supabase dashboard)
-    const clientId = Deno.env.get('GAPI_CLIENT_ID')
-    const clientSecret = Deno.env.get('GAPI_CLIENT_SECRET')
+    const keyJson = Deno.env.get("GOOGLE_SA_KEY");
+    if (!keyJson) throw new Error("Missing GOOGLE_SA_KEY");
     
-    console.log('Environment check:', { 
-      clientId: clientId ? '***' : 'MISSING', 
-      clientSecret: clientSecret ? '***' : 'MISSING' 
-    })
-    
-    if (!clientId || !clientSecret) {
-      console.error('Missing GAPI_CLIENT_ID or GAPI_CLIENT_SECRET environment variables')
-      return new Response(
-        JSON.stringify({ error: 'Server configuration error' }),
-        { 
-          status: 500, 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-        }
-      )
-    }
+    const key = JSON.parse(keyJson);
+    console.log("ℹ️ Service account key fields:", Object.keys(key));
 
-    // Call Google's token endpoint to refresh the access token
-    console.log('Calling Google token endpoint...')
-    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
+    // Import the PEM private key
+    const pk = await importPKCS8(key.private_key, "RS256");
+
+    // Build and sign the JWT for domain-wide delegation
+    const now = Math.floor(Date.now() / 1000);
+    const jwt = await new SignJWT({
+      iss: key.client_email,
+      sub: userEmail, // Impersonate this user
+      aud: "https://oauth2.googleapis.com/token",
+      iat: now,
+      exp: now + 3600,
+      scope: SCOPES.join(" ")
+    }).setProtectedHeader({
+      alg: "RS256",
+      typ: "JWT"
+    }).sign(pk);
+
+    // Exchange JWT for access_token
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
+        "Content-Type": "application/x-www-form-urlencoded"
       },
       body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        refresh_token: refreshToken,
-        grant_type: 'refresh_token',
-      }),
-    })
+        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        assertion: jwt
+      })
+    });
 
-    console.log('Google API response status:', tokenResponse.status)
-
-    if (!tokenResponse.ok) {
-      const errorData = await tokenResponse.json()
-      console.error('Google token refresh failed:', errorData)
-      return new Response(
-        JSON.stringify({ 
-          error: 'Failed to refresh token', 
-          details: errorData,
-          status: tokenResponse.status 
-        }),
-        { 
-          status: 400, 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-        }
-      )
+    const tokenJson = await tokenRes.json();
+    
+    if (!tokenRes.ok) {
+      console.error("❌ Token endpoint error:", tokenJson);
+      throw new Error(tokenJson.error_description || tokenJson.error);
     }
 
-    const tokenData = await tokenResponse.json()
+    console.log("✅ Successfully generated Gmail access token via domain-wide delegation");
     
-    // Return the new access token and expiry info
-    return new Response(
-      JSON.stringify({
-        access_token: tokenData.access_token,
-        expires_in: tokenData.expires_in || 3600,
-        token_type: tokenData.token_type || 'Bearer'
-      }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+    return new Response(JSON.stringify({
+      access_token: tokenJson.access_token,
+      expires_in: tokenJson.expires_in || 3600,
+      token_type: tokenJson.token_type || "Bearer"
+    }), {
+      status: 200,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "application/json"
       }
-    )
+    });
 
   } catch (error) {
-    console.error('Error in refresh-gmail-token function:', error)
-    return new Response(
-      JSON.stringify({ error: 'Internal server error' }),
-      { 
-        status: 500, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+    console.error("❌ Service-account JWT flow error:", error);
+    return new Response(JSON.stringify({
+      error: error.message
+    }), {
+      status: 500,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "application/json"
       }
-    )
+    });
   }
-})
+});

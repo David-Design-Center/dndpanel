@@ -1,5 +1,4 @@
 import { Email } from '../types';
-import { format } from 'date-fns';
 import { supabase } from '../lib/supabase';
 import { 
   fetchGmailMessages, 
@@ -18,6 +17,8 @@ import {
   saveGmailDraft,
   deleteGmailDraft
 } from '../integrations/gapiService';
+import { queueGmailRequest } from '../utils/requestQueue';
+import { authCoordinator } from '../utils/authCoordinator';
 
 // Auto-reply functionality for out-of-office
 const processedSenders = new Set<string>(); // Track senders we've already replied to
@@ -393,117 +394,7 @@ const isCacheValidForProfile = (timestamp: number, cachedProfileId?: string): bo
   return isTimeValid && isProfileValid;
 };
 
-// Mock data for emails
-const mockEmails: Email[] = [
-  {
-    id: '1',
-    from: {
-      name: 'John Doe',
-      email: 'john.doe@example.com'
-    },
-    to: [
-      {
-        name: 'Me',
-        email: 'me@example.com'
-      }
-    ],
-    subject: 'Meeting Tomorrow',
-    body: '<p>Hi there,</p><p>Just a reminder that we have a meeting scheduled for tomorrow at 10 AM.</p><p>Best regards,<br>John</p>',
-    preview: 'Just a reminder that we have a meeting scheduled for tomorrow at 10 AM.',
-    isRead: false,
-    isImportant: true,
-    date: format(new Date(2023, 6, 15, 10, 30), 'yyyy-MM-dd\'T\'HH:mm:ss'),
-    threadId: 'thread_1'
-  },
-  {
-    id: '2',
-    from: {
-      name: 'Jane Smith',
-      email: 'jane.smith@example.com'
-    },
-    to: [
-      {
-        name: 'Me',
-        email: 'me@example.com'
-      }
-    ],
-    subject: 'Project Update',
-    body: '<p>Hello,</p><p>I wanted to share some updates on the project we discussed last week. We\'ve made significant progress, and I believe we\'ll be able to meet the deadline.</p><p>Regards,<br>Jane</p>',
-    preview: 'I wanted to share some updates on the project we discussed last week. We\'ve made significant progress...',
-    isRead: true,
-    isImportant: false,
-    date: format(new Date(2023, 6, 14, 14, 45), 'yyyy-MM-dd\'T\'HH:mm:ss'),
-    threadId: 'thread_2'
-  },
-  {
-    id: '3',
-    from: {
-      name: 'Marketing Team',
-      email: 'marketing@example.com'
-    },
-    to: [
-      {
-        name: 'Me',
-        email: 'me@example.com'
-      }
-    ],
-    subject: 'New Campaign Draft',
-    body: '<p>Hi team,</p><p>Attached is the draft for our new marketing campaign. Please review and provide feedback by Friday.</p><p>Thanks,<br>Marketing Team</p>',
-    preview: 'Attached is the draft for our new marketing campaign. Please review and provide feedback by Friday.',
-    isRead: false,
-    isImportant: true,
-    date: format(new Date(2023, 6, 13, 9, 15), 'yyyy-MM-dd\'T\'HH:mm:ss'),
-    attachments: [
-      {
-        name: 'campaign_draft.pdf',
-        url: '#',
-        size: 2500000,
-        mimeType: 'application/pdf'
-      }
-    ],
-    threadId: 'thread_3'
-  },
-  {
-    id: '4',
-    from: {
-      name: 'Support Team',
-      email: 'support@example.com'
-    },
-    to: [
-      {
-        name: 'Me',
-        email: 'me@example.com'
-      }
-    ],
-    subject: 'Your Ticket #12345',
-    body: '<p>Hello,</p><p>Your support ticket #12345 has been resolved. Please let us know if you have any further questions.</p><p>Best regards,<br>Support Team</p>',
-    preview: 'Your support ticket #12345 has been resolved. Please let us know if you have any further questions.',
-    isRead: true,
-    isImportant: false,
-    date: format(new Date(2023, 6, 12, 11, 0), 'yyyy-MM-dd\'T\'HH:mm:ss'),
-    threadId: 'thread_4'
-  },
-  {
-    id: '5',
-    from: {
-      name: 'Alex Johnson',
-      email: 'alex.johnson@example.com'
-    },
-    to: [
-      {
-        name: 'Me',
-        email: 'me@example.com'
-      }
-    ],
-    subject: 'Weekend Plans',
-    body: '<p>Hey!</p><p>Are you free this weekend? I was thinking we could grab lunch and catch up.</p><p>Let me know,<br>Alex</p>',
-    preview: 'Are you free this weekend? I was thinking we could grab lunch and catch up.',
-    isRead: false,
-    isImportant: false,
-    date: format(new Date(2023, 6, 11, 18, 20), 'yyyy-MM-dd\'T\'HH:mm:ss'),
-    threadId: 'thread_5'
-  }
-];
+// Mock emails removed - application now relies on real Gmail data
 
 // Extended interface for paginated email service response
 export interface PaginatedEmailServiceResponse {
@@ -519,6 +410,26 @@ export const getEmails = async (
   maxResults = 10, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
+  // Ensure authentication before proceeding
+  try {
+    const isAuthenticated = await authCoordinator.ensureAuthenticated();
+    if (!isAuthenticated) {
+      console.warn('⚠️ Gmail not authenticated, returning empty results');
+      return {
+        emails: [],
+        nextPageToken: undefined,
+        resultSizeEstimate: 0
+      };
+    }
+  } catch (authError) {
+    console.error('❌ Authentication check failed:', authError);
+    return {
+      emails: [],
+      nextPageToken: undefined,
+      resultSizeEstimate: 0
+    };
+  }
+
   // If pageToken is provided, always fetch new data (don't use cache for pagination)
   // If force refresh is requested, fetch new data
   if (pageToken || forceRefresh) {
@@ -542,9 +453,12 @@ export const getEmails = async (
   }
   
   try {
-    // Fetch from Gmail
-    console.log('Fetching emails from Gmail API');
-    const gmailResponse = await fetchGmailMessages(query, maxResults, pageToken);
+    // Queue the Gmail API request to prevent concurrent calls
+    console.log('📧 Queueing Gmail API request for emails...');
+    const gmailResponse = await queueGmailRequest(
+      `fetch-emails-${query.replace(/\s+/g, '-')}`,
+      () => fetchGmailMessages(query, maxResults, pageToken)
+    );
     
     // If this is not a paginated request (no pageToken), update cache
     if (!pageToken) {
@@ -590,34 +504,13 @@ export const getEmails = async (
       resultSizeEstimate: gmailResponse.resultSizeEstimate
     };
   } catch (error) {
-    console.error('Error fetching from Gmail, falling back to mock data:', error);
-    // Fall back to mock data only if not paginating
-    if (!pageToken) {
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          // Still cache the mock data to prevent repeated fallbacks
-          const mockEmailsCopy = [...mockEmails];
-          emailCache.list = {
-            emails: mockEmailsCopy,
-            timestamp: Date.now(),
-            query: query,
-            profileId: currentCacheProfileId || undefined
-          };
-          resolve({
-            emails: mockEmailsCopy,
-            nextPageToken: undefined,
-            resultSizeEstimate: mockEmailsCopy.length
-          });
-        }, 500);
-      });
-    } else {
-      // For pagination, return empty results on error
-      return {
-        emails: [],
-        nextPageToken: undefined,
-        resultSizeEstimate: 0
-      };
-    }
+    console.error('Error fetching emails from Gmail:', error);
+    // Return empty results on error instead of falling back to mock data
+    return {
+      emails: [],
+      nextPageToken: undefined,
+      resultSizeEstimate: 0
+    };
   }
 };
 
@@ -675,36 +568,9 @@ export const getEmailById = async (id: string): Promise<Email | undefined> => {
     
     return email;
   } catch (error) {
-    console.error('Error fetching email from Gmail, falling back to mock data:', error);
-    // Fall back to mock data
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const email = mockEmails.find(email => email.id === id);
-        if (email && !email.isRead) {
-          email.isRead = true;
-        }
-        
-        // Cache the mock email if found
-        if (email) {
-          emailCache.details[id] = {
-            email,
-            timestamp: Date.now(),
-            profileId: currentCacheProfileId || undefined
-          };
-          
-          // Also update thread cache if threadId is present
-          if (email.threadId) {
-            emailCache.threads[email.threadId] = {
-              email,
-              timestamp: Date.now(),
-              profileId: currentCacheProfileId || undefined
-            };
-          }
-        }
-        
-        resolve(email);
-      }, 300);
-    });
+    console.error('Error fetching email from Gmail:', error);
+    // Return undefined when email not found
+    return undefined;
   }
 };
 
@@ -742,33 +608,9 @@ export const getEmailByThreadId = async (threadId: string): Promise<Email | unde
     
     return email;
   } catch (error) {
-    console.error(`Error fetching email for thread ID ${threadId}, falling back to mock data:`, error);
-    // Fall back to mock data
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const email = mockEmails.find(email => email.threadId === threadId);
-        if (email && !email.isRead) {
-          email.isRead = true;
-        }
-        
-        // Cache the mock email if found
-        if (email) {
-          emailCache.threads[threadId] = {
-            email,
-            timestamp: Date.now(),
-            profileId: currentCacheProfileId || undefined
-          };
-          
-          emailCache.details[email.id] = {
-            email,
-            timestamp: Date.now(),
-            profileId: currentCacheProfileId || undefined
-          };
-        }
-        
-        resolve(email);
-      }, 300);
-    });
+    console.error(`Error fetching email for thread ID ${threadId}:`, error);
+    // Return undefined when email not found
+    return undefined;
   }
 };
 
@@ -839,6 +681,23 @@ export const deleteDraft = async (draftId: string): Promise<void> => {
   }
 };
 
+/**
+ * Delete an email (move to trash)
+ */
+export const deleteEmail = async (emailId: string): Promise<void> => {
+  try {
+    await markGmailMessageAsTrash(emailId);
+    
+    // Clear all caches to ensure immediate removal from all views
+    clearEmailCache();
+    
+    console.log(`Successfully moved email ${emailId} to trash and cleared caches`);
+  } catch (error) {
+    console.error('Error deleting email:', error);
+    throw error;
+  }
+};
+
 export const getAttachmentDownloadUrl = async (
   messageId: string,
   attachmentId: string,
@@ -878,19 +737,8 @@ export const sendEmail = async (
     
     throw new Error('Failed to send email via Gmail');
   } catch (error) {
-    console.error('Error sending email, falling back to mock:', error);
-    // Fall back to mock implementation
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        // Invalidate the list cache
-        if (emailCache.list) {
-          emailCache.list.timestamp = 0;
-        }
-        // Generate a fake thread ID for mocks
-        const mockThreadId = `mock_thread_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-        resolve({ success: true, threadId: mockThreadId });
-      }, 800);
-    });
+    console.error('Error sending email:', error);
+    return { success: false };
   }
 };
 
@@ -914,31 +762,8 @@ export const markAsRead = async (id: string): Promise<{success: boolean}> => {
     
     return { success: true };
   } catch (error) {
-    console.error('Error marking as read via Gmail, falling back to mock:', error);
-    
-    // Fallback to mock implementation
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const email = mockEmails.find(email => email.id === id);
-        if (email) {
-          email.isRead = true;
-        }
-        
-        // Update cache for mock as well
-        if (emailCache.details[id]) {
-          emailCache.details[id].email.isRead = true;
-        }
-        
-        if (emailCache.list) {
-          const cachedEmail = emailCache.list.emails.find(e => e.id === id);
-          if (cachedEmail) {
-            cachedEmail.isRead = true;
-          }
-        }
-        
-        resolve({ success: true });
-      }, 300);
-    });
+    console.error('Error marking email as read:', error);
+    return { success: false };
   }
 };
 
@@ -1030,31 +855,8 @@ export const markAsUnread = async (id: string): Promise<{success: boolean}> => {
     
     return { success: true };
   } catch (error) {
-    console.error('Error marking as unread via Gmail, falling back to mock:', error);
-    
-    // Fallback to mock implementation
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const email = mockEmails.find(email => email.id === id);
-        if (email) {
-          email.isRead = false;
-        }
-        
-        // Update cache for mock as well
-        if (emailCache.details[id]) {
-          emailCache.details[id].email.isRead = false;
-        }
-        
-        if (emailCache.list) {
-          const cachedEmail = emailCache.list.emails.find(e => e.id === id);
-          if (cachedEmail) {
-            cachedEmail.isRead = false;
-          }
-        }
-        
-        resolve({ success: true });
-      }, 300);
-    });
+    console.error('Error marking email as unread:', error);
+    return { success: false };
   }
 };
 
@@ -1132,31 +934,8 @@ export const markAsImportant = async (id: string): Promise<{success: boolean}> =
     
     return { success: true };
   } catch (error) {
-    console.error('Error marking as important via Gmail, falling back to mock:', error);
-    
-    // Fallback to mock implementation
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const email = mockEmails.find(email => email.id === id);
-        if (email) {
-          email.isImportant = true;
-        }
-        
-        // Update cache for mock as well
-        if (emailCache.details[id]) {
-          emailCache.details[id].email.isImportant = true;
-        }
-        
-        if (emailCache.list) {
-          const cachedEmail = emailCache.list.emails.find(e => e.id === id);
-          if (cachedEmail) {
-            cachedEmail.isImportant = true;
-          }
-        }
-        
-        resolve({ success: true });
-      }, 300);
-    });
+    console.error('Error marking email as important:', error);
+    return { success: false };
   }
 };
 
@@ -1183,30 +962,7 @@ export const markAsUnimportant = async (id: string): Promise<{success: boolean}>
     
     return { success: true };
   } catch (error) {
-    console.error('Error marking as unimportant via Gmail, falling back to mock:', error);
-    
-    // Fallback to mock implementation
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const email = mockEmails.find(email => email.id === id);
-        if (email) {
-          email.isImportant = false;
-        }
-        
-        // Update cache for mock as well
-        if (emailCache.details[id]) {
-          emailCache.details[id].email.isImportant = false;
-        }
-        
-        if (emailCache.list) {
-          const cachedEmail = emailCache.list.emails.find(e => e.id === id);
-          if (cachedEmail) {
-            cachedEmail.isImportant = false;
-          }
-        }
-        
-        resolve({ success: true });
-      }, 300);
-    });
+    console.error('Error marking email as unimportant:', error);
+    return { success: false };
   }
 };

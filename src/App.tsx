@@ -103,10 +103,15 @@ function App() {
           >
             <Route index element={<Navigate to="/inbox" replace />} />
             <Route path="inbox" element={<Inbox />} />
+            <Route path="inbox/email/:id" element={<Inbox />} />
             <Route path="unread" element={<Unread />} />
+            <Route path="unread/email/:id" element={<Unread />} />
             <Route path="sent" element={<Sent />} />
+            <Route path="sent/email/:id" element={<Sent />} />
             <Route path="drafts" element={<Drafts />} />
+            <Route path="drafts/email/:id" element={<Drafts />} />
             <Route path="trash" element={<Trash />} />
+            <Route path="trash/email/:id" element={<Trash />} />
             <Route path="email/:id" element={<ViewEmail />} />
             <Route path="compose" element={<Compose />} />
             <Route path="settings" element={<Settings />} />

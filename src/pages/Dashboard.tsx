@@ -15,10 +15,13 @@ import {
   fetchDashboardMetrics,
   DashboardMetrics,
   fetchMonthlyRevenue,
-  MonthlyRevenue,
   fetchRecentOrders,
   RecentOrder,
-  fetchUnderDepositInvoices
+  fetchUnderDepositInvoices,
+  fetchBrandAnalytics,
+  BrandAnalytics,
+  fetchItemAnalytics,
+  ItemAnalytics
 } from '../services/backendApi';
 
 // Shadcn UI Components
@@ -49,6 +52,11 @@ function Dashboard() {
   const [loadingOrders, setLoadingOrders] = useState(false);
   const [underDepositInvoices, setUnderDepositInvoices] = useState<any[]>([]);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
+  
+  // State for brand and item analytics
+  const [brandAnalytics, setBrandAnalytics] = useState<BrandAnalytics[]>([]);
+  const [itemAnalytics, setItemAnalytics] = useState<ItemAnalytics[]>([]);
+  const [loadingAnalytics, setLoadingAnalytics] = useState(false);
 
   // Placeholder for graph data - fallback if API fetch fails
   const graphData = [
@@ -85,16 +93,13 @@ function Dashboard() {
       // Fetch dashboard metrics and monthly revenue in parallel
       const [metricsData, revenueData] = await Promise.all([
         fetchDashboardMetrics(forceRefresh), 
-        fetchMonthlyRevenue(forceRefresh),
-        fetchUnderDepositInvoices(forceRefresh)
+        fetchMonthlyRevenue(forceRefresh)
       ]);
-      
-      const [dashboardMetrics, monthlyRevenue, underDeposit] = [metricsData, revenueData, revenueData[2]];
 
-      setMetrics(dashboardMetrics);
+      setMetrics(metricsData);
 
       // Convert monthly revenue data format for the chart
-      const formattedRevenueData = monthlyRevenue.map(item => ({
+      const formattedRevenueData = revenueData.map(item => ({
         name: item.month,
         total: item.total
       }));
@@ -109,6 +114,21 @@ function Dashboard() {
         console.error('Error fetching under-deposit invoices:', error);
       } finally {
         setLoadingInvoices(false);
+      }
+
+      // Fetch brand and item analytics
+      try {
+        setLoadingAnalytics(true);
+        const [brandData, itemData] = await Promise.all([
+          fetchBrandAnalytics(forceRefresh),
+          fetchItemAnalytics(forceRefresh)
+        ]);
+        setBrandAnalytics(brandData);
+        setItemAnalytics(itemData);
+      } catch (error) {
+        console.error('Error fetching analytics data:', error);
+      } finally {
+        setLoadingAnalytics(false);
       }
 
       // If we have a date selected, fetch orders for that date
@@ -245,6 +265,7 @@ function Dashboard() {
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="metrics">Metrics</TabsTrigger>
+          <TabsTrigger value="analytics">Brand & Item Analytics</TabsTrigger>
         </TabsList>
         <TabsContent value="overview" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
@@ -399,9 +420,12 @@ function Dashboard() {
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                       {underDepositInvoices.map((invoice) => {
+                        // Use the deposit amount calculated from payment_history
+                        const depositAmount = invoice.deposit_amount || 0;
+                        
                         // Calculate deposit percentage
                         const depositPercentage = invoice.total_amount > 0 
-                          ? (invoice.deposit_amount / invoice.total_amount) * 100 
+                          ? (depositAmount / invoice.total_amount) * 100 
                           : 0;
                         
                         // Format date
@@ -426,7 +450,7 @@ function Dashboard() {
                               ${invoice.total_amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap text-sm font-medium">
-                              ${invoice.deposit_amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                              ${depositAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               <div className="flex items-center">
@@ -494,7 +518,7 @@ function Dashboard() {
                 </div>
               </div>
               <div className="mt-2 text-xs text-gray-500">
-                {metrics.priceRequests} Price Requests • {metrics.customerOrders} Customer Orders
+                {metrics.customerOrders} Customer Orders
               </div>
             </div>
 
@@ -574,69 +598,101 @@ function Dashboard() {
                 </div>
               </div>
               <div className="p-6">
-                <div className="space-y-4">
-                  {Object.entries(metrics.staffMetrics).map(([staffName, staffData]) => (
-                    <div key={staffName} className="border border-gray-200 rounded-lg p-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <h4 className="font-medium text-gray-900">{staffName}</h4>
-                        <span className="text-sm font-medium text-blue-600">
-                          {staffData.totalOrders} orders
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                          <div className="text-gray-500">Revenue</div>
-                          <div className="font-medium text-gray-900">
-                            ${staffData.totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                {Object.keys(metrics.staffMetrics).length > 0 ? (
+                  <div className="max-h-96 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {Object.entries(metrics.staffMetrics).map(([staffName, staffData]) => (
+                      <div key={staffName} className="border border-gray-200 rounded-lg p-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="font-medium text-gray-900 text-sm">{staffName}</h4>
+                          <span className="text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                            {staffData.totalOrders} orders
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div>
+                            <div className="text-gray-500">Revenue</div>
+                            <div className="font-semibold text-gray-900">
+                              ${staffData.totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 0 })}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-gray-500">Customers</div>
+                            <div className="font-semibold text-gray-900">{staffData.customers}</div>
                           </div>
                         </div>
-                        <div>
-                          <div className="text-gray-500">Customers</div>
-                          <div className="font-medium text-gray-900">{staffData.customers}</div>
-                        </div>
                       </div>
-                      <div className="mt-3 grid grid-cols-2 gap-4 text-xs">
-                        <div>
-                          <div className="text-gray-500">Price Requests</div>
-                          <div className="font-medium text-blue-600">{staffData.priceRequests}</div>
-                        </div>
-                        <div>
-                          <div className="text-gray-500">Customer Orders</div>
-                          <div className="font-medium text-green-600">{staffData.customerOrders}</div>
-                        </div>
-                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 bg-gray-50 rounded-lg">
+                    <div className="w-12 h-12 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-3">
+                      <BarChart3 className="w-6 h-6 text-gray-400" />
                     </div>
-                  ))}
-                </div>
+                    <h4 className="font-medium text-gray-900 mb-1">No data available</h4>
+                    <p className="text-sm text-gray-500">Staff performance metrics will appear here</p>
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* Order Status Overview */}
+            {/* Staff Performance Chart */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200">
               <div className="px-6 py-4 border-b border-gray-200">
                 <div className="flex items-center">
-                  <CalendarIcon className="w-5 h-5 text-gray-400 mr-2" />
-                  <h3 className="text-lg font-medium text-gray-900">Order Status Overview</h3>
+                  <BarChart3 className="w-5 h-5 text-gray-400 mr-2" />
+                  <h3 className="text-lg font-medium text-gray-900">Staff Performance Chart</h3>
                 </div>
               </div>
               <div className="p-6">
-                <div className="space-y-4">
-                  {Object.entries(metrics.statusBreakdown).map(([status, count]) => (
-                    <div key={status} className="flex items-center justify-between p-3 border border-gray-200 rounded-lg">
-                      <div className="flex items-center">
-                        <div className={`w-3 h-3 rounded-full mr-3 ${
-                          status === 'Completed' ? 'bg-green-500' :
-                          status === 'Sent' ? 'bg-blue-500' :
-                          status === 'Reply Received' ? 'bg-yellow-500' :
-                          status === 'In Progress' ? 'bg-orange-500' :
-                          'bg-gray-500'
-                        }`}></div>
-                        <span className="font-medium text-gray-900">{status}</span>
-                      </div>
-                      <span className="text-lg font-semibold text-gray-900">{count}</span>
+                {Object.keys(metrics.staffMetrics).length > 0 ? (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={Object.entries(metrics.staffMetrics).map(([name, data]) => ({
+                      name,
+                      revenue: data.totalRevenue,
+                      orders: data.totalOrders,
+                      customers: data.customers
+                    }))}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis 
+                        dataKey="name" 
+                        fontSize={12}
+                        angle={-45}
+                        textAnchor="end"
+                        height={80}
+                      />
+                      <YAxis 
+                        tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+                        fontSize={12}
+                      />
+                      <Tooltip 
+                        formatter={(value: number, name: string) => {
+                          if (name === 'revenue') {
+                            return [`$${value.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`, 'Revenue'];
+                          }
+                          return [value, name];
+                        }}
+                        labelFormatter={(label, payload) => {
+                          const data = payload?.[0]?.payload;
+                          return `${label} - ${data?.orders || 0} orders`;
+                        }}
+                      />
+                      <Bar 
+                        dataKey="revenue" 
+                        fill="#3b82f6" 
+                        name="Revenue"
+                        radius={[2, 2, 0, 0]}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="text-center py-8 bg-gray-50 rounded-lg">
+                    <div className="w-12 h-12 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-3">
+                      <BarChart3 className="w-6 h-6 text-gray-400" />
                     </div>
-                  ))}
-                </div>
+                    <h4 className="font-medium text-gray-900 mb-1">No staff data available</h4>
+                    <p className="text-sm text-gray-500">Staff performance chart will appear here</p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -724,6 +780,210 @@ function Dashboard() {
                 </div>
               </div>
             </div>
+          </div>
+        </TabsContent>
+        
+        <TabsContent value="analytics" className="space-y-4">
+          {/* Brand Analytics */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Top Brands by Revenue</CardTitle>
+                <CardDescription>
+                  Most profitable brands based on total sales revenue
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {loadingAnalytics ? (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary-500 mr-3"></div>
+                    <span className="text-gray-600">Loading brand analytics...</span>
+                  </div>
+                ) : brandAnalytics.length > 0 ? (
+                  <div className="space-y-4">
+                    {brandAnalytics.slice(0, 10).map((brand, index) => (
+                      <div key={brand.brandName} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                        <div className="flex items-center">
+                          <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mr-3">
+                            <span className="text-xs font-bold text-blue-600">#{index + 1}</span>
+                          </div>
+                          <div>
+                            <p className="font-medium text-gray-900">{brand.brandName}</p>
+                            <p className="text-sm text-gray-500">{brand.totalItems} items sold</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-semibold text-gray-900">
+                            ${brand.totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            Avg: ${brand.averageItemValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-gray-500">
+                    <p>No brand data available</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Item Analytics */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Top Items by Sales</CardTitle>
+                <CardDescription>
+                  Best-selling items based on quantity and revenue
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {loadingAnalytics ? (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary-500 mr-3"></div>
+                    <span className="text-gray-600">Loading item analytics...</span>
+                  </div>
+                ) : itemAnalytics.length > 0 ? (
+                  <div className="space-y-4">
+                    {itemAnalytics.slice(0, 10).map((item, index) => (
+                      <div key={`${item.itemDescription}-${item.brand}`} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                        <div className="flex items-center">
+                          <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center mr-3">
+                            <span className="text-xs font-bold text-green-600">#{index + 1}</span>
+                          </div>
+                          <div>
+                            <p className="font-medium text-gray-900">{item.itemDescription}</p>
+                            <p className="text-sm text-gray-500">{item.brand} • {item.totalQuantity} units</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-semibold text-gray-900">
+                            ${item.totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            ${item.averagePrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}/unit
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-gray-500">
+                    <p>No item data available</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Brand Performance Chart */}
+          <Card className="col-span-full">
+            <CardHeader>
+              <CardTitle>Brand Performance Overview</CardTitle>
+              <CardDescription>
+                Revenue comparison across top brands
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={400}>
+                <BarChart data={brandAnalytics.slice(0, 10)}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis 
+                    dataKey="brandName" 
+                    angle={-45}
+                    textAnchor="end"
+                    height={80}
+                    fontSize={12}
+                  />
+                  <YAxis 
+                    tickFormatter={(value) => `$${value.toLocaleString()}`}
+                    fontSize={12}
+                  />
+                  <Tooltip 
+                    formatter={(value: number) => [`$${value.toLocaleString()}`, 'Revenue']}
+                    labelFormatter={(label) => `Brand: ${label}`}
+                  />
+                  <Legend />
+                  <Bar 
+                    dataKey="totalRevenue" 
+                    fill="#3b82f6" 
+                    name="Total Revenue"
+                    radius={[4, 4, 0, 0]}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          {/* Summary Statistics */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center">
+                  <div className="w-8 h-8 bg-blue-100 rounded-md flex items-center justify-center mr-3">
+                    <BarChart3 className="w-5 h-5 text-blue-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Total Brands</p>
+                    <p className="text-2xl font-semibold text-gray-900">{brandAnalytics.length}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center">
+                  <div className="w-8 h-8 bg-green-100 rounded-md flex items-center justify-center mr-3">
+                    <ClipboardList className="w-5 h-5 text-green-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Total Items</p>
+                    <p className="text-2xl font-semibold text-gray-900">{itemAnalytics.length}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center">
+                  <div className="w-8 h-8 bg-purple-100 rounded-md flex items-center justify-center mr-3">
+                    <TrendingUp className="w-5 h-5 text-purple-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Top Brand Revenue</p>
+                    <p className="text-2xl font-semibold text-gray-900">
+                      {brandAnalytics.length > 0 
+                        ? `$${brandAnalytics[0].totalRevenue.toLocaleString()}`
+                        : '$0'
+                      }
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center">
+                  <div className="w-8 h-8 bg-orange-100 rounded-md flex items-center justify-center mr-3">
+                    <DollarSign className="w-5 h-5 text-orange-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Top Item Revenue</p>
+                    <p className="text-2xl font-semibold text-gray-900">
+                      {itemAnalytics.length > 0 
+                        ? `$${itemAnalytics[0].totalRevenue.toLocaleString()}`
+                        : '$0'
+                      }
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </TabsContent>
       </Tabs>

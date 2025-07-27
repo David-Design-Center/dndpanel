@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronLeft, ChevronRight, ArrowUp, ArrowDown, DollarSign, FileText, ChevronDown, Eye } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ArrowUp, ArrowDown, DollarSign, FileText, ChevronDown, Eye, Trash2 } from 'lucide-react';
 import { parse } from 'date-fns';
 import { createClient } from '@supabase/supabase-js';
 import {
@@ -9,6 +9,8 @@ import {
   DropdownMenuTrigger,
 } from "../../../components/ui/dropdown-menu";
 import { InvoicePreviewModal } from '../../../components/InvoicePreviewModal';
+import { useProfile } from '../../../contexts/ProfileContext';
+import { deleteCustomerOrder } from '../../../services/backendApi';
 
 // Initialize Supabase client
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
@@ -81,13 +83,16 @@ interface OrdersSpreadsheetProps {
   orders: Invoice[];
   onViewInvoices: (orderId: string) => void;
   onOrderUpdate?: (updatedOrder: Invoice) => void;
+  onOrderDeleted?: (orderId: string) => void;
 }
 
-function OrdersSpreadsheet({ orders, onViewInvoices, onOrderUpdate }: OrdersSpreadsheetProps) {
+function OrdersSpreadsheet({ orders, onViewInvoices, onOrderUpdate, onOrderDeleted }: OrdersSpreadsheetProps) {
+  const { currentProfile } = useProfile();
   const [currentPage, setCurrentPage] = useState(1);
   const [sortField, setSortField] = useState<SortField>('invoice_date');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
+  const [deletingOrder, setDeletingOrder] = useState<string | null>(null);
   const [selectedInvoice, setSelectedInvoice] = useState<{ invoice: InvoiceForModal; lineItems: InvoiceLineItem[] } | null>(null);
   const itemsPerPage = 10;
 
@@ -226,6 +231,33 @@ function OrdersSpreadsheet({ orders, onViewInvoices, onOrderUpdate }: OrdersSpre
       });
     } catch (error) {
       console.error('Error fetching invoice details:', error);
+    }
+  };
+
+  // Handle deleting an order
+  const handleDeleteOrder = async (orderId: string, orderNumber: string) => {
+    if (!window.confirm(`Are you sure you want to delete order ${orderNumber}? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      setDeletingOrder(orderId);
+      
+      const success = await deleteCustomerOrder(orderId);
+      
+      if (success) {
+        // Notify parent component that order was deleted
+        if (onOrderDeleted) {
+          onOrderDeleted(orderId);
+        }
+      } else {
+        alert('Failed to delete order. Please try again.');
+      }
+    } catch (error) {
+      console.error('Error deleting order:', error);
+      alert('Failed to delete order. Please try again.');
+    } finally {
+      setDeletingOrder(null);
     }
   };
 
@@ -409,6 +441,18 @@ function OrdersSpreadsheet({ orders, onViewInvoices, onOrderUpdate }: OrdersSpre
                         <FileText size={14} className="mr-1" />
                         Invoices
                       </button>
+                      {/* Delete button - Only visible for David */}
+                      {currentProfile?.name === 'David' && (
+                        <button
+                          onClick={() => handleDeleteOrder(invoice.id, invoice.po_number)}
+                          disabled={deletingOrder === invoice.id}
+                          className="inline-flex items-center px-3 py-1 border border-transparent text-xs font-medium rounded-md text-red-700 bg-red-100 hover:bg-red-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50"
+                          title="Delete Order"
+                        >
+                          <Trash2 size={14} className="mr-1" />
+                          {deletingOrder === invoice.id ? 'Deleting...' : 'Delete'}
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

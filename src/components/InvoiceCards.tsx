@@ -2,7 +2,7 @@
 
 import React, { useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { FileText, Edit3 } from 'lucide-react';
+import { FileText, Edit3, Trash2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { InvoicePreviewModal } from './InvoicePreviewModal';
 import { createClient } from '@supabase/supabase-js';
@@ -34,6 +34,9 @@ interface InvoiceCardsProps {
   invoices: InvoiceEdit[];
   className?: string;
   onEditInvoice?: (invoiceId: string) => void;
+  onDeleteInvoice?: (invoiceId: string, orderNumber: string) => void;
+  showDeleteButton?: boolean;
+  deletingInvoice?: string | null;
 }
 
 interface MousePos {
@@ -164,7 +167,10 @@ const InvoiceCard: React.FC<{
   invoiceEdit: InvoiceEdit; 
   onEditInvoice?: (invoiceId: string) => void;
   onPreviewInvoice?: (invoiceId: string) => void;
-}> = ({ invoiceEdit, onEditInvoice, onPreviewInvoice }) => {
+  onDeleteInvoice?: (invoiceId: string, orderNumber: string) => void;
+  showDeleteButton?: boolean;
+  deletingInvoice?: string | null;
+}> = ({ invoiceEdit, onEditInvoice, onPreviewInvoice, onDeleteInvoice, showDeleteButton = false, deletingInvoice }) => {
   const [mousePos, setMousePos] = useState<MousePos>({ x: 0, y: 0 });
   const [hovered, setHovered] = useState(false);
 
@@ -263,11 +269,33 @@ const InvoiceCard: React.FC<{
           )}
         </div>
       </motion.div>
+      
+      {/* Delete Button - Only visible for David */}
+      {showDeleteButton && (
+        <div className="mt-2 flex justify-center">
+          <button
+            onClick={() => onDeleteInvoice?.(invoiceEdit.originalInvoice.id, invoiceEdit.originalInvoice.orderNumber)}
+            disabled={deletingInvoice === invoiceEdit.originalInvoice.id}
+            className="inline-flex items-center px-2 py-1 border border-transparent text-xs font-medium rounded-md text-red-700 bg-red-100 hover:bg-red-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50"
+            title="Delete Invoice"
+          >
+            <Trash2 size={12} className="mr-1" />
+            {deletingInvoice === invoiceEdit.originalInvoice.id ? 'Deleting...' : 'Delete'}
+          </button>
+        </div>
+      )}
     </motion.div>
   );
 };
 
-export function InvoiceCards({ invoices, className, onEditInvoice }: InvoiceCardsProps) {
+export function InvoiceCards({ 
+  invoices, 
+  className, 
+  onEditInvoice, 
+  onDeleteInvoice, 
+  showDeleteButton = false, 
+  deletingInvoice 
+}: InvoiceCardsProps) {
   const [previewModal, setPreviewModal] = useState<{
     isOpen: boolean;
     invoice: any;
@@ -340,6 +368,9 @@ export function InvoiceCards({ invoices, className, onEditInvoice }: InvoiceCard
               invoiceEdit={invoiceEdit} 
               onEditInvoice={onEditInvoice} 
               onPreviewInvoice={handlePreviewInvoice}
+              onDeleteInvoice={onDeleteInvoice}
+              showDeleteButton={showDeleteButton}
+              deletingInvoice={deletingInvoice}
             />
           </motion.div>
         ))}
