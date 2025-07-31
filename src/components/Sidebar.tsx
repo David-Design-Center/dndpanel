@@ -4,8 +4,10 @@ import { useLocation, Link } from 'react-router-dom';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import ProfileSelector from './ProfileSelector';
 import { useProfile } from '../contexts/ProfileContext';
+import { useAuth } from '../contexts/AuthContext';
 import { useOutOfOffice } from '../contexts/OutOfOfficeContext';
 import { useInboxLayout } from '../contexts/InboxLayoutContext';
+import { useEmailPreloader } from '../contexts/EmailPreloaderContext';
 import { Toggle } from './ui/liquid-toggle';
 
 interface SidebarProps {
@@ -16,8 +18,10 @@ function Sidebar({ onCompose }: SidebarProps) {
   const location = useLocation();
   const [isDropdownOpen, setIsDropdownOpen] = useState(true);
   const { currentProfile } = useProfile();
+  const { isAdmin } = useAuth();
   const { isOutOfOffice, setOutOfOffice } = useOutOfOffice();
   const { isSidebarCollapsed, toggleSidebar } = useInboxLayout();
+  const { isPreloading } = useEmailPreloader();
   
   // Main item
   const mainItem = { 
@@ -85,17 +89,52 @@ function Sidebar({ onCompose }: SidebarProps) {
           </div>
         )}
       
-        {/* Profile Selector */}
-        {!isSidebarCollapsed && (
+        {/* Profile Selector - Only show for admins */}
+        {!isSidebarCollapsed && isAdmin && (
           <div className="px-6 mb-6">
             <ProfileSelector />
+            {/* Preloading Indicator */}
+            {isPreloading && (
+              <div className="mt-3 flex items-center space-x-2 text-xs text-gray-500">
+                <div className="animate-spin rounded-full h-3 w-3 border-t border-b border-gray-400"></div>
+                <span>Syncing emails...</span>
+              </div>
+            )}
+          </div>
+        )}
+        
+        {/* Staff Profile Indicator - Show for non-admins when expanded */}
+        {!isSidebarCollapsed && !isAdmin && currentProfile && (
+          <div className="px-6 mb-6">
+            <div className="bg-gray-100 rounded-lg p-3 border border-gray-200">
+              <div className="flex items-center">
+                <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center mr-3">
+                  <span className="text-blue-600 font-medium text-sm">
+                    {currentProfile.name.charAt(0)}
+                  </span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-900 truncate">
+                    {currentProfile.name}
+                  </p>
+                  <p className="text-xs text-gray-500">Staff Member</p>
+                </div>
+              </div>
+            </div>
+            {/* Preloading Indicator */}
+            {isPreloading && (
+              <div className="mt-3 flex items-center space-x-2 text-xs text-gray-500">
+                <div className="animate-spin rounded-full h-3 w-3 border-t border-b border-gray-400"></div>
+                <span>Syncing emails...</span>
+              </div>
+            )}
           </div>
         )}
             
         <nav className="flex-1 overflow-y-auto px-4">
           <div className="space-y-2">
-            {/* Dashboard - Only for David */}
-            {currentProfile?.name === 'David' && (
+            {/* Dashboard - Only for Admins */}
+            {isAdmin && (
               isSidebarCollapsed ? (
                 <Tooltip delayDuration={300}>
                   <TooltipTrigger asChild>

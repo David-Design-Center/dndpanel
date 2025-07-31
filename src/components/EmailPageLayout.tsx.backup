@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { RefreshCw, Search, ChevronDown, Settings } from 'lucide-react';
-import EmailListItem from '../components/EmailListItem';
+import EmailListItem      console.log(`🔄 EmailPageLayout (${pageType}): Cache updated, refreshing display`);from '../components/EmailListItem';
 import ThreeColumnLayout from '../components/ThreeColumnLayout';
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Email } from '../types';
@@ -177,27 +177,21 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     }
   };
 
-  // INSTANT CACHE INITIALIZATION - watch for cache updates
+  // INSTANT CACHE INITIALIZATION - only update if cache changes
   const cachedData = getCachedEmails(pageType);
   const hasCache = cachedData && cachedData.isLoaded;
 
   useEffect(() => {
-    // Update state when cache becomes available or updates
-    if (hasCache && cachedData) {
-      const hasNewData = emails.length === 0 || 
-                        cachedData.emails.length !== emails.length ||
-                        cachedData.timestamp !== (initialCacheData?.timestamp || 0);
-      
-      if (hasNewData) {
-        console.log(`⚡ EmailPageLayout (${pageType}): Cache updated, refreshing display with ${cachedData.emails.length} emails`);
-        setEmails(cachedData.emails);
-        setCurrentPageToken(cachedData.nextPageToken);
-        setHasMoreEmails(cachedData.hasMoreEmails);
-        setLoading(false);
-        setTransitioning(false);
-      }
+    // Update state if cache has new data (but don't cause loading states)
+    if (hasCache && cachedData !== initialCacheData) {
+      console.log(`� EmailPageLayout (${pageType}): Cache updated, refreshing display`);
+      setEmails(cachedData.emails);
+      setCurrentPageToken(cachedData.nextPageToken);
+      setHasMoreEmails(cachedData.hasMoreEmails);
+      setLoading(false);
+      setTransitioning(false);
     }
-  }, [pageType, hasCache, cachedData?.timestamp, cachedData?.emails.length, emails.length, initialCacheData?.timestamp]);
+  }, [pageType, hasCache, cachedData, initialCacheData]);
 
   useEffect(() => {
     if (isGmailSignedIn) {

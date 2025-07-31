@@ -72,11 +72,11 @@ function ThreeColumnLayout({ children, onEmailUpdate }: ThreeColumnLayoutProps) 
         return remainingSpace;
       }
     } else {
-      // When folders are collapsed, inbox gets more space
+      // When folders are collapsed, inbox gets more space (but respect maxSize)
       if (isEmailPanelOpen && selectedEmailId) {
         return Math.max(panelSizes.emailList, 40);
       } else {
-        return 97; // Almost full width when folders collapsed
+        return 75; // Maximum allowed size when folders collapsed
       }
     }
   };

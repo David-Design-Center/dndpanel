@@ -2,19 +2,14 @@ import { useEffect, lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useSecurity } from './contexts/SecurityContext';
 import { ContactsProvider } from './contexts/ContactsContext';
+import { EmailPreloaderProvider } from './contexts/EmailPreloaderContext';
 import Loading from './components/common/Loading';
 import { initSecurityMeasures } from './utils/security';
 import { SECURITY_CONFIG } from './config/security';
 import { GooeyFilter } from './components/ui/liquid-toggle';
 
-// Lazy load components
+// Lazy load non-critical components only
 const Auth = lazy(() => import('./pages/Auth'));
-const Layout = lazy(() => import('./components/Layout'));
-const Inbox = lazy(() => import('./pages/Inbox'));
-const Unread = lazy(() => import('./pages/Unread'));
-const Sent = lazy(() => import('./pages/Sent'));
-const Drafts = lazy(() => import('./pages/Drafts'));
-const Trash = lazy(() => import('./pages/Trash'));
 const ViewEmail = lazy(() => import('./pages/ViewEmail'));
 const Compose = lazy(() => import('./pages/Compose'));
 const Settings = lazy(() => import('./pages/Settings'));
@@ -27,6 +22,14 @@ const Shipments = lazy(() => import('./pages/Shipments'));
 const Calendar = lazy(() => import('./pages/Calendar'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 const TermsOfService = lazy(() => import('./pages/TermsOfService'));
+
+// Import core email components directly for instant loading
+import Layout from './components/Layout';
+import Inbox from './pages/Inbox';
+import Unread from './pages/Unread';
+import Sent from './pages/Sent';
+import Drafts from './pages/Drafts';
+import Trash from './pages/Trash';
 
 // Protected route component
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -83,24 +86,37 @@ function App() {
   return (
     <>
       <GooeyFilter />
-      <Suspense fallback={<Loading />}>
-        <Routes>
-          <Route path="/auth" element={<Auth />} />
-          
-          {/* Public routes - accessible without authentication */}
-          <Route path="/privacy-policy" element={<PrivacyPolicy />} />
-          <Route path="/terms-of-service" element={<TermsOfService />} />
-          
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
+      <Routes>
+        <Route path="/auth" element={
+          <Suspense fallback={<Loading />}>
+            <Auth />
+          </Suspense>
+        } />
+        
+        {/* Public routes - accessible without authentication */}
+        <Route path="/privacy-policy" element={
+          <Suspense fallback={<Loading />}>
+            <PrivacyPolicy />
+          </Suspense>
+        } />
+        <Route path="/terms-of-service" element={
+          <Suspense fallback={<Loading />}>
+            <TermsOfService />
+          </Suspense>
+        } />
+        
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <EmailPreloaderProvider>
                 <ContactsProvider>
                   <Layout />
                 </ContactsProvider>
-              </ProtectedRoute>
-            }
-          >
+              </EmailPreloaderProvider>
+            </ProtectedRoute>
+          }
+        >
             <Route index element={<Navigate to="/inbox" replace />} />
             <Route path="inbox" element={<Inbox />} />
             <Route path="inbox/email/:id" element={<Inbox />} />
@@ -112,24 +128,75 @@ function App() {
             <Route path="drafts/email/:id" element={<Drafts />} />
             <Route path="trash" element={<Trash />} />
             <Route path="trash/email/:id" element={<Trash />} />
-            <Route path="email/:id" element={<ViewEmail />} />
-            <Route path="compose" element={<Compose />} />
-            <Route path="settings" element={<Settings />} />
-            <Route path="orders" element={<Orders />} />
-            <Route path="orders/create-customer-order" element={<InvoiceGenerator />} />
-            <Route path="invoices" element={<InvoicesList />} />
-            <Route path="invoice-generator" element={<InvoiceGenerator />} />
-            <Route path="invoice-generator/:orderId" element={<InvoiceGenerator />} />
-            <Route path="invoice/:orderId" element={<InvoiceGenerator />} />
-            <Route path="invoice-view/:invoiceId" element={<InvoiceView />} />
-            <Route path="dashboard" element={<Dashboard />} />
-            <Route path="shipments" element={<Shipments />} />
-            <Route path="calendar" element={<Calendar />} />
+            <Route path="email/:id" element={
+              <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
+                <ViewEmail />
+              </Suspense>
+            } />
+            <Route path="compose" element={
+              <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
+                <Compose />
+              </Suspense>
+            } />
+            <Route path="settings" element={
+              <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
+                <Settings />
+              </Suspense>
+            } />
+            <Route path="orders" element={
+              <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
+                <Orders />
+              </Suspense>
+            } />
+            <Route path="orders/create-customer-order" element={
+              <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
+                <InvoiceGenerator />
+              </Suspense>
+            } />
+            <Route path="invoices" element={
+              <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
+                <InvoicesList />
+              </Suspense>
+            } />
+            <Route path="invoice-generator" element={
+              <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
+                <InvoiceGenerator />
+              </Suspense>
+            } />
+            <Route path="invoice-generator/:orderId" element={
+              <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
+                <InvoiceGenerator />
+              </Suspense>
+            } />
+            <Route path="invoice/:orderId" element={
+              <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
+                <InvoiceGenerator />
+              </Suspense>
+            } />
+            <Route path="invoice-view/:invoiceId" element={
+              <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
+                <InvoiceView />
+              </Suspense>
+            } />
+            <Route path="dashboard" element={
+              <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
+                <Dashboard />
+              </Suspense>
+            } />
+            <Route path="shipments" element={
+              <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
+                <Shipments />
+              </Suspense>
+            } />
+            <Route path="calendar" element={
+              <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
+                <Calendar />
+              </Suspense>
+            } />
           </Route>
         </Routes>
-      </Suspense>
-    </>
-  );
+      </>
+    );
 }
 
 export default App;

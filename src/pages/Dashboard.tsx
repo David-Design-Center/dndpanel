@@ -11,6 +11,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { useProfile } from '../contexts/ProfileContext';
+import { useAuth } from '../contexts/AuthContext';
 import { 
   fetchDashboardMetrics,
   DashboardMetrics,
@@ -39,6 +40,7 @@ import { format } from 'date-fns';
 
 function Dashboard() {
   const { currentProfile } = useProfile();
+  const { isAdmin } = useAuth();
   const navigate = useNavigate();
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [loading, setLoading] = useState(true);
@@ -74,13 +76,13 @@ function Dashboard() {
     { name: 'Dec', total: 1890 },
   ];
 
-  // Redirect if not David
+  // Redirect if not admin
   useEffect(() => {
-    if (currentProfile && currentProfile.name !== 'David') {
+    if (!isAdmin) {
       navigate('/inbox');
       return;
     }
-  }, [currentProfile, navigate]);
+  }, [isAdmin, navigate]);
 
   // Fetch dashboard data
   const fetchData = async (forceRefresh = false) => {
@@ -179,8 +181,8 @@ function Dashboard() {
     fetchData(true);
   };
 
-  // If not David, show access denied
-  if (currentProfile && currentProfile.name !== 'David') {
+  // If not admin, show access denied
+  if (!isAdmin) {
     return (
       <div className="fade-in">
         <div className="text-center py-16">
@@ -190,7 +192,7 @@ function Dashboard() {
             </div>
             <h3 className="text-lg font-medium text-gray-900 mb-2">Access Denied</h3>
             <p className="text-gray-600 mb-6">
-              This dashboard is only accessible to authorized users.
+              This dashboard is only accessible to administrators.
             </p>
             <button
               onClick={() => navigate('/inbox')}

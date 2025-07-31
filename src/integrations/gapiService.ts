@@ -71,7 +71,10 @@ export interface PaginatedEmailResponse {
 const SCOPES = 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.labels https://www.googleapis.com/auth/gmail.settings.basic https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/contacts.other.readonly https://www.googleapis.com/auth/user.emails.read';
 const API_KEY = import.meta.env.VITE_GAPI_API_KEY || '';
 const CLIENT_ID = import.meta.env.VITE_GAPI_CLIENT_ID || '';
-const DISCOVERY_DOCS = ['https://www.googleapis.com/discovery/v1/apis/gmail/v1/rest'];
+const DISCOVERY_DOCS = [
+  'https://www.googleapis.com/discovery/v1/apis/gmail/v1/rest',
+  'https://www.googleapis.com/discovery/v1/apis/people/v1/rest'
+];
 
 // Global variables for GIS
 let codeClient: any = null;
@@ -2398,6 +2401,12 @@ export const fetchPeopleConnections = async (): Promise<any[]> => {
       throw new Error('Not signed in to Gmail');
     }
 
+    // Check if People API is available
+    if (!window.gapi?.client?.people) {
+      console.warn('People API not available - this is normal and contacts will still work');
+      return [];
+    }
+
     console.log('Fetching people connections...');
     
     const response = await window.gapi.client.people.people.connections.list({
@@ -2407,10 +2416,10 @@ export const fetchPeopleConnections = async (): Promise<any[]> => {
       personFields: 'names,emailAddresses,photos,metadata'
     });
 
-    return response.result.connections || [];
+    return response.result?.connections || [];
   } catch (error) {
     console.error('Error fetching people connections:', error);
-    throw error;
+    return []; // Return empty array instead of throwing
   }
 };
 

@@ -6,9 +6,9 @@ import { getAttachmentDownloadUrl, markEmailAsTrash, applyLabelsToEmail, deleteD
 import { optimizedEmailService } from '../services/optimizedEmailService';
 import { Email } from '../types';
 import { useProfile } from '../contexts/ProfileContext';
+import { useAuth } from '../contexts/AuthContext';
 import { useLabel } from '../contexts/LabelContext';
 import { getProfileInitial } from '../lib/utils';
-import CollapsibleSection from '../components/common/CollapsibleSection';
 import FileThumbnail from '../components/common/FileThumbnail';
 import FilePreview from '../components/common/FilePreview';
 
@@ -527,6 +527,7 @@ function ViewEmail() {
   const [isDraft, setIsDraft] = useState(false);
   const navigate = useNavigate();
   const { currentProfile } = useProfile();
+  const { user } = useAuth();
   const { labels } = useLabel();
   const location = useLocation();
 
@@ -906,23 +907,49 @@ ${threadMessage.body}
 
   const handleDownloadAttachment = async (attachment: NonNullable<Email['attachments']>[0], emailId?: string) => {
     try {
-      if (!attachment.attachmentId) return;
+      console.log('🔍 Download attempt - Full attachment object:', attachment);
+      
+      if (!attachment.attachmentId) {
+        console.error('❌ No attachment ID available. Attachment:', attachment);
+        alert(`No attachment ID available for download. This attachment might not be downloadable: ${attachment.name}`);
+        return;
+      }
+      
+      // Debug: Check user email
+      console.log('🔍 Download attempt - User email:', user?.email);
       
       setDownloadingAttachment(attachment.name);
       
       // Use the provided emailId (for thread emails) or fall back to the main email ID
       const messageId = emailId || email?.id;
       if (!messageId) {
+        console.error('No message ID available for download');
         throw new Error('No message ID available for download');
       }
       
+      if (!user?.email) {
+        console.error('No user email available for download');
+        throw new Error('User email is required for attachment download');
+      }
+      
+      console.log('🔍 Calling getAttachmentDownloadUrl with:', {
+        userEmail: user.email,
+        messageId,
+        attachmentId: attachment.attachmentId,
+        filename: attachment.name,
+        mimeType: attachment.mimeType
+      });
+      
       // Get the download URL for the attachment
       const downloadUrl = await getAttachmentDownloadUrl(
+        user.email, // Pass the user email
         messageId, // Use the correct message ID
         attachment.attachmentId,
         attachment.name,
         attachment.mimeType
       );
+      
+      console.log('✅ Download URL obtained:', downloadUrl);
       
       // Create a link element and trigger the download
       const link = document.createElement('a');
@@ -934,8 +961,8 @@ ${threadMessage.body}
       document.body.removeChild(link);
       
     } catch (error) {
-      console.error('Error downloading attachment:', error);
-      alert('Failed to download attachment');
+      console.error('❌ Error downloading attachment:', error);
+      alert(`Failed to download attachment: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setDownloadingAttachment(null);
     }
@@ -1257,6 +1284,7 @@ ${threadMessage.body}
                     <FileThumbnail
                       attachment={attachment}
                       emailId={attachment.emailId}
+                      userEmail={user?.email || ''}
                       size="small"
                       showPreviewButton={true}
                       onPreviewClick={() => setPreviewFile({ attachment, emailId: attachment.emailId })}
@@ -1297,6 +1325,7 @@ ${threadMessage.body}
         <FilePreview
           attachment={previewFile.attachment}
           emailId={previewFile.emailId}
+          userEmail={user?.email || ''}
           isOpen={!!previewFile}
           onClose={() => setPreviewFile(null)}
           onDownload={() => {

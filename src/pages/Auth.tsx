@@ -10,13 +10,13 @@ import {
 } from '../components/ui/modern-animated-sign-in';
 
 type FormData = {
-  email: string;
+  username: string;
   password: string;
 };
 
 function Auth() {
   const [formData, setFormData] = useState<FormData>({
-    email: '',
+    username: '',
     password: '',
   });
   const [error, setError] = useState<string | null>(null);
@@ -41,15 +41,16 @@ function Auth() {
     setIsLoading(true);
 
     try {
-      const { error: authError } = await signIn(formData.email, formData.password);
+      // The signIn function now expects a username and will look up the email
+      const authResult = await signIn(formData.username, formData.password);
       
-      if (!authError) {
+      if (!authResult.error) {
         // Small delay to ensure auth state has propagated
         setTimeout(() => {
           navigate('/');
         }, 100);
       } else {
-        setError(authError.message || 'Authentication failed. Please check your credentials.');
+        setError(authResult.error.message || 'Authentication failed. Please check your credentials.');
       }
     } catch (error) {
       console.error('Unexpected error during authentication:', error);
@@ -64,13 +65,13 @@ function Auth() {
     subHeader: 'Sign in to your business dashboard',
     fields: [
       {
-        label: 'Email',
+        label: 'Username',
         required: true,
-        type: 'email' as const,
-        placeholder: 'Enter your email address',
+        type: 'text' as const,
+        placeholder: 'Enter your username',
         onChange: (event: ChangeEvent<HTMLInputElement>) =>
-          handleInputChange(event, 'email'),
-        value: formData.email,
+          handleInputChange(event, 'username'),
+        value: formData.username,
       },
       {
         label: 'Password',

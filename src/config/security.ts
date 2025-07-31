@@ -1,9 +1,8 @@
 export const SECURITY_CONFIG = {
   ALLOWED_USERS: [
-    'martisuvorov@outlook.com',
-    'martisuvorov12@gmail.com',
+    'info@effidigi.com',
     'david.v@dnddesigncenter.com',
-    'natalia.landa2615@gmail.com',
+    'natalia@dnddesigncenter.com',
     'info@dnddesigncenter.com',
   ],
   

@@ -8,7 +8,7 @@ import { configureDomainWideAuth, configureTraditionalAuth } from '../services/d
 interface ProfileContextType {
   profiles: Profile[];
   currentProfile: Profile | null;
-  selectProfile: (id: string, passcode?: string) => Promise<boolean>;
+  selectProfile: (id: string, passcode?: string, isAutoSelection?: boolean) => Promise<boolean>;
   updateProfileSignature: (
     profileId: string,
     signature: string
@@ -129,7 +129,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
 
   const fetchFullProfile = async (id: string): Promise<Profile | null> => {
     try {
-      devLog.debug('fetchFullProfile: Fetching full profile data for ID:', id);
+      console.log('🔍 fetchFullProfile: Fetching full profile data for ID:', id);
       
       const { data, error } = await supabase
         .from('profiles')
@@ -138,78 +138,90 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
         .single();
       
       if (error) {
-        devLog.error('fetchFullProfile: Error fetching full profile:', error);
+        console.error('❌ fetchFullProfile: Error fetching full profile:', error);
         return null;
       }
       
-      devLog.debug('fetchFullProfile: Successfully fetched full profile data');
+      console.log('✅ fetchFullProfile: Successfully fetched full profile data:', data);
       return data as Profile;
     } catch (err) {
-      devLog.error('fetchFullProfile: Error fetching full profile:', err);
+      console.error('💥 fetchFullProfile: Error fetching full profile:', err);
       return null;
     }
   };
 
-  const selectProfile = async (id: string, passcode?: string): Promise<boolean> => {
+  const selectProfile = async (id: string, passcode?: string, isAutoSelection = false): Promise<boolean> => {
     try {
-      devLog.debug('selectProfile: Attempting to select profile with ID:', id);
+      console.log('🔍 selectProfile: Attempting to select profile with ID:', id);
+      console.log('🔍 selectProfile: Current user object:', user);
+      console.log('🔍 selectProfile: User email available:', user?.email);
+      console.log('🔍 selectProfile: Is auto-selection:', isAutoSelection);
       
       // Fetch the full profile data with all fields including passcode
       const profileToSelect = await fetchFullProfile(id);
       
       if (!profileToSelect) {
-        devLog.error('selectProfile: Profile not found with ID:', id);
+        console.error('❌ selectProfile: Profile not found with ID:', id);
         setError('Profile not found');
         return false;
       }
       
-      devLog.debug('selectProfile: Found profile to select:', profileToSelect.name);
+      console.log('✅ selectProfile: Found profile to select:', profileToSelect.name);
       
-      // Check if profile requires a passcode
-      if (profileToSelect.passcode && profileToSelect.passcode !== passcode) {
-        devLog.debug('selectProfile: Invalid passcode for profile:', profileToSelect.name);
+      // Check if profile requires a passcode (skip passcode check for auto-selection of staff profiles)
+      if (profileToSelect.passcode && profileToSelect.passcode !== passcode && !isAutoSelection) {
+        console.log('❌ selectProfile: Invalid passcode for profile:', profileToSelect.name);
+        console.log('🔧 selectProfile: Passcode provided:', passcode, 'Expected:', profileToSelect.passcode);
         setError('Invalid passcode');
         return false;
       }
       
+      if (isAutoSelection && profileToSelect.passcode) {
+        console.log('🔓 selectProfile: Bypassing passcode check for auto-selection of staff profile:', profileToSelect.name);
+      }
+      
+      console.log('🚀 selectProfile: Setting currentProfile to:', profileToSelect.name);
       setCurrentProfile(profileToSelect);
       sessionStorage.setItem('currentProfileId', id);
       setError(null);
       
-      devLog.info('selectProfile: Successfully selected profile:', profileToSelect.name);
+      console.log('✅ selectProfile: Successfully selected profile:', profileToSelect.name);
       
       // Configure domain-wide auth using the authenticated user's email
       if (user?.email) {
-        devLog.debug('🔑 Configuring domain-wide Gmail auth for user:', user.email);
+        console.log('🔑 Configuring domain-wide Gmail auth for user:', user.email);
         configureDomainWideAuth(user.email);
       } else {
-        devLog.debug('🔑 No user email found, using traditional auth');
+        console.log('🔑 No user email found, using traditional auth');
         configureTraditionalAuth();
       }
       
       // Automatically initialize Gmail 
-      devLog.debug('selectProfile: Initializing Gmail connection...');
+      console.log('📧 selectProfile: Initializing Gmail connection...');
       
       // Ensure we have a user with email before initializing Gmail
       if (!user?.email) {
-        devLog.debug('selectProfile: No user email available, skipping Gmail initialization');
-        setError('User email not available. Please refresh the page and try again.');
-        return false;
+        console.log('⚠️ selectProfile: No user email available, but profile selection can proceed');
+        console.warn('⚠️ Profile selected but Gmail initialization skipped - user email not available');
+        // Don't fail the profile selection - just skip Gmail initialization
+        return true;
       }
       
       try {
+        console.log('🔄 selectProfile: Calling initGmail for profile:', profileToSelect.name);
         await initGmail(profileToSelect);
-        devLog.debug('selectProfile: Gmail initialization completed for profile:', profileToSelect.name);
+        console.log('✅ selectProfile: Gmail initialization completed for profile:', profileToSelect.name);
       } catch (gmailError) {
-        devLog.debug('selectProfile: Error initializing Gmail for profile:', gmailError);
+        console.log('❌ selectProfile: Error initializing Gmail for profile:', gmailError);
         // Set a user-friendly error message but don't fail the profile selection
         setError('Gmail authentication failed. You may need to reconnect Gmail for this profile.');
         // Don't fail profile selection - user can still access the app
       }
       
+      console.log('🎉 selectProfile: Profile selection completed successfully');
       return true;
     } catch (err) {
-      devLog.error('selectProfile: Error selecting profile:', err);
+      console.error('💥 selectProfile: Error selecting profile:', err);
       setError(err instanceof Error ? err.message : 'Unknown error selecting profile');
       return false;
     }

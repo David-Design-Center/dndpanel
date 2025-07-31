@@ -8,7 +8,9 @@ import { authCoordinator } from '../utils/authCoordinator';
 interface AuthContextType {
   user: User | null;
   session: Session | null;
-  signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
+  isAdmin: boolean;
+  userProfileId: string | null;
+  signIn: (username: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   initializeAuth: () => Promise<void>;
@@ -35,6 +37,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [isGmailSignedIn, setIsGmailSignedIn] = useState(false);
   const [isGmailApiReady, setIsGmailApiReady] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [userProfileId, setUserProfileId] = useState<string | null>(null);
   
   // Function to update profile Gmail tokens directly via Supabase
   const updateProfileGmailTokens = useCallback(async (
@@ -260,50 +264,114 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error };
   };
 
-  const signIn = async (email: string, password: string) => {
+  const signIn = async (username: string, password: string) => {
     setLoading(true);
+    console.log('🔑 Starting signIn process for username:', username);
     
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    
-    if (error) {
-      console.error('Supabase auth error:', {
-        message: error.message,
-        status: error.status,
-        code: error.code
-      });
-      setLoading(false);
-      return { error };
-    }
-    
-    // Check if user is authorized after successful Supabase auth
-    if (data?.user?.email) {
-      const { isAuthorizedUser } = await import('../utils/security');
-      const { SECURITY_CONFIG } = await import('../config/security');
-      
-      if (SECURITY_CONFIG.FEATURES.ENFORCE_USER_WHITELIST && !isAuthorizedUser(data.user.email)) {
-        console.warn(`User ${data.user.email} successfully authenticated with Supabase but is not in the allowed users list`);
+    // Look up the email from username
+    try {
+      console.log('🔍 Looking up email for username:', username);
+      const { data: credData, error: credError } = await supabase
+        .from('user_credentials')
+        .select('email')
+        .eq('username', username)
+        .single();
         
-        // Sign out the user since they're not authorized
-        await supabase.auth.signOut();
+      console.log('📊 Username lookup result:', { data: credData, error: credError });
         
-        const unauthorizedError = new Error(`Access denied. User ${data.user.email} is not authorized to access this application.`);
+      if (credError || !credData) {
+        console.error('❌ Username lookup failed:', credError);
         setLoading(false);
-        return { error: unauthorizedError };
+        return { error: new Error('Invalid username or password') };
       }
       
-      // Update user state immediately after successful auth
-      console.log('Setting user state after successful auth:', data.user.email);
-      setUser(data.user as unknown as User);
-      setSession(data.session as unknown as Session);
+      const email = credData.email;
+      console.log('📧 Found email for username:', email);
       
-      // Notify ProfileContext to fetch profiles after successful auth
-      window.dispatchEvent(new CustomEvent('auth-state-changed', {
-        detail: { user: data.user, session: data.session }
-      }));
-    }
+      console.log('🔐 Attempting Supabase auth with email:', email);
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     
-    setLoading(false);
-    return { error: null };
+      console.log('🔐 Supabase auth result:', { user: data?.user?.email, error: error?.message });
+    
+      if (error) {
+        console.error('Supabase auth error:', {
+          message: error.message,
+          status: error.status,
+          code: error.code
+        });
+        setLoading(false);
+        return { error };
+      }
+      
+      // Check if user is authorized after successful Supabase auth
+      if (data?.user?.email) {
+        console.log('✅ Supabase auth successful for:', data.user.email);
+        
+        const { isAuthorizedUser } = await import('../utils/security');
+        const { SECURITY_CONFIG } = await import('../config/security');
+        
+        if (SECURITY_CONFIG.FEATURES.ENFORCE_USER_WHITELIST && !isAuthorizedUser(data.user.email)) {
+          console.warn(`User ${data.user.email} successfully authenticated with Supabase but is not in the allowed users list`);
+          
+          // Sign out the user since they're not authorized
+          await supabase.auth.signOut();
+          
+          const unauthorizedError = new Error(`Access denied. User ${data.user.email} is not authorized to access this application.`);
+          setLoading(false);
+          return { error: unauthorizedError };
+        }
+        
+        console.log('🔍 Fetching user role and profile information for:', data.user.email);
+        
+        // Fetch user role and profile information
+        try {
+          const { data: roleData, error: roleError } = await supabase
+            .from('user_credentials')
+            .select(`
+              profile_id,
+              profiles (
+                is_admin,
+                name
+              )
+            `)
+            .eq('email', data.user.email)
+            .single();
+            
+          console.log('👤 Role lookup result:', { data: roleData, error: roleError });
+            
+          if (!roleError && roleData && roleData.profiles) {
+            // profiles is an array, so we need to access the first element
+            const profile = Array.isArray(roleData.profiles) ? roleData.profiles[0] : roleData.profiles;
+            setIsAdmin(profile.is_admin || false);
+            setUserProfileId(roleData.profile_id);
+            console.log(`✅ User ${data.user.email} is ${profile.is_admin ? 'admin' : 'staff'} (${profile.name}), profile_id: ${roleData.profile_id}`);
+          }
+        } catch (roleError) {
+          console.warn('Could not fetch user role:', roleError);
+          setIsAdmin(false);
+          setUserProfileId(null);
+        }
+        
+        // Update user state immediately after successful auth
+        console.log('🚀 Setting user state after successful auth:', data.user.email);
+        setUser(data.user as unknown as User);
+        setSession(data.session as unknown as Session);
+        
+        console.log('📡 Dispatching auth-state-changed event');
+        // Notify ProfileContext to fetch profiles after successful auth
+        window.dispatchEvent(new CustomEvent('auth-state-changed', {
+          detail: { user: data.user, session: data.session }
+        }));
+      }
+      
+      console.log('✅ SignIn process completed successfully');
+      setLoading(false);
+      return { error: null };
+    } catch (error) {
+      console.error('💥 Unexpected error during signIn:', error);
+      setLoading(false);
+      return { error: new Error('Invalid username or password') };
+    }
   };
 
   const signOut = async () => {
@@ -311,6 +379,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await supabase.auth.signOut();
     setUser(null);
     setSession(null);
+    setIsAdmin(false);
+    setUserProfileId(null);
     setIsGmailSignedIn(false);
     setIsGmailApiReady(false);
     setLoading(false);
@@ -329,6 +399,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const value = {
     user,
     session,
+    isAdmin,
+    userProfileId,
     signIn,
     signUp,
     signOut,

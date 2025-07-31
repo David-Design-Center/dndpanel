@@ -38,6 +38,7 @@ interface Invoice {
   payments_history?: string | any[] | null;
   is_edited?: boolean;
   original_invoice_id?: string;
+  created_by?: string;
   created_at: string;
 }
 
@@ -77,7 +78,7 @@ interface InvoiceForModal {
 }
 
 type PaymentStatus = 'Order in Progress' | 'Paid in Full';
-type SortField = 'po_number' | 'customer_name' | 'invoice_date' | 'total_amount' | 'balance_due';
+type SortField = 'po_number' | 'created_by' | 'customer_name' | 'invoice_date' | 'total_amount' | 'balance_due';
 
 interface OrdersSpreadsheetProps {
   orders: Invoice[];
@@ -335,6 +336,16 @@ function OrdersSpreadsheet({ orders, onViewInvoices, onOrderUpdate, onOrderDelet
                 <th 
                   scope="col" 
                   className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
+                  onClick={() => handleSort('created_by')}
+                >
+                  <div className="flex items-center space-x-1">
+                    <span>Sales Rep</span>
+                    {getSortIcon('created_by')}
+                  </div>
+                </th>
+                <th 
+                  scope="col" 
+                  className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
                   onClick={() => handleSort('customer_name')}
                 >
                   <div className="flex items-center space-x-1">
@@ -395,6 +406,9 @@ function OrdersSpreadsheet({ orders, onViewInvoices, onOrderUpdate, onOrderDelet
                 >
                   <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
                     {invoice.po_number || '-'}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                    {invoice.created_by || '-'}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                     {invoice.customer_name || '-'}
@@ -460,7 +474,7 @@ function OrdersSpreadsheet({ orders, onViewInvoices, onOrderUpdate, onOrderDelet
               
               {paginatedOrders.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-4 text-center text-sm text-gray-500">
+                  <td colSpan={8} className="px-4 py-4 text-center text-sm text-gray-500">
                     No invoices found
                   </td>
                 </tr>

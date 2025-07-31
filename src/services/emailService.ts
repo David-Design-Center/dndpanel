@@ -1,10 +1,12 @@
 import { Email } from '../types';
 import { supabase } from '../lib/supabase';
 import { 
+  getAttachmentDownloadUrl as getGmailAttachmentDownloadUrl
+} from '../lib/gmail';
+import { 
   fetchGmailMessages, 
   sendGmailMessage, 
   fetchGmailMessageById,
-  getAttachmentDownloadUrl as getGmailAttachmentDownloadUrl,
   fetchLatestMessageInThread,
   fetchThreadMessages,
   markGmailMessageAsTrash,
@@ -699,13 +701,14 @@ export const deleteEmail = async (emailId: string): Promise<void> => {
 };
 
 export const getAttachmentDownloadUrl = async (
+  userEmail: string,
   messageId: string,
   attachmentId: string,
   filename: string,
   mimeType: string
 ): Promise<string> => {
   try {
-    return await getGmailAttachmentDownloadUrl(messageId, attachmentId, filename, mimeType);
+    return await getGmailAttachmentDownloadUrl(userEmail, messageId, attachmentId, filename, mimeType);
   } catch (error) {
     console.error('Error getting attachment download URL:', error);
     throw error;

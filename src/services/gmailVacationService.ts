@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { isGmailSignedIn } from '../integrations/gapiService';
 
 // Gmail Vacation Responder Service
 // Uses Gmail's built-in vacation responder instead of custom auto-reply logic
@@ -87,8 +88,10 @@ export const convertSettingsToFormData = (settings: VacationSettings): VacationF
  */
 export const getGmailVacationSettings = async (): Promise<VacationSettings | null> => {
   try {
-    if (!window.gapi?.client?.gmail) {
-      throw new Error('Gmail API not initialized');
+    // Check if Gmail API is ready and user is signed in
+    if (!isGmailSignedIn() || !window.gapi?.client?.gmail) {
+      console.log('Gmail API not ready or user not signed in - vacation settings unavailable');
+      return null;
     }
 
     console.log('Getting Gmail vacation responder settings...');

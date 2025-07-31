@@ -11,6 +11,7 @@ interface FilePreviewProps {
     partId?: string;
   };
   emailId: string;
+  userEmail: string;
   isOpen: boolean;
   onClose: () => void;
   onDownload?: () => void;
@@ -19,6 +20,7 @@ interface FilePreviewProps {
 const FilePreview: React.FC<FilePreviewProps> = ({
   attachment,
   emailId,
+  userEmail,
   isOpen,
   onClose,
   onDownload
@@ -43,6 +45,7 @@ const FilePreview: React.FC<FilePreviewProps> = ({
 
   const loadPreview = async () => {
     if (!attachment.attachmentId) {
+      console.log('📎 FilePreview: No attachmentId for:', attachment.name);
       setError('No attachment ID available');
       return;
     }
@@ -51,18 +54,21 @@ const FilePreview: React.FC<FilePreviewProps> = ({
     try {
       // For images, PDFs, and text files, we can create a preview
       if (canPreview(attachment.mimeType)) {
+        console.log('📎 FilePreview: Loading preview for:', attachment.name, 'type:', attachment.mimeType);
         const url = await getAttachmentDownloadUrl(
+          userEmail,
           emailId,
           attachment.attachmentId,
           attachment.name,
           attachment.mimeType
         );
+        console.log('📎 FilePreview: Got preview URL:', url);
         setPreviewUrl(url);
       } else {
         setError('Preview not available for this file type');
       }
     } catch (err) {
-      console.error('Error loading preview:', err);
+      console.error('📎 FilePreview: Error loading preview:', err);
       setError('Failed to load preview');
     } finally {
       setLoading(false);

@@ -216,3 +216,77 @@ export async function sendGmailMessage(
   });
   return response.json();
 }
+
+/**
+ * Get attachment download URL using domain-wide delegation
+ */
+export async function getAttachmentDownloadUrl(
+  userEmail: string,
+  messageId: string,
+  attachmentId: string,
+  filename: string,
+  mimeType: string
+): Promise<string> {
+  try {
+    console.log('📎 getAttachmentDownloadUrl called with:', {
+      userEmail,
+      messageId,
+      attachmentId,
+      filename,
+      mimeType
+    });
+
+    const endpoint = `users/me/messages/${messageId}/attachments/${attachmentId}`;
+    console.log('📎 Making API request to endpoint:', endpoint);
+    
+    const response = await makeGmailApiRequest(userEmail, endpoint, {
+      method: 'GET'
+    });
+
+    console.log('📎 API response status:', response.status);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('📎 API error response:', errorText);
+      throw new Error(`Failed to fetch attachment: ${response.status} ${response.statusText} - ${errorText}`);
+    }
+
+    const attachmentData = await response.json();
+    console.log('📎 Attachment data received, data length:', attachmentData.data?.length || 0);
+    
+    if (!attachmentData.data) {
+      throw new Error('No attachment data returned from API');
+    }
+
+    // Convert the base64url data to a Blob
+    let base64Data = attachmentData.data.replace(/-/g, '+').replace(/_/g, '/');
+    
+    // Add padding if needed
+    while (base64Data.length % 4 !== 0) {
+      base64Data += '=';
+    }
+
+    // Decode base64 to binary
+    const binaryString = atob(base64Data);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    // Create a Blob from the binary data
+    const blob = new Blob([bytes], { type: mimeType });
+    
+    // Create an object URL
+    const url = URL.createObjectURL(blob);
+    
+    // Set up cleanup of the URL after it's used
+    window.setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 60000);
+    
+    return url;
+  } catch (error) {
+    console.error('Error fetching attachment:', error);
+    throw error;
+  }
+}

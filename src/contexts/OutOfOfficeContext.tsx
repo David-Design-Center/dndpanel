@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { clearAutoReplyCache } from '../services/emailService';
 import { useProfile } from './ProfileContext';
+import { useAuth } from './AuthContext';
 import { 
   isGmailVacationResponderActive 
 } from '../services/gmailVacationService';
@@ -28,6 +29,7 @@ interface OutOfOfficeProviderProps {
 
 export function OutOfOfficeProvider({ children }: OutOfOfficeProviderProps) {
   const { currentProfile } = useProfile();
+  const { isGmailApiReady } = useAuth();
   const [isOutOfOffice, setIsOutOfOfficeState] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   
@@ -37,7 +39,10 @@ export function OutOfOfficeProvider({ children }: OutOfOfficeProviderProps) {
 
   // Check Gmail vacation responder status
   const refreshStatus = async () => {
-    if (!currentProfile) return;
+    if (!currentProfile || !isGmailApiReady) {
+      console.log('OutOfOffice: Skipping refresh - no profile or Gmail API not ready');
+      return;
+    }
     
     // Check cache first to prevent unnecessary API calls
     const cached = statusCache.current[currentProfile.name];
@@ -72,10 +77,10 @@ export function OutOfOfficeProvider({ children }: OutOfOfficeProviderProps) {
     }
   };
 
-  // Load status when profile changes
+  // Load status when profile changes or Gmail API becomes ready
   useEffect(() => {
     refreshStatus();
-  }, [currentProfile]);
+  }, [currentProfile, isGmailApiReady]);
 
   // Listen for tab visibility refresh events (instead of relying on auth state changes)
   useEffect(() => {

@@ -11,6 +11,7 @@ interface FileThumbnailProps {
     partId?: string;
   };
   emailId: string;
+  userEmail: string;
   size?: 'small' | 'medium' | 'large';
   showPreviewButton?: boolean;
   onPreviewClick?: () => void;
@@ -19,6 +20,7 @@ interface FileThumbnailProps {
 const FileThumbnail: React.FC<FileThumbnailProps> = ({
   attachment,
   emailId,
+  userEmail,
   size = 'medium',
   showPreviewButton = false,
   onPreviewClick
@@ -45,22 +47,28 @@ const FileThumbnail: React.FC<FileThumbnailProps> = ({
   }, [attachment.attachmentId, attachment.mimeType]);
 
   const loadThumbnail = async () => {
-    if (!attachment.attachmentId) return;
+    if (!attachment.attachmentId) {
+      console.log('📎 FileThumbnail: No attachmentId for:', attachment.name);
+      return;
+    }
 
     setLoading(true);
     try {
       // Only load thumbnails for images to avoid unnecessary downloads
       if (attachment.mimeType.startsWith('image/')) {
+        console.log('📎 FileThumbnail: Loading thumbnail for image:', attachment.name);
         const url = await getAttachmentDownloadUrl(
+          userEmail,
           emailId,
           attachment.attachmentId,
           attachment.name,
           attachment.mimeType
         );
+        console.log('📎 FileThumbnail: Got thumbnail URL:', url);
         setThumbnailUrl(url);
       }
     } catch (err) {
-      console.error('Error loading thumbnail:', err);
+      console.error('📎 FileThumbnail: Error loading thumbnail:', err);
     } finally {
       setLoading(false);
     }
