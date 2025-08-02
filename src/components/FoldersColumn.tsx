@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Folder, Tag, Plus, Search, X, ChevronLeft, MoreVertical, Edit, Trash2, Filter } from 'lucide-react';
+import { Folder, Tag, Plus, Search, X, ChevronLeft, MoreVertical, Edit, Trash2, Filter, ChevronRight, ChevronDown, FolderOpen } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { 
@@ -12,6 +12,18 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useToast } from '@/components/ui/use-toast';
 import { useLabel } from '../contexts/LabelContext';
+import { GmailLabel } from '../types';
+
+interface NestedLabel {
+  id: string;
+  name: string;
+  displayName: string;
+  fullPath: string;
+  children: NestedLabel[];
+  messagesUnread?: number;
+  isLeaf: boolean;
+  labelObj?: GmailLabel | null;
+}
 
 interface FoldersColumnProps {
   isExpanded: boolean;
@@ -26,45 +38,173 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
   const [editingLabelName, setEditingLabelName] = useState('');
   const [isCreatingLabel, setIsCreatingLabel] = useState(false);
   const [newLabelName, setNewLabelName] = useState('');
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const navigate = useNavigate();
 
-  // Filter and clean labels for display
-  const filteredLabels = useMemo(() => {
-    const cleanedLabels = labels
-      .map(label => ({
-        ...label,
-        displayName: label.name
-          .replace(/^\[Gmail\]\/|^\[Gmail\]\s*›\s*|^Gmail\/|^INBOX\/|^Categories\//i, '') // Remove Gmail prefixes
-          .replace(/^--/, '') // Remove leading dashes
-          .replace(/\//g, ' › ') // Replace slashes with arrow for hierarchy
-          .trim()
-      }))
-      .filter(label => {
-        // Filter out system labels - only exclude exact matches and well-known system labels
-        const name = label.name.toLowerCase();
-        return name !== 'inbox' && 
-               name !== 'sent' && 
-               name !== 'drafts' && 
-               name !== 'spam' && 
-               name !== 'trash' &&
-               name !== 'important' &&
-               name !== 'starred' &&
-               !name.startsWith('category_') &&
-               !name.startsWith('label_') &&
-               label.displayName.length > 0; // Make sure we have a display name
-      });
-
-    // Then filter by search term
-    if (!searchTerm.trim()) return cleanedLabels;
+  // Build hierarchical tree structure from flat labels
+  const labelTree = useMemo(() => {
+    // Debug: Log ALL labels first to see what we're working with
+    console.log('📋 ALL RAW LABELS:', labels.map(l => ({ name: l.name, type: l.type })));
+    console.log('🔍 Loading Labels Status:', loadingLabels);
+    console.log('📊 Total Labels Count:', labels.length);
     
-    return cleanedLabels.filter(label => 
-      label.displayName.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  }, [labels, searchTerm]);
+    // Filter out system labels first
+    const userLabels = labels.filter(label => {
+      const name = label.name.toLowerCase();
+      return name !== 'inbox' && 
+             name !== 'sent' && 
+             name !== 'drafts' && 
+             name !== 'draft' &&
+             name !== 'spam' && 
+             name !== 'trash' &&
+             name !== 'important' &&
+             name !== 'starred' &&
+             name !== 'unread' &&
+             name !== 'yellow_star' &&
+             name !== 'deleted messages' &&
+             name !== 'chat' &&
+             name !== 'blocked' &&
+             name !== '[imap]' &&
+             name !== 'junk e-mail' &&
+             name !== 'notes' &&
+             !name.startsWith('category_') &&
+             !name.startsWith('label_') &&
+             !name.startsWith('[imap');
+    });
 
-  const handleLabelClick = (label: any) => {
-    // Navigate to inbox with label filter
-    navigate(`/inbox?labelName=${encodeURIComponent(label.name)}`);
+    if (userLabels.length === 0) return [];
+
+    // Debug: Log all label names to understand the structure
+    console.log('🏷️ All user label names:', userLabels.map(l => l.name));
+
+    // Step 1: Identify all parent paths dynamically
+    const allNames = userLabels.map(l => l.name);
+    const parentNames = new Set<string>();
+    
+    for (const fullName of allNames) {
+      const parts = fullName.split('/');
+      // Every prefix of "A/B/C" (i.e. "A" and "A/B") is a parent
+      for (let i = 1; i < parts.length; i++) {
+        parentNames.add(parts.slice(0, i).join('/'));
+      }
+    }
+
+    console.log('📁 Detected parent names:', Array.from(parentNames));
+
+    const root = { children: new Map(), messagesUnread: 0, labelObj: null as GmailLabel | null, id: '' };
+    const nodeMap = new Map<string, any>();
+
+    // First pass: create all nodes
+    for (const label of userLabels) {
+      const parts = label.name.split('/');
+      let node = root;
+      
+      for (let i = 0; i < parts.length; i++) {
+        const key = parts[i];
+        const fullPath = parts.slice(0, i + 1).join('/');
+        
+        if (!node.children.has(key)) {
+          const isParentFolder = parentNames.has(fullPath);
+          
+          const newNode = {
+            name: key,
+            fullPath: fullPath,
+            fullName: fullPath, // Keep original full name
+            labelObj: null,
+            children: new Map(),
+            isFolder: isParentFolder,
+            isLeaf: !isParentFolder,
+            id: `temp-${fullPath}`, // Temporary ID, will be updated for actual labels
+            messagesUnread: 0
+          };
+          
+          node.children.set(key, newNode);
+          nodeMap.set(fullPath, newNode);
+        }
+        
+        node = node.children.get(key);
+      }
+      
+      // At the leaf: assign the actual label data
+      if (node && node !== root) {
+        node.labelObj = label;
+        node.messagesUnread = label.messagesUnread || 0;
+        node.id = label.id;
+        // Don't override isLeaf and isFolder here - they should be determined by the dynamic check
+        // The final isLeaf determination happens in convertMapToArray based on children count
+      }
+    }
+
+    // Step 3: Convert Map structure to NestedLabel array
+    const convertMapToArray = (nodeMap: Map<string, any>): NestedLabel[] => {
+      const result: NestedLabel[] = [];
+      
+      for (const [, node] of nodeMap) {
+        const nestedLabel: NestedLabel = {
+          id: node.id,
+          name: node.labelObj ? node.labelObj.name : node.fullName,
+          displayName: node.name,
+          fullPath: node.fullPath,
+          children: convertMapToArray(node.children),
+          messagesUnread: node.messagesUnread,
+          isLeaf: node.children.size === 0 // Dynamic check: if no children, it's a leaf
+        };
+        
+        result.push(nestedLabel);
+      }
+      
+      // Sort by display name for consistent ordering
+      result.sort((a, b) => a.displayName.localeCompare(b.displayName));
+      return result;
+    };
+
+    const finalTree = convertMapToArray(root.children);
+    console.log('🌳 Final label tree:', finalTree);
+    
+    return finalTree;
+  }, [labels]);
+
+  // Filter tree based on search term
+  const filteredTree = useMemo(() => {
+    if (!searchTerm.trim()) return labelTree;
+
+    const filterTree = (nodes: NestedLabel[]): NestedLabel[] => {
+      return nodes.reduce((acc: NestedLabel[], node) => {
+        const matchesSearch = node.displayName.toLowerCase().includes(searchTerm.toLowerCase());
+        const filteredChildren = filterTree(node.children);
+        
+        if (matchesSearch || filteredChildren.length > 0) {
+          acc.push({
+            ...node,
+            children: filteredChildren
+          });
+        }
+        
+        return acc;
+      }, []);
+    };
+
+    return filterTree(labelTree);
+  }, [labelTree, searchTerm]);
+
+  const toggleFolder = (folderPath: string) => {
+    const newExpanded = new Set(expandedFolders);
+    if (newExpanded.has(folderPath)) {
+      newExpanded.delete(folderPath);
+    } else {
+      newExpanded.add(folderPath);
+    }
+    setExpandedFolders(newExpanded);
+  };
+
+  const handleLabelClick = (label: NestedLabel) => {
+    // Only navigate if it's a leaf node (actual label, not folder)
+    if (label.isLeaf) {
+      navigate(`/inbox?labelName=${encodeURIComponent(label.name)}`);
+    } else {
+      // Toggle folder if it's not a leaf
+      toggleFolder(label.fullPath);
+    }
   };
 
   const handleCreateLabel = async () => {
@@ -93,7 +233,9 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
     }
   };
 
-  const handleDeleteLabel = async (label: any) => {
+  const handleDeleteLabel = async (label: NestedLabel) => {
+    if (!label.isLeaf) return; // Can't delete folders, only labels
+    
     if (window.confirm(`Are you sure you want to delete the label "${label.displayName}"? This action cannot be undone.`)) {
       try {
         // TODO: Implement label deletion API call
@@ -115,12 +257,13 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
     }
   };
 
-  const handleEditLabel = (label: any) => {
+  const handleEditLabel = (label: NestedLabel) => {
+    if (!label.isLeaf) return; // Can't edit folders, only labels
     setEditingLabelId(label.id);
     setEditingLabelName(label.displayName);
   };
 
-  const handleSaveEdit = async (label: any) => {
+  const handleSaveEdit = async (label: NestedLabel) => {
     if (!editingLabelName.trim()) return;
     
     if (window.confirm(`Rename label from "${label.displayName}" to "${editingLabelName}"?`)) {
@@ -151,9 +294,147 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
     setEditingLabelName('');
   };
 
-  const handleOpenFilters = (label: any) => {
+  const handleOpenFilters = (label: NestedLabel) => {
+    if (!label.isLeaf) return; // Can't create filters for folders, only labels
     // Navigate to settings with label filter section open
     navigate(`/settings?tab=filters&label=${encodeURIComponent(label.name)}`);
+  };
+
+  // Recursive component for rendering label tree
+  const renderLabelTree = (nodes: NestedLabel[], depth: number = 0) => {
+    return nodes.map((node) => (
+      <div key={node.fullPath} className="mb-1">
+        {editingLabelId === node.id ? (
+          // Edit mode (only for leaf nodes)
+          <div className="px-3 py-2 space-y-2" style={{ marginLeft: `${depth * 16}px` }}>
+            <Input
+              value={editingLabelName}
+              onChange={(e) => setEditingLabelName(e.target.value)}
+              className="text-xs h-8"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  handleSaveEdit(node);
+                } else if (e.key === 'Escape') {
+                  handleCancelEdit();
+                }
+              }}
+              autoFocus
+            />
+            <div className="flex gap-1">
+              <Button 
+                size="sm" 
+                onClick={() => handleSaveEdit(node)}
+                disabled={!editingLabelName.trim()}
+                className="flex-1 h-6 text-xs"
+              >
+                Save
+              </Button>
+              <Button 
+                size="sm" 
+                variant="outline"
+                onClick={handleCancelEdit}
+                className="flex-1 h-6 text-xs"
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
+          // Normal mode
+          <>
+            <div 
+              className="flex items-center group hover:bg-white hover:shadow-sm rounded-md transition-all duration-150 min-w-0"
+              style={{ marginLeft: `${depth * 16}px` }}
+            >
+              <Button
+                variant="ghost"
+                onClick={() => handleLabelClick(node)}
+                className="flex-1 justify-start px-3 py-2 text-left h-[36px] rounded-r-none border-r-0 min-w-0 overflow-hidden"
+              >
+                <div className="flex items-center w-full min-w-0">
+                  {/* Folder/Label Icon with Expand/Collapse */}
+                  <div className="flex items-center mr-2 flex-shrink-0">
+                    {!node.isLeaf ? (
+                      // Folder with expand/collapse
+                      <>
+                        {expandedFolders.has(node.fullPath) ? (
+                          <ChevronDown size={14} className="text-gray-400 mr-1" />
+                        ) : (
+                          <ChevronRight size={14} className="text-gray-400 mr-1" />
+                        )}
+                        {expandedFolders.has(node.fullPath) ? (
+                          <FolderOpen size={14} className="text-blue-500" />
+                        ) : (
+                          <Folder size={14} className="text-gray-400 group-hover:text-blue-500 transition-colors" />
+                        )}
+                      </>
+                    ) : (
+                      // Label
+                      <Tag size={14} className="text-gray-400 group-hover:text-blue-500 flex-shrink-0 transition-colors ml-5" />
+                    )}
+                  </div>
+                  
+                  <div className="flex-1 min-w-0 overflow-hidden">
+                    <p className={`text-xs font-medium transition-colors truncate ${
+                      node.isLeaf 
+                        ? 'text-gray-700 group-hover:text-gray-900' 
+                        : 'text-gray-800 group-hover:text-gray-900 font-semibold'
+                    }`}>
+                      {node.displayName}
+                    </p>
+                  </div>
+                  
+                  {(node.messagesUnread && node.messagesUnread > 0) && (
+                    <div className="ml-2 bg-blue-100 text-blue-700 text-xs px-1.5 py-0.5 rounded-full min-w-[20px] text-center flex-shrink-0">
+                      {node.messagesUnread > 99 ? '99+' : node.messagesUnread}
+                    </div>
+                  )}
+                </div>
+              </Button>
+              
+              {/* Three dots menu (only for leaf nodes) */}
+              {node.isLeaf && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-[36px] w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity rounded-l-none"
+                    >
+                      <MoreVertical size={14} className="text-gray-400" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48">
+                    <DropdownMenuItem onClick={() => handleEditLabel(node)}>
+                      <Edit size={14} className="mr-2" />
+                      Edit Label
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleOpenFilters(node)}>
+                      <Filter size={14} className="mr-2" />
+                      Filters
+                    </DropdownMenuItem>
+                    <DropdownMenuItem 
+                      onClick={() => handleDeleteLabel(node)}
+                      className="text-red-600 focus:text-red-600"
+                    >
+                      <Trash2 size={14} className="mr-2" />
+                      Delete Label
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
+            
+            {/* Render children if folder is expanded */}
+            {!node.isLeaf && expandedFolders.has(node.fullPath) && node.children.length > 0 && (
+              <div className="mt-1">
+                {renderLabelTree(node.children, depth + 1)}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    ));
   };
 
   return (
@@ -190,216 +471,117 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
               exit={{ opacity: 0, x: -20 }}
               transition={{ duration: 0.3, ease: "easeInOut" }}
             >
-          {/* Header with Toggle Button */}
-          <div className="flex items-center justify-between p-3 border-b border-gray-200 bg-gray-50 min-w-0">
-            <div className="flex items-center space-x-2 min-w-0 flex-1 overflow-hidden">
-              <Folder size={16} className="text-gray-600 flex-shrink-0" />
-              <span className="text-sm font-semibold text-gray-800 truncate">Folders</span>
-            </div>
-            <button
-              onClick={onToggle}
-              className="p-1 hover:bg-gray-200 rounded transition-all duration-200 hover:scale-105"
-              title="Collapse folders"
-            >
-              <ChevronLeft size={16} className="text-gray-600" />
-            </button>
-          </div>
+              {/* Header with Toggle Button */}
+              <div className="flex items-center justify-between p-3 border-b border-gray-200 bg-gray-50 min-w-0">
+                <div className="flex items-center space-x-2 min-w-0 flex-1 overflow-hidden">
+                  <Folder size={16} className="text-gray-600 flex-shrink-0" />
+                  <span className="text-sm font-semibold text-gray-800 truncate">Folders</span>
+                </div>
+                <button
+                  onClick={onToggle}
+                  className="p-1 hover:bg-gray-200 rounded transition-all duration-200 flex items-center justify-center group flex-shrink-0"
+                  title="Collapse Folders"
+                >
+                  <ChevronLeft size={14} className="text-gray-600 group-hover:text-gray-800 transition-colors duration-200" />
+                </button>
+              </div>
 
-          {/* Create Label Button */}
-          <div className="p-3">
-            {!isCreatingLabel ? (
-              <Button 
-                className="w-full mb-2" 
-                size="sm"
-                onClick={() => setIsCreatingLabel(true)}
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                Create New Label
-              </Button>
-            ) : (
-              <div className="space-y-2 mb-2">
-                <Input
-                  placeholder="Enter label name..."
-                  value={newLabelName}
-                  onChange={(e) => setNewLabelName(e.target.value)}
-                  className="text-xs h-8"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      handleCreateLabel();
-                    } else if (e.key === 'Escape') {
-                      setIsCreatingLabel(false);
-                      setNewLabelName('');
-                    }
-                  }}
-                  autoFocus
-                />
-                <div className="flex gap-1">
-                  <Button 
-                    size="sm" 
-                    onClick={handleCreateLabel}
-                    disabled={!newLabelName.trim()}
-                    className="flex-1 h-7 text-xs"
-                  >
-                    Create
-                  </Button>
-                  <Button 
-                    size="sm" 
+              {/* Create New Label Section */}
+              <div className="p-3 border-b border-gray-200 bg-gray-50">
+                {!isCreatingLabel ? (
+                  <Button
+                    onClick={() => setIsCreatingLabel(true)}
+                    size="sm"
                     variant="outline"
-                    onClick={() => {
-                      setIsCreatingLabel(false);
-                      setNewLabelName('');
-                    }}
-                    className="flex-1 h-7 text-xs"
+                    className="w-full flex items-center justify-center text-xs h-8 border-gray-300"
                   >
-                    Cancel
+                    <Plus size={14} className="mr-2" />
+                    New Label
                   </Button>
+                ) : (
+                  <div className="space-y-2">
+                    <Input
+                      placeholder="Enter label name..."
+                      value={newLabelName}
+                      onChange={(e) => setNewLabelName(e.target.value)}
+                      className="text-xs h-8"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          handleCreateLabel();
+                        } else if (e.key === 'Escape') {
+                          setIsCreatingLabel(false);
+                          setNewLabelName('');
+                        }
+                      }}
+                      autoFocus
+                    />
+                    <div className="flex gap-1">
+                      <Button 
+                        size="sm" 
+                        onClick={handleCreateLabel}
+                        disabled={!newLabelName.trim()}
+                        className="flex-1 h-7 text-xs"
+                      >
+                        Create
+                      </Button>
+                      <Button 
+                        size="sm" 
+                        variant="outline"
+                        onClick={() => {
+                          setIsCreatingLabel(false);
+                          setNewLabelName('');
+                        }}
+                        className="flex-1 h-7 text-xs"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+                
+              {/* Search Section */}
+              <div className="p-3 border-b border-gray-200 bg-white">
+                <div className="relative">
+                  <Search size={14} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                  <Input
+                    placeholder="Search folders..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-8 pr-8 text-xs h-8 border-gray-200"
+                  />
+                  {searchTerm && (
+                    <button
+                      onClick={() => setSearchTerm('')}
+                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
                 </div>
               </div>
-            )}
-          </div>
-            
-          {/* Search Section */}
-          <div className="p-3 border-b border-gray-200 bg-white">
-            <div className="relative">
-              <Search size={14} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-              <Input
-                placeholder="Search folders..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-8 pr-8 text-xs h-8 border-gray-200"
-              />
-              {searchTerm && (
-                <button
-                  onClick={() => setSearchTerm('')}
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                >
-                  <X size={14} />
-                </button>
-              )}
-            </div>
-          </div>
 
-          {/* Folders List */}
-          <div className="flex-1 overflow-y-auto custom-scrollbar">
-            {loadingLabels ? (
-              <div className="p-4 text-center">
-                <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-blue-500 mx-auto mb-2"></div>
-                <p className="text-xs text-gray-500">Loading folders...</p>
-              </div>
-            ) : filteredLabels.length > 0 ? (
-              <div className="p-2">
-                {filteredLabels.map((label) => (
-                  <div
-                    key={label.id}
-                    className="mb-1"
-                  >
-                    {editingLabelId === label.id ? (
-                      // Edit mode
-                      <div className="px-3 py-2 space-y-2">
-                        <Input
-                          value={editingLabelName}
-                          onChange={(e) => setEditingLabelName(e.target.value)}
-                          className="text-xs h-8"
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              handleSaveEdit(label);
-                            } else if (e.key === 'Escape') {
-                              handleCancelEdit();
-                            }
-                          }}
-                          autoFocus
-                        />
-                        <div className="flex gap-1">
-                          <Button 
-                            size="sm" 
-                            onClick={() => handleSaveEdit(label)}
-                            disabled={!editingLabelName.trim()}
-                            className="flex-1 h-6 text-xs"
-                          >
-                            Save
-                          </Button>
-                          <Button 
-                            size="sm" 
-                            variant="outline"
-                            onClick={handleCancelEdit}
-                            className="flex-1 h-6 text-xs"
-                          >
-                            Cancel
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      // Normal mode
-                      <div className="flex items-center group hover:bg-white hover:shadow-sm rounded-md transition-all duration-150 min-w-0">
-                        <Button
-                          variant="ghost"
-                          onClick={() => handleLabelClick(label)}
-                          className="flex-1 justify-start px-3 py-2 text-left h-[36px] rounded-r-none border-r-0 min-w-0 overflow-hidden"
-                        >
-                          <div className="flex items-center w-full min-w-0">
-                            <Tag size={14} className="mr-2 text-gray-400 group-hover:text-blue-500 flex-shrink-0 transition-colors" />
-                            <div className="flex-1 min-w-0 overflow-hidden">
-                              <p className="text-xs font-medium text-gray-700 group-hover:text-gray-900 truncate transition-colors">
-                                {label.displayName}
-                              </p>
-                              {(label.messagesUnread && label.messagesUnread > 0) && (
-                                <p className="text-xs text-blue-600 mt-0.5 truncate">
-                                  {label.messagesUnread} unread
-                                </p>
-                              )}
-                            </div>
-                            {(label.messagesUnread && label.messagesUnread > 0) && (
-                              <div className="ml-2 bg-blue-100 text-blue-700 text-xs px-1.5 py-0.5 rounded-full min-w-[20px] text-center flex-shrink-0">
-                                {label.messagesUnread > 99 ? '99+' : label.messagesUnread}
-                              </div>
-                            )}
-                          </div>
-                        </Button>
-                        
-                        {/* Three dots menu */}
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-[36px] w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity rounded-l-none"
-                            >
-                              <MoreVertical size={14} className="text-gray-400" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-48">
-                            <DropdownMenuItem onClick={() => handleEditLabel(label)}>
-                              <Edit size={14} className="mr-2" />
-                              Edit Label
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => handleOpenFilters(label)}>
-                              <Filter size={14} className="mr-2" />
-                              Filters
-                            </DropdownMenuItem>
-                            <DropdownMenuItem 
-                              onClick={() => handleDeleteLabel(label)}
-                              className="text-red-600 focus:text-red-600"
-                            >
-                              <Trash2 size={14} className="mr-2" />
-                              Delete Label
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
-                    )}
+              {/* Folders List */}
+              <div className="flex-1 overflow-y-auto custom-scrollbar">
+                {loadingLabels ? (
+                  <div className="p-4 text-center">
+                    <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-blue-500 mx-auto mb-2"></div>
+                    <p className="text-xs text-gray-500">Loading folders...</p>
                   </div>
-                ))}
+                ) : filteredTree.length > 0 ? (
+                  <div className="p-2">
+                    {renderLabelTree(filteredTree)}
+                  </div>
+                ) : searchTerm ? (
+                  <div className="p-4 text-center">
+                    <p className="text-xs text-gray-500">No folders found for "{searchTerm}"</p>
+                  </div>
+                ) : (
+                  <div className="p-4 text-center">
+                    <p className="text-xs text-gray-500">No folders available</p>
+                  </div>
+                )}
               </div>
-            ) : searchTerm ? (
-              <div className="p-4 text-center">
-                <p className="text-xs text-gray-500">No folders found for "{searchTerm}"</p>
-              </div>
-            ) : (
-              <div className="p-4 text-center">
-                <p className="text-xs text-gray-500">No folders available</p>
-              </div>
-            )}
-          </div>
             </motion.div>
           )}
         </AnimatePresence>

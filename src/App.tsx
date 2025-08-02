@@ -27,9 +27,6 @@ const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 import Layout from './components/Layout';
 import Inbox from './pages/Inbox';
 import Unread from './pages/Unread';
-import Sent from './pages/Sent';
-import Drafts from './pages/Drafts';
-import Trash from './pages/Trash';
 
 // Protected route component
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -122,12 +119,6 @@ function App() {
             <Route path="inbox/email/:id" element={<Inbox />} />
             <Route path="unread" element={<Unread />} />
             <Route path="unread/email/:id" element={<Unread />} />
-            <Route path="sent" element={<Sent />} />
-            <Route path="sent/email/:id" element={<Sent />} />
-            <Route path="drafts" element={<Drafts />} />
-            <Route path="drafts/email/:id" element={<Drafts />} />
-            <Route path="trash" element={<Trash />} />
-            <Route path="trash/email/:id" element={<Trash />} />
             <Route path="email/:id" element={
               <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
                 <ViewEmail />

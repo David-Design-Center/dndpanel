@@ -30,8 +30,6 @@ const PriceRequestAddon: React.FC<PriceRequestAddonProps> = ({
   onClose,
   onInsertTable
 }) => {
-  // Debug logging for modal state changes
-  console.log('PriceRequestAddon render:', { isOpen, timestamp: Date.now() });
   // Line Items
   const [lineItems, setLineItems] = useState<LineItem[]>([
     {

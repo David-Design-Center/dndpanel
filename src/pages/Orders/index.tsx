@@ -151,18 +151,15 @@ function Orders() {
 
   // Manual refresh handler (always force refresh)
   const handleManualRefresh = () => {
-    console.log('Manual refresh requested');
     handleRefreshOrders(true);
   };
 
   // Initial data load and auto-refresh setup
   useEffect(() => {
-    console.log('Orders component mounted, loading initial data from Supabase');
     handleRefreshOrders(false); // Initial load
     
     // Set up auto-refresh every 12 hours
     const autoRefreshInterval = setInterval(() => {
-      console.log('Auto-refresh triggered');
       handleRefreshOrders(true); // Force refresh on auto-refresh
     }, AUTO_REFRESH_INTERVAL);
     

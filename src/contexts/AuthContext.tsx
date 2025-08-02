@@ -17,6 +17,7 @@ interface AuthContextType {
   loading: boolean;
   isGmailSignedIn: boolean;
   isGmailApiReady: boolean;
+  isGmailInitializing: boolean;
   initGmail: (profile: any) => Promise<void>;
   signInGmail: (profile: any) => Promise<void>;
   signOutGmail: (profile: any) => Promise<void>;
@@ -37,6 +38,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [isGmailSignedIn, setIsGmailSignedIn] = useState(false);
   const [isGmailApiReady, setIsGmailApiReady] = useState(false);
+  const [isGmailInitializing, setIsGmailInitializing] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [userProfileId, setUserProfileId] = useState<string | null>(null);
   
@@ -75,23 +77,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const refreshGmailToken = useCallback(async (userEmail: string): Promise<boolean> => {
-    console.log('🔑 Fetching fresh Gmail token using domain-wide delegation for:', userEmail);
-    
     try {
       // Ensure gapi client is initialized before setting token
-      console.log('🔧 Initializing Google API client...');
       await initGapiClient();
       
       // Use the new domain-wide delegation approach
       const accessToken = await fetchGmailAccessToken(userEmail);
       
       if (accessToken) {
-        console.log('✅ Successfully received new access token via domain-wide delegation');
-        
         // Set the new access token in the gapi client (expires in 1 hour by default)
         setAccessToken(accessToken, 3600);
         
-        setIsGmailSignedIn(true);
         setIsGmailApiReady(true);
         return true;
       } else {
@@ -109,10 +105,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const initGmail = useCallback(async (profile: any) => {
-    console.log('🔄 initGmail called with profile:', profile?.name);
-    console.log('🔄 Current user object:', user);
-    console.log('🔄 User email available:', user?.email);
-    
+    setIsGmailInitializing(true);
     try {
       // Reset authentication state when switching profiles
       authCoordinator.reset();
@@ -137,12 +130,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       // With domain-wide delegation, we always fetch a fresh token
       // No need to check expiry or stored tokens
-      console.log('🔄 Using domain-wide delegation to get fresh Gmail token...');
-      
       try {
         const refreshed = await refreshGmailToken(user.email);
         if (refreshed) {
-          console.log('✅ Successfully initialized Gmail with fresh token');
+          // CRITICAL: Set Gmail as signed in when token refresh succeeds
+          setIsGmailSignedIn(true);
+          setIsGmailApiReady(true);
+          setIsGmailInitializing(false);
           return;
         } else {
           console.log('❌ Failed to get fresh Gmail token');
@@ -160,12 +154,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.error('Error initializing Gmail:', error);
       setIsGmailSignedIn(false);
       setIsGmailApiReady(false);
+    } finally {
+      setIsGmailInitializing(false);
     }
   }, [refreshGmailToken, user]); // Add user to dependency array
 
   const signInGmail = useCallback(async (profile: any) => {
-    console.log('🔐 Signing in to Gmail using domain-wide delegation for profile:', profile.name);
-
     try {
       if (!profile) {
         throw new Error('No profile provided');
@@ -175,13 +169,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw new Error('No user email found');
       }
 
-      console.log('🚀 Using domain-wide delegation - no user consent required');
-      
       // Use domain-wide delegation to get access token directly
       const refreshed = await refreshGmailToken(user.email);
       
       if (refreshed) {
-        console.log('✅ Successfully signed in to Gmail via domain-wide delegation');
         setIsGmailSignedIn(true);
         setIsGmailApiReady(true);
       } else {
@@ -207,8 +198,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await signOutFromGmail();
       
       // With domain-wide delegation, no need to clear stored tokens since they're generated on-demand
-      console.log('✅ Gmail sign-out completed');
-      
       setIsGmailSignedIn(false);
       setIsGmailApiReady(false);
       
@@ -266,18 +255,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signIn = async (username: string, password: string) => {
     setLoading(true);
-    console.log('🔑 Starting signIn process for username:', username);
     
     // Look up the email from username
     try {
-      console.log('🔍 Looking up email for username:', username);
       const { data: credData, error: credError } = await supabase
         .from('user_credentials')
         .select('email')
         .eq('username', username)
         .single();
-        
-      console.log('📊 Username lookup result:', { data: credData, error: credError });
         
       if (credError || !credData) {
         console.error('❌ Username lookup failed:', credError);
@@ -286,12 +271,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       
       const email = credData.email;
-      console.log('📧 Found email for username:', email);
       
-      console.log('🔐 Attempting Supabase auth with email:', email);
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    
-      console.log('🔐 Supabase auth result:', { user: data?.user?.email, error: error?.message });
     
       if (error) {
         console.error('Supabase auth error:', {
@@ -305,7 +286,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       
       // Check if user is authorized after successful Supabase auth
       if (data?.user?.email) {
-        console.log('✅ Supabase auth successful for:', data.user.email);
         
         const { isAuthorizedUser } = await import('../utils/security');
         const { SECURITY_CONFIG } = await import('../config/security');
@@ -321,8 +301,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return { error: unauthorizedError };
         }
         
-        console.log('🔍 Fetching user role and profile information for:', data.user.email);
-        
         // Fetch user role and profile information
         try {
           const { data: roleData, error: roleError } = await supabase
@@ -337,14 +315,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             .eq('email', data.user.email)
             .single();
             
-          console.log('👤 Role lookup result:', { data: roleData, error: roleError });
-            
           if (!roleError && roleData && roleData.profiles) {
             // profiles is an array, so we need to access the first element
             const profile = Array.isArray(roleData.profiles) ? roleData.profiles[0] : roleData.profiles;
             setIsAdmin(profile.is_admin || false);
             setUserProfileId(roleData.profile_id);
-            console.log(`✅ User ${data.user.email} is ${profile.is_admin ? 'admin' : 'staff'} (${profile.name}), profile_id: ${roleData.profile_id}`);
           }
         } catch (roleError) {
           console.warn('Could not fetch user role:', roleError);
@@ -353,18 +328,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
         
         // Update user state immediately after successful auth
-        console.log('🚀 Setting user state after successful auth:', data.user.email);
         setUser(data.user as unknown as User);
         setSession(data.session as unknown as Session);
         
-        console.log('📡 Dispatching auth-state-changed event');
         // Notify ProfileContext to fetch profiles after successful auth
         window.dispatchEvent(new CustomEvent('auth-state-changed', {
           detail: { user: data.user, session: data.session }
         }));
       }
       
-      console.log('✅ SignIn process completed successfully');
       setLoading(false);
       return { error: null };
     } catch (error) {
@@ -408,6 +380,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loading,
     isGmailSignedIn,
     isGmailApiReady,
+    isGmailInitializing,
     initGmail,
     signInGmail,
     signOutGmail,

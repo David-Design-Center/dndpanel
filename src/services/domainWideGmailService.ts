@@ -33,7 +33,6 @@ let currentUserEmail: string | null = null;
 export function configureDomainWideAuth(userEmail: string) {
   useDomainWideAuth = true;
   currentUserEmail = userEmail;
-  console.log(`🔑 Configured domain-wide auth for: ${userEmail}`);
 }
 
 /**
@@ -42,7 +41,6 @@ export function configureDomainWideAuth(userEmail: string) {
 export function configureTraditionalAuth() {
   useDomainWideAuth = false;
   currentUserEmail = null;
-  console.log('🔑 Configured traditional OAuth auth');
 }
 
 /**

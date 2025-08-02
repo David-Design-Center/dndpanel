@@ -1,15 +1,18 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { GmailLabel } from '../types';
 import { fetchGmailLabels, createGmailLabel, updateGmailLabel, deleteGmailLabel } from '../integrations/gapiService';
 import { useAuth } from './AuthContext';
 import { useProfile } from './ProfileContext';
 import { useSecurity } from './SecurityContext';
 import { securityLog, devLog } from '../utils/logging';
+import { shouldBlockDataFetches } from '../utils/authFlowUtils';
 
 interface LabelContextType {
   labels: GmailLabel[];
   loadingLabels: boolean;
   refreshLabels: () => Promise<void>;
+  clearLabelsCache: () => void;
   error: string | null;
   addLabel: (name: string) => Promise<void>;
   editLabel: (id: string, newName: string) => Promise<void>;
@@ -39,77 +42,72 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
   const [isDeletingLabel, setIsDeletingLabel] = useState(false);
   const [deleteLabelError, setDeleteLabelError] = useState<string | null>(null);
   const { isGmailSignedIn, isGmailApiReady } = useAuth();
-  const { currentProfile } = useProfile();
+  const { currentProfile, authFlowCompleted } = useProfile();
   const { isDataLoadingAllowed } = useSecurity();
+  const location = useLocation();
 
-  const refreshLabels = async () => {
-    // SECURITY: Block label refresh if data loading is not allowed
-    if (!isDataLoadingAllowed) {
-      securityLog.block('Label refresh blocked by security policy');
-      setLabels([]);
-      setLoadingLabels(false);
-      setError(null);
+  const refreshLabels = useCallback(async () => {
+    // Security check: Block all data fetches during auth flow
+    if (shouldBlockDataFetches(location.pathname)) {
       return;
     }
 
-    // Only fetch labels if Gmail is signed in, API is ready, AND we have a current profile
-    if (!isGmailSignedIn || !isGmailApiReady || !currentProfile) {
-      devLog.debug(`Skipping label refresh - Gmail not ready or no profile selected`);
-      setLabels([]);
-      setLoadingLabels(false);
-      setError(null);
+    // Double check with authFlowCompleted state
+    if (!authFlowCompleted) {
+      return;
+    }
+
+    // Ensure we have current profile and Gmail is ready
+    if (!currentProfile) {
+      return;
+    }
+
+    if (!isGmailSignedIn || !isGmailApiReady) {
+      return;
+    }
+
+    // Check security context
+    if (!isDataLoadingAllowed) {
       return;
     }
 
     // Check cache first to prevent unnecessary API calls
-    const cached = labelsCache.current[currentProfile.id];
+    const cacheKey = currentProfile.name;
+    const cached = labelsCache.current[cacheKey];
     if (cached && (Date.now() - cached.timestamp) < CACHE_DURATION) {
-      console.log('📁 Using cached labels for profile:', currentProfile.name);
       setLabels(cached.labels);
-      setLoadingLabels(false);
-      setError(null);
       return;
     }
 
     try {
       setLoadingLabels(true);
       setError(null);
-      console.log(`Fetching Gmail labels for profile: ${currentProfile.name} (API Ready: ${isGmailApiReady})`);
       
-      const fetchedLabels = await fetchGmailLabels();
+      const gmailLabels = await fetchGmailLabels();
+      setLabels(gmailLabels);
       
       // Cache the result
-      labelsCache.current[currentProfile.id] = {
-        labels: fetchedLabels,
+      labelsCache.current[cacheKey] = {
+        labels: gmailLabels,
         timestamp: Date.now()
       };
       
-      // Filter to show only relevant labels (system labels like INBOX, SENT, etc. and user labels)
-      const filteredLabels = fetchedLabels.filter(label => {
-        // Include user-created labels
-        if (label.type === 'user') return true;
-        
-        // Include important system labels but exclude some we already handle elsewhere
-        const includedSystemLabels = ['STARRED', 'IMPORTANT', 'SPAM', 'CATEGORY_PERSONAL', 'CATEGORY_SOCIAL', 'CATEGORY_PROMOTIONS', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS'];
-        return includedSystemLabels.includes(label.id);
-      });
-      
-      // Sort labels: system labels first, then user labels alphabetically
-      const sortedLabels = filteredLabels.sort((a, b) => {
-        if (a.type === 'system' && b.type === 'user') return -1;
-        if (a.type === 'user' && b.type === 'system') return 1;
-        return a.name.localeCompare(b.name);
-      });
-      
-      setLabels(sortedLabels);
-      console.log(`Successfully fetched ${sortedLabels.length} labels for profile: ${currentProfile.name}`);
     } catch (err) {
       console.error('Error fetching Gmail labels:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch labels');
-      setLabels([]);
     } finally {
       setLoadingLabels(false);
     }
+  }, [isGmailSignedIn, isGmailApiReady, currentProfile, isDataLoadingAllowed, authFlowCompleted, location.pathname]);
+
+  const clearLabelsCache = () => {
+    labelsCache.current = {};
+    setLabels([]);
+    setError(null);
+    setLoadingLabels(false);
+    setAddLabelError(null);
+    setEditLabelError(null);
+    setDeleteLabelError(null);
   };
 
   const addLabel = async (name: string) => {
@@ -188,10 +186,23 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     refreshLabels();
   }, [isGmailSignedIn, isGmailApiReady, currentProfile?.id, isDataLoadingAllowed]); // Depend on security policy
 
+  // Listen for profile switches and clear cache
+  useEffect(() => {
+    const handleClearCache = () => {
+      clearLabelsCache();
+    };
+
+    window.addEventListener('clear-all-caches', handleClearCache as EventListener);
+    return () => {
+      window.removeEventListener('clear-all-caches', handleClearCache as EventListener);
+    };
+  }, [clearLabelsCache]);
+
   const value = {
     labels,
     loadingLabels,
     refreshLabels,
+    clearLabelsCache,
     error,
     addLabel,
     editLabel,

@@ -1,10 +1,12 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { clearAutoReplyCache } from '../services/emailService';
 import { useProfile } from './ProfileContext';
 import { useAuth } from './AuthContext';
 import { 
   isGmailVacationResponderActive 
 } from '../services/gmailVacationService';
+import { shouldBlockDataFetches } from '../utils/authFlowUtils';
 
 interface OutOfOfficeContextType {
   isOutOfOffice: boolean;
@@ -28,8 +30,9 @@ interface OutOfOfficeProviderProps {
 }
 
 export function OutOfOfficeProvider({ children }: OutOfOfficeProviderProps) {
-  const { currentProfile } = useProfile();
+  const { currentProfile, authFlowCompleted } = useProfile();
   const { isGmailApiReady } = useAuth();
+  const location = useLocation();
   const [isOutOfOffice, setIsOutOfOfficeState] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   
@@ -39,8 +42,17 @@ export function OutOfOfficeProvider({ children }: OutOfOfficeProviderProps) {
 
   // Check Gmail vacation responder status
   const refreshStatus = async () => {
+    // Security check: Block all data fetches during auth flow
+    if (shouldBlockDataFetches(location.pathname)) {
+      return;
+    }
+
+    // Double check with authFlowCompleted state
+    if (!authFlowCompleted) {
+      return;
+    }
+    
     if (!currentProfile || !isGmailApiReady) {
-      console.log('OutOfOffice: Skipping refresh - no profile or Gmail API not ready');
       return;
     }
     

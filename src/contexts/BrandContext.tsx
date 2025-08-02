@@ -109,7 +109,6 @@ export function BrandProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
-    console.log('BrandContext - useEffect triggered, user:', user);
     // Fetch brands when user changes
     refreshBrands();
   }, [user]);

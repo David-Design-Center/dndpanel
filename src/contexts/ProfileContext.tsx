@@ -1,9 +1,11 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthContext';
 import { Profile } from '../types';
 import { devLog } from '../utils/logging';
 import { configureDomainWideAuth, configureTraditionalAuth } from '../services/domainWideGmailService';
+import { clearEmailCacheForProfileSwitch } from '../services/emailService';
 
 interface ProfileContextType {
   profiles: Profile[];
@@ -18,6 +20,7 @@ interface ProfileContextType {
   error: string | null;
   fetchProfiles: () => Promise<void>;
   fetchFullProfile: (id: string) => Promise<Profile | null>;
+  authFlowCompleted: boolean;
 }
 
 export const ProfileContext = createContext<ProfileContextType | undefined>(undefined);
@@ -30,18 +33,41 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
   
   // Prevent infinite retry loops
   const [isInitializing, setIsInitializing] = useState(false);
-  
-  // Add throttling to prevent rapid profile restoration
-  const lastProfileRestoreRef = useRef<number>(0);
-  const PROFILE_RESTORE_THROTTLE_MS = 2000; // 2 second throttle
+
+  // Authentication flow state management
+  const [authFlowCompleted, setAuthFlowCompleted] = useState(false);
 
   // Get authentication context and Gmail functions
   const { user, initGmail, loading: authLoading } = useAuth();
+  
+  // Router navigation for clearing URLs when switching profiles
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Check if we're on auth page to determine flow state
+  const isOnAuthPage = location.pathname === '/auth';
+  const isOnProfilePickerPage = location.pathname === '/profile-picker' || location.pathname === '/';
+
+  // Clear everything when on auth page
+  useEffect(() => {
+    if (isOnAuthPage) {
+      setProfiles([]);
+      setCurrentProfile(null);
+      setAuthFlowCompleted(false);
+      // Clear all session storage
+      sessionStorage.clear();
+      setIsLoading(false);
+    }
+  }, [isOnAuthPage]);
 
   const fetchProfiles = async () => {
+    // SECURITY: Block all fetching if on auth page
+    if (isOnAuthPage) {
+      return;
+    }
+
     // Only fetch profiles if user is authenticated
     if (!user) {
-      devLog.debug('ProfileContext: No user, skipping profile fetch');
       return;
     }
 
@@ -49,78 +75,24 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
       setIsLoading(true);
       setError(null);
       
-      devLog.debug('fetchProfiles: Fetching profiles...');
-      
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, name, passcode')
+        .select('id, name, passcode, is_admin')
         .order('name');
       
       if (error) {
         throw error;
       }
       
-      devLog.debug(`fetchProfiles: Loaded ${data?.length || 0} profiles`);
       setProfiles(data || []);
       
-      // Try to restore previously selected profile from sessionStorage
-      const savedProfileId = sessionStorage.getItem('currentProfileId');
-      if (savedProfileId && data) {
-        const now = Date.now();
-        
-        // Throttle profile restoration to prevent refresh loops
-        if (now - lastProfileRestoreRef.current < PROFILE_RESTORE_THROTTLE_MS) {
-          devLog.debug('Profile restoration throttled to prevent refresh loop');
-          return;
-        }
-        lastProfileRestoreRef.current = now;
-        
-        const savedProfileExists = data.find(p => p.id === savedProfileId);
-        if (savedProfileExists) {
-          devLog.info('Found saved profile ID, fetching full profile data...');
-          const fullProfile = await fetchFullProfile(savedProfileId);
-          if (fullProfile) {
-            devLog.info('Restoring previously selected profile:', fullProfile.name);
-            setCurrentProfile(fullProfile);
-            
-            // Initialize Gmail if the profile has tokens, but handle failures gracefully
-            if (fullProfile.gmail_access_token || fullProfile.gmail_refresh_token) {
-              // Ensure we have a user with email before initializing Gmail
-              if (!user?.email) {
-                devLog.debug('No user email available, skipping Gmail initialization for restored profile');
-                setError('User email not available. Please refresh the page and try again.');
-                return;
-              }
-              
-              try {
-                await initGmail(fullProfile);
-                devLog.debug('Gmail initialized for restored profile');
-              } catch (err) {
-                devLog.debug('Gmail initialization failed for restored profile, clearing invalid tokens:', err);
-                // If Gmail init fails, clear the profile to prevent infinite retry
-                // This forces the user to re-authenticate with Gmail
-                setCurrentProfile(null);
-                sessionStorage.removeItem('currentProfileId');
-                setError('Gmail authentication expired. Please select your profile again.');
-                return;
-              }
-            }
-          } else {
-            devLog.debug('Failed to fetch full profile data, clearing sessionStorage');
-            sessionStorage.removeItem('currentProfileId');
-            setCurrentProfile(null);
-          }
-        } else {
-          devLog.debug('Saved profile ID not found in current profiles, clearing sessionStorage');
-          sessionStorage.removeItem('currentProfileId');
-          setCurrentProfile(null);
-        }
-      } else {
-        devLog.info('No saved profile found - user must choose a profile');
-        setCurrentProfile(null);
+      // Mark auth flow as completed for profile picker page
+      if (isOnProfilePickerPage && user) {
+        setAuthFlowCompleted(true);
       }
+      
     } catch (err) {
-      devLog.error('fetchProfiles: Error fetching profiles:', err);
+      console.error('❌ Error fetching profiles:', err);
       setError(err instanceof Error ? err.message : 'Unknown error fetching profiles');
     } finally {
       setIsLoading(false);
@@ -129,8 +101,6 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
 
   const fetchFullProfile = async (id: string): Promise<Profile | null> => {
     try {
-      console.log('🔍 fetchFullProfile: Fetching full profile data for ID:', id);
-      
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
@@ -142,7 +112,6 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
         return null;
       }
       
-      console.log('✅ fetchFullProfile: Successfully fetched full profile data:', data);
       return data as Profile;
     } catch (err) {
       console.error('💥 fetchFullProfile: Error fetching full profile:', err);
@@ -150,13 +119,36 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  // Auto-select profile for staff members (non-admin)
+  const autoSelectStaffProfile = async () => {
+    if (!user?.email || isOnAuthPage) return;
+
+    try {
+      // Fetch profile associated with this email
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, name, is_admin')
+        .eq('userEmail', user.email)
+        .single();
+
+      if (error || !data) {
+        return;
+      }
+
+      // If user is admin, don't auto-select
+      if (data.is_admin) {
+        return;
+      }
+
+      await selectProfile(data.id, undefined, true);
+      
+    } catch (err) {
+      console.error('❌ Error in auto-selection:', err);
+    }
+  };
+
   const selectProfile = async (id: string, passcode?: string, isAutoSelection = false): Promise<boolean> => {
     try {
-      console.log('🔍 selectProfile: Attempting to select profile with ID:', id);
-      console.log('🔍 selectProfile: Current user object:', user);
-      console.log('🔍 selectProfile: User email available:', user?.email);
-      console.log('🔍 selectProfile: Is auto-selection:', isAutoSelection);
-      
       // Fetch the full profile data with all fields including passcode
       const profileToSelect = await fetchFullProfile(id);
       
@@ -166,59 +158,77 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
       
-      console.log('✅ selectProfile: Found profile to select:', profileToSelect.name);
-      
       // Check if profile requires a passcode (skip passcode check for auto-selection of staff profiles)
       if (profileToSelect.passcode && profileToSelect.passcode !== passcode && !isAutoSelection) {
-        console.log('❌ selectProfile: Invalid passcode for profile:', profileToSelect.name);
-        console.log('🔧 selectProfile: Passcode provided:', passcode, 'Expected:', profileToSelect.passcode);
         setError('Invalid passcode');
         return false;
       }
       
-      if (isAutoSelection && profileToSelect.passcode) {
-        console.log('🔓 selectProfile: Bypassing passcode check for auto-selection of staff profile:', profileToSelect.name);
+      // CRITICAL: Clear all cached data when switching profiles
+      
+      // Clear browser URL if currently viewing a specific email or profile-specific page
+      const currentPath = location.pathname;
+      const isViewingEmail = currentPath.includes('/email/');
+      const isProfileSpecificRoute = currentPath.includes('/compose') || currentPath.includes('/view') || isViewingEmail;
+      
+      if (isProfileSpecificRoute && !isAutoSelection) {
+        navigate('/inbox', { replace: true });
       }
       
-      console.log('🚀 selectProfile: Setting currentProfile to:', profileToSelect.name);
+      // Clear session storage data that might be profile-specific
+      const keysToKeep = ['currentProfileId']; // Keep the profile ID we're switching to
+      Object.keys(sessionStorage).forEach(key => {
+        if (!keysToKeep.includes(key)) {
+          sessionStorage.removeItem(key);
+        }
+      });
+      
+      // Clear emailService cache specifically for profile switch
+      clearEmailCacheForProfileSwitch(profileToSelect.id);
+      
+      // Clear all caches to prevent data leakage between profiles
+      window.dispatchEvent(new CustomEvent('clear-all-caches', {
+        detail: { newProfile: profileToSelect.name, oldProfile: currentProfile?.name }
+      }));
+      
       setCurrentProfile(profileToSelect);
       sessionStorage.setItem('currentProfileId', id);
       setError(null);
       
-      console.log('✅ selectProfile: Successfully selected profile:', profileToSelect.name);
-      
       // Configure domain-wide auth using the authenticated user's email
       if (user?.email) {
-        console.log('🔑 Configuring domain-wide Gmail auth for user:', user.email);
         configureDomainWideAuth(user.email);
       } else {
-        console.log('🔑 No user email found, using traditional auth');
         configureTraditionalAuth();
       }
       
       // Automatically initialize Gmail 
-      console.log('📧 selectProfile: Initializing Gmail connection...');
       
       // Ensure we have a user with email before initializing Gmail
       if (!user?.email) {
-        console.log('⚠️ selectProfile: No user email available, but profile selection can proceed');
-        console.warn('⚠️ Profile selected but Gmail initialization skipped - user email not available');
         // Don't fail the profile selection - just skip Gmail initialization
+        // Still mark auth flow as completed so data contexts can fetch
+        setAuthFlowCompleted(true);
         return true;
       }
       
       try {
-        console.log('🔄 selectProfile: Calling initGmail for profile:', profileToSelect.name);
         await initGmail(profileToSelect);
-        console.log('✅ selectProfile: Gmail initialization completed for profile:', profileToSelect.name);
+        
+        // CRITICAL: Mark auth flow as completed after successful profile selection
+        // This allows all data contexts to start fetching
+        setAuthFlowCompleted(true);
+        
       } catch (gmailError) {
         console.log('❌ selectProfile: Error initializing Gmail for profile:', gmailError);
         // Set a user-friendly error message but don't fail the profile selection
         setError('Gmail authentication failed. You may need to reconnect Gmail for this profile.');
         // Don't fail profile selection - user can still access the app
+        
+        // Still mark auth flow as completed even if Gmail fails
+        setAuthFlowCompleted(true);
       }
       
-      console.log('🎉 selectProfile: Profile selection completed successfully');
       return true;
     } catch (err) {
       console.error('💥 selectProfile: Error selecting profile:', err);
@@ -299,14 +309,17 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
   // Check authentication status on mount and listen for auth changes
   useEffect(() => {
     async function initializeProfiles() {
+      // SECURITY: Block everything on auth page
+      if (isOnAuthPage) {
+        return;
+      }
+
       // Wait for auth to finish loading before proceeding
       if (authLoading) {
-        devLog.debug('ProfileContext: Auth still loading, waiting...');
         return;
       }
 
       if (!user) {
-        devLog.debug('ProfileContext: User not authenticated');
         setProfiles([]);
         setCurrentProfile(null);
         setIsLoading(false);
@@ -315,7 +328,6 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
 
       // Prevent multiple simultaneous initializations
       if (isInitializing) {
-        devLog.debug('ProfileContext: Already initializing, skipping...');
         return;
       }
 
@@ -325,14 +337,15 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
         // Check authentication via Supabase directly
         const { data } = await supabase.auth.getSession();
         const authenticated = !!data.session;
-        
-        devLog.debug('ProfileContext: Authentication check completed, authenticated =', authenticated);
 
         if (authenticated) {
-          devLog.debug('ProfileContext: Authenticated, fetching profiles');
-          await fetchProfiles();
+          // Strategy: Different behavior based on current page and user type
+          if (isOnProfilePickerPage) {
+            await fetchProfiles();
+          } else {
+            await autoSelectStaffProfile();
+          }
         } else {
-          devLog.debug('ProfileContext: Not authenticated, clearing profiles');
           setProfiles([]);
           setCurrentProfile(null);
           setIsLoading(false);
@@ -346,7 +359,6 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
 
     // Listen for manual auth state changes (since we disabled the automatic listener)
     const handleAuthStateChanged = () => {
-      devLog.debug('ProfileContext: Received auth state change event, re-initializing');
       initializeProfiles();
     };
 
@@ -355,7 +367,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     return () => {
       window.removeEventListener('auth-state-changed', handleAuthStateChanged);
     };
-  }, [user, authLoading]); // Add authLoading to dependency array
+  }, [user, authLoading, isOnAuthPage, isOnProfilePickerPage]); // Add page dependencies
 
   // DEBUG: Log currentProfile changes (keep minimal debugging)
   useEffect(() => {
@@ -409,7 +421,8 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     error,
     fetchProfiles,
     fetchFullProfile,
-    clearProfile
+    clearProfile,
+    authFlowCompleted
   };
 
   return <ProfileContext.Provider value={value}>{children}</ProfileContext.Provider>;

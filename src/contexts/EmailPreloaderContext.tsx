@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Email } from '../types';
 import { 
   getEmails, 
@@ -9,6 +10,8 @@ import {
   PaginatedEmailServiceResponse
 } from '../services/emailService';
 import { useAuth } from './AuthContext';
+import { useProfile } from './ProfileContext';
+import { shouldBlockDataFetches } from '../utils/authFlowUtils';
 
 type EmailPageType = 'inbox' | 'unread' | 'sent' | 'drafts' | 'trash';
 
@@ -25,6 +28,8 @@ interface EmailPreloaderContextType {
   isPageLoaded: (pageType: EmailPageType) => boolean;
   preloadAllPages: () => Promise<void>;
   refreshPage: (pageType: EmailPageType) => Promise<void>;
+  clearAllCache: () => void;
+  clearAllCacheForRefresh: () => void;
   isPreloading: boolean;
   isGhostPreloadComplete: boolean;
 }
@@ -42,7 +47,10 @@ export function EmailPreloaderProvider({ children }: { children: React.ReactNode
   const [isPreloading, setIsPreloading] = useState(false);
   const [isGhostPreloadComplete, setIsGhostPreloadComplete] = useState(false);
   const [hasInitialPreload, setHasInitialPreload] = useState(false); // Prevent duplicate preloading
+  const [isRefreshing, setIsRefreshing] = useState(false); // Prevent auto-preload during refresh
   const { isGmailSignedIn } = useAuth();
+  const { authFlowCompleted } = useProfile();
+  const location = useLocation();
 
   const getEmailFunction = (pageType: EmailPageType) => {
     switch (pageType) {
@@ -55,25 +63,31 @@ export function EmailPreloaderProvider({ children }: { children: React.ReactNode
     }
   };
 
-  const loadPage = async (pageType: EmailPageType): Promise<void> => {
+  const loadPage = useCallback(async (pageType: EmailPageType) => {
+    // Security check: Block all data fetches during auth flow
+    if (shouldBlockDataFetches(location.pathname)) {
+      return;
+    }
+
+    // Double check with authFlowCompleted state
+    if (!authFlowCompleted) {
+      return;
+    }
+
+    if (!isGmailSignedIn) {
+      return;
+    }
+
     try {
       const emailFunction = getEmailFunction(pageType);
+      const emailsData = await emailFunction();
       
-      let response: PaginatedEmailServiceResponse;
-      
-      if (pageType === 'inbox') {
-        response = await getEmails(false, undefined, 10);
-      } else {
-        const emailsData = await emailFunction(false);
-        response = {
-          emails: Array.isArray(emailsData) ? emailsData : emailsData.emails || [],
-          resultSizeEstimate: Array.isArray(emailsData) ? emailsData.length : emailsData.resultSizeEstimate || 0,
-          nextPageToken: undefined
-        };
-      }
+      const response: PaginatedEmailServiceResponse = Array.isArray(emailsData) 
+        ? { emails: emailsData, resultSizeEstimate: emailsData.length, nextPageToken: undefined }
+        : emailsData;
 
-      setCache(prev => ({
-        ...prev,
+      setCache(prevCache => ({
+        ...prevCache,
         [pageType]: {
           emails: response.emails || [],
           timestamp: Date.now(),
@@ -82,23 +96,22 @@ export function EmailPreloaderProvider({ children }: { children: React.ReactNode
           isLoaded: true
         }
       }));
+
     } catch (error) {
-      console.error(`Error preloading ${pageType}:`, error);
-      // Mark as loaded even on error to prevent infinite loading
-      setCache(prev => ({
-        ...prev,
+      console.error(`Error loading ${pageType} emails:`, error);
+      setCache(prevCache => ({
+        ...prevCache,
         [pageType]: {
-          ...prev[pageType],
-          isLoaded: true
+          ...prevCache[pageType],
+          isLoaded: false
         }
       }));
     }
-  };
+  }, [isGmailSignedIn, authFlowCompleted, location.pathname]);
 
   const preloadAllPages = useCallback(async () => {
     if (!isGmailSignedIn || isPreloading) return; // Prevent duplicate preloading
     
-    console.log('� GHOST PRELOADER: Starting aggressive preload of all email pages...');
     setIsPreloading(true);
     
     // Load pages in parallel for maximum speed
@@ -110,11 +123,9 @@ export function EmailPreloaderProvider({ children }: { children: React.ReactNode
       // Use Promise.all for parallel loading (faster than Promise.allSettled)
       const loadPromises = pageTypes.map(async (pageType) => {
         try {
-          console.log(`� GHOST PRELOADER: Loading ${pageType}...`);
           await loadPage(pageType);
-          console.log(`✅ GHOST PRELOADER: ${pageType} loaded successfully`);
         } catch (error) {
-          console.error(`❌ GHOST PRELOADER: Error loading ${pageType}:`, error);
+          console.error(`Error loading ${pageType}:`, error);
           // Continue loading other pages even if one fails
         }
       });
@@ -122,33 +133,25 @@ export function EmailPreloaderProvider({ children }: { children: React.ReactNode
       await Promise.all(loadPromises);
       
       const endTime = Date.now();
-      console.log(`🎉 GHOST PRELOADER: All pages preloaded in ${endTime - startTime}ms`);
       
       // Log detailed cache status
       setTimeout(() => {
         setCache(currentCache => {
-          console.log('� GHOST PRELOADER: Final cache status:', {
-            inbox: currentCache.inbox.isLoaded ? `${currentCache.inbox.emails.length} emails` : 'FAILED',
-            sent: currentCache.sent.isLoaded ? `${currentCache.sent.emails.length} emails` : 'FAILED',
-            drafts: currentCache.drafts.isLoaded ? `${currentCache.drafts.emails.length} emails` : 'FAILED',
-            trash: currentCache.trash.isLoaded ? `${currentCache.trash.emails.length} emails` : 'FAILED',
-            unread: currentCache.unread.isLoaded ? `${currentCache.unread.emails.length} emails` : 'FAILED',
-          });
-          console.log('🚀 GHOST PRELOADER: All email pages are now ready for instant navigation!');
           setIsGhostPreloadComplete(true);
           return currentCache;
         });
       }, 100);
     } catch (error) {
-      console.error('❌ GHOST PRELOADER: Error during preload:', error);
+      console.error('Error during preload:', error);
     } finally {
       setIsPreloading(false);
     }
-  }, [isGmailSignedIn]);
+  }, [isGmailSignedIn, loadPage]);
 
   const refreshPage = useCallback(async (pageType: EmailPageType) => {
     await loadPage(pageType);
-  }, []);
+    setIsRefreshing(false); // Reset refresh state after loading
+  }, [loadPage]);
 
   const getCachedEmails = useCallback((pageType: EmailPageType): EmailCache | null => {
     return cache[pageType] || null;
@@ -158,19 +161,45 @@ export function EmailPreloaderProvider({ children }: { children: React.ReactNode
     return cache[pageType]?.isLoaded || false;
   }, [cache]);
 
+  const clearAllCache = useCallback(() => {
+    setCache({
+      inbox: { emails: [], timestamp: 0, hasMoreEmails: false, isLoaded: false },
+      unread: { emails: [], timestamp: 0, hasMoreEmails: false, isLoaded: false },
+      sent: { emails: [], timestamp: 0, hasMoreEmails: false, isLoaded: false },
+      drafts: { emails: [], timestamp: 0, hasMoreEmails: false, isLoaded: false },
+      trash: { emails: [], timestamp: 0, hasMoreEmails: false, isLoaded: false },
+    });
+    setIsPreloading(false);
+    setIsGhostPreloadComplete(false);
+    setHasInitialPreload(false);
+  }, []);
+
+  const clearAllCacheForRefresh = useCallback(() => {
+    setCache({
+      inbox: { emails: [], timestamp: 0, hasMoreEmails: false, isLoaded: false },
+      unread: { emails: [], timestamp: 0, hasMoreEmails: false, isLoaded: false },
+      sent: { emails: [], timestamp: 0, hasMoreEmails: false, isLoaded: false },
+      drafts: { emails: [], timestamp: 0, hasMoreEmails: false, isLoaded: false },
+      trash: { emails: [], timestamp: 0, hasMoreEmails: false, isLoaded: false },
+    });
+    setIsPreloading(false);
+    setIsGhostPreloadComplete(false);
+    setIsRefreshing(true);
+    // Don't reset hasInitialPreload to prevent auto-preloading
+  }, []);
+
   // Ghost pre-loading: Aggressively preload all pages when Gmail is signed in
   useEffect(() => {
-    if (isGmailSignedIn && !hasInitialPreload) {
-      console.log('👻 GHOST PRELOADER: Gmail signed in, starting aggressive background preload...');
+    if (isGmailSignedIn && !hasInitialPreload && !isRefreshing) {
       setIsGhostPreloadComplete(false);
       setHasInitialPreload(true);
       
       // Single preload on sign-in
       preloadAllPages();
     } else if (!isGmailSignedIn) {
-      console.log('👻 GHOST PRELOADER: Gmail not signed in, clearing cache...');
       setIsGhostPreloadComplete(false);
       setHasInitialPreload(false);
+      setIsRefreshing(false);
       // Clear cache when signed out for security
       setCache({
         inbox: { emails: [], timestamp: 0, hasMoreEmails: false, isLoaded: false },
@@ -180,7 +209,19 @@ export function EmailPreloaderProvider({ children }: { children: React.ReactNode
         trash: { emails: [], timestamp: 0, hasMoreEmails: false, isLoaded: false },
       });
     }
-  }, [isGmailSignedIn, hasInitialPreload, preloadAllPages]);
+  }, [isGmailSignedIn, hasInitialPreload, isRefreshing, preloadAllPages]);
+
+  // Listen for profile switches and clear cache
+  useEffect(() => {
+    const handleClearCache = () => {
+      clearAllCache();
+    };
+
+    window.addEventListener('clear-all-caches', handleClearCache as EventListener);
+    return () => {
+      window.removeEventListener('clear-all-caches', handleClearCache as EventListener);
+    };
+  }, [clearAllCache]);
 
   return (
     <EmailPreloaderContext.Provider value={{
@@ -188,6 +229,8 @@ export function EmailPreloaderProvider({ children }: { children: React.ReactNode
       isPageLoaded,
       preloadAllPages,
       refreshPage,
+      clearAllCache,
+      clearAllCacheForRefresh,
       isPreloading,
       isGhostPreloadComplete
     }}>

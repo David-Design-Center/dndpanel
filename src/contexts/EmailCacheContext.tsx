@@ -28,7 +28,6 @@ export function EmailCacheProvider({ children }: { children: React.ReactNode }) 
     const cached = cache[pageType];
     if (!cached) return null;
     
-    // Return cached emails if they exist
     return cached.emails;
   }, [cache]);
 
@@ -57,6 +56,7 @@ export function EmailCacheProvider({ children }: { children: React.ReactNode }) 
         return newCache;
       });
     } else {
+      console.log('🧹 EMAIL CACHE: Clearing all email cache');
       setCache({});
     }
   }, []);
@@ -67,6 +67,19 @@ export function EmailCacheProvider({ children }: { children: React.ReactNode }) 
     
     return Date.now() - cached.timestamp < maxAge;
   }, [cache]);
+
+  // Listen for profile switches and clear cache
+  React.useEffect(() => {
+    const handleClearCache = (event: CustomEvent) => {
+      console.log('📬 EMAIL CACHE: Received cache clear event for profile switch:', event.detail);
+      clearCache(); // Clear all cache
+    };
+
+    window.addEventListener('clear-all-caches', handleClearCache as EventListener);
+    return () => {
+      window.removeEventListener('clear-all-caches', handleClearCache as EventListener);
+    };
+  }, [clearCache]);
 
   return (
     <EmailCacheContext.Provider value={{

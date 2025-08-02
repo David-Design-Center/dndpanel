@@ -19,8 +19,6 @@ const SUPABASE_FUNCTION_URL = "https://jvcdxglsoholhgapfpet.supabase.co/function
  * @returns Promise<string> - Fresh Gmail access token
  */
 export async function fetchGmailAccessToken(userEmail: string): Promise<string> {
-  console.log(`🔑 Fetching fresh Gmail token for: ${userEmail}`);
-  
   try {
     // Get the current Supabase session for authorization
     const { data: { session } } = await supabase.auth.getSession();
@@ -50,7 +48,6 @@ export async function fetchGmailAccessToken(userEmail: string): Promise<string> 
       throw new Error('No access token received from service');
     }
 
-    console.log('✅ Successfully fetched fresh Gmail token');
     return access_token;
     
   } catch (error) {

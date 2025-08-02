@@ -147,7 +147,6 @@ class AuthenticationCoordinator {
       lastValidation: 0
     };
     this.authPromise = null;
-    console.log('🔄 Authentication state reset');
   }
 
   /**

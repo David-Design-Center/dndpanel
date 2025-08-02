@@ -87,35 +87,28 @@ function EmbeddedViewEmail({ emailId, onEmailUpdate }: EmbeddedViewEmailProps) {
       const isOptimizedAvailable = await optimizedEmailService.isAvailable();
       
       if (!isOptimizedAvailable) {
-        console.log('⚠️ Optimized service not available, using fallback');
+        console.log('Optimized service not available, using fallback');
         throw new Error('Optimized service is not available');
       }
 
-      console.log('🚀 Using optimized server-side email fetching');
-      
       // Try to fetch as a thread first, then as single message
       try {
         const threadEmails = await optimizedEmailService.fetchEmailThread(emailId);
         if (threadEmails.length > 0) {
-          console.log(`✅ Successfully fetched ${threadEmails.length} emails via optimized service`);
           return threadEmails[0]; // Return the main email
         }
       } catch (threadError) {
-        console.log('Thread fetch failed, trying single message:', threadError);
         const singleEmail = await optimizedEmailService.fetchSingleEmail(emailId);
-        console.log(`✅ Successfully fetched single email via optimized service`);
         return singleEmail;
       }
     } catch (error) {
-      console.error('❌ Optimized fetch failed, falling back to standard method:', error);
+      console.error('Optimized fetch failed, falling back to standard method:', error);
       // Fallback to standard method
       try {
-        console.log('🔄 Falling back to standard Gmail API');
         const fallbackEmail = await getEmailById(emailId);
-        console.log('✅ Successfully fetched email via standard API');
         return fallbackEmail;
       } catch (fallbackError) {
-        console.error('❌ Standard API also failed:', fallbackError);
+        console.error('Standard API also failed:', fallbackError);
         throw fallbackError;
       }
     }
@@ -127,15 +120,13 @@ function EmbeddedViewEmail({ emailId, onEmailUpdate }: EmbeddedViewEmailProps) {
       const isOptimizedAvailable = await optimizedEmailService.isAvailable();
       
       if (!isOptimizedAvailable) {
-        console.log('⚠️ Optimized service not available for thread, using fallback');
+        console.log('Optimized service not available for thread, using fallback');
         throw new Error('Optimized service not available');
       }
 
-      console.log(`🧵 Fetching thread emails optimized for thread: ${threadId}`);
       const threadEmails = await optimizedEmailService.fetchEmailThread(threadId);
       
       if (threadEmails.length > 1) {
-        console.log(`🧵 Got ${threadEmails.length} emails in thread, processing...`);
         return await processThreadMessages(threadEmails);
       } else {
         console.log(`📧 Single email thread, no processing needed`);
@@ -197,16 +188,13 @@ function EmbeddedViewEmail({ emailId, onEmailUpdate }: EmbeddedViewEmailProps) {
         
         // If this email has a threadId and it's not just a single message, fetch the thread
         if (fetchedEmail.threadId) {
-          console.log(`🧵 Email has threadId: ${fetchedEmail.threadId}, fetching thread...`);
           setProcessingThread(true);
           try {
             const threadMessages = await fetchThreadEmailsOptimized(fetchedEmail.threadId);
-            console.log(`🧵 Thread fetch result: ${threadMessages.length} messages`);
             if (threadMessages.length > 0) {
               setProcessedThreadMessages(threadMessages);
               // Auto-expand the latest message
               setExpandedMessages(new Set([threadMessages[0].id]));
-              console.log(`✅ Set ${threadMessages.length} thread messages, expanded: ${threadMessages[0].id}`);
             } else {
               // Fallback: if thread fetch fails, just show the single email
               console.log('⚠️ Thread fetch returned no messages, showing single email');
@@ -338,15 +326,6 @@ ${email.body}
   const messagesToShow = processedThreadMessages.length > 0 
     ? processedThreadMessages.filter(msg => msg !== null) 
     : (email ? [email] : []);
-
-  // Debug logging (keep minimal for troubleshooting)
-  console.log('🎯 EmbeddedViewEmail render state:', {
-    emailId,
-    email: email ? 'Found' : 'Null',
-    messagesToShow: messagesToShow.length,
-    loading,
-    error
-  });
 
   return (
     <div className="flex flex-col h-full bg-white overflow-hidden max-w-full">

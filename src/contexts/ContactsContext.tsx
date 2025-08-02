@@ -1,9 +1,11 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Contact } from '../types';
 import { contactService } from '../services/contactService';
 import { useProfile } from './ProfileContext';
 import { useAuth } from './AuthContext';
 import { devLog } from '../utils/logging';
+import { shouldBlockDataFetches } from '../utils/authFlowUtils';
 
 interface ContactsContextType {
   contacts: Contact[];
@@ -12,6 +14,7 @@ interface ContactsContextType {
   searchContacts: (query: string, limit?: number) => Contact[];
   loadContacts: () => Promise<void>;
   refreshContacts: () => Promise<void>;
+  clearContactsCache: () => void;
 }
 
 const ContactsContext = createContext<ContactsContextType | undefined>(undefined);
@@ -34,31 +37,39 @@ export const ContactsProvider: React.FC<ContactsProviderProps> = ({ children }) 
   const [error, setError] = useState<string | null>(null);
   
   const { user, isGmailSignedIn } = useAuth();
-  const { currentProfile } = useProfile();
+  const { currentProfile, authFlowCompleted } = useProfile();
+  const location = useLocation();
 
   const loadContacts = useCallback(async () => {
-    if (isLoading) return;
-    
-    // Only load contacts if user is authenticated and a profile is selected
-    if (!user || !currentProfile) {
-      devLog.debug('ContactsContext: Skipping contact load - user or profile not available');
+    // Security check: Block all data fetches during auth flow
+    if (shouldBlockDataFetches(location.pathname)) {
+      return;
+    }
+
+    // Double check with authFlowCompleted state
+    if (!authFlowCompleted) {
+      return;
+    }
+
+    if (!user || !currentProfile?.name) {
+      return;
+    }
+
+    if (isLoading) {
       return;
     }
 
     setIsLoading(true);
-    setError(null);
-
     try {
-      const loadedContacts = await contactService.loadContacts();
-      setContacts(loadedContacts);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to load contacts';
-      setError(errorMessage);
-      console.error('Error loading contacts:', err);
+      const contactsData = await contactService.getContacts();
+      setContacts(contactsData);
+    } catch (error) {
+      console.error('Error loading contacts:', error);
+      setContacts([]);
     } finally {
       setIsLoading(false);
     }
-  }, [isLoading, user, currentProfile]);
+  }, [user, currentProfile, authFlowCompleted, isLoading, location]);
 
   const refreshContacts = useCallback(async () => {
     contactService.clearContacts();
@@ -70,6 +81,12 @@ export const ContactsProvider: React.FC<ContactsProviderProps> = ({ children }) 
     return contactService.filterContacts(query, limit);
   }, []);
 
+  const clearContactsCache = useCallback(() => {
+    setContacts([]);
+    setError(null);
+    setIsLoading(false);
+  }, []);
+
   // Load contacts whenever user, profile, and Gmail sign-in are available
   useEffect(() => {
     if (!isLoading && !error && user && currentProfile && isGmailSignedIn) {
@@ -77,13 +94,26 @@ export const ContactsProvider: React.FC<ContactsProviderProps> = ({ children }) 
     }
   }, [isLoading, error, loadContacts, user, currentProfile, isGmailSignedIn]);
 
+  // Listen for profile switches and clear cache
+  useEffect(() => {
+    const handleClearCache = () => {
+      clearContactsCache();
+    };
+
+    window.addEventListener('clear-all-caches', handleClearCache as EventListener);
+    return () => {
+      window.removeEventListener('clear-all-caches', handleClearCache as EventListener);
+    };
+  }, [clearContactsCache]);
+
   const value: ContactsContextType = {
     contacts,
     isLoading,
     error,
     searchContacts,
     loadContacts,
-    refreshContacts
+    refreshContacts,
+    clearContactsCache
   };
 
   return (

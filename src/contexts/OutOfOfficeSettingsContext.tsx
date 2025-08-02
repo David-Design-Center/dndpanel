@@ -1,8 +1,10 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useProfile } from './ProfileContext';
 import { devLog } from '../utils/logging';
 import { OutOfOfficeSettings } from '../types';
+import { shouldBlockDataFetches } from '../utils/authFlowUtils';
 
 interface OutOfOfficeSettingsContextType {
   settings: { [profileName: string]: OutOfOfficeSettings };
@@ -77,13 +79,23 @@ export function OutOfOfficeSettingsProvider({ children }: { children: React.Reac
   const [settings, setSettings] = useState<{ [profileName: string]: OutOfOfficeSettings }>({});
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { profiles } = useProfile();
+  const { profiles, authFlowCompleted } = useProfile();
+  const location = useLocation();
 
   // Load settings from Supabase when profiles are available
   useEffect(() => {
     const loadSettings = async () => {
+      // Security check: Block all data fetches during auth flow
+      if (shouldBlockDataFetches(location.pathname)) {
+        return;
+      }
+
+      // Double check with authFlowCompleted state
+      if (!authFlowCompleted) {
+        return;
+      }
+      
       if (!profiles || profiles.length === 0) {
-        devLog.debug('OutOfOfficeSettingsContext: No profiles available, skipping load');
         return;
       }
       

@@ -22,16 +22,6 @@ function Layout() {
 
   // Auto-select profile for non-admin users (only once)
   useEffect(() => {
-    console.log('🎯 Layout useEffect - Auto-select check:', {
-      loading,
-      profileLoading,
-      isAdmin,
-      userProfileId,
-      currentProfile: currentProfile?.name,
-      hasAutoSelected,
-      autoSelectionFailed
-    });
-    
     if (!loading && !profileLoading && !isAdmin && userProfileId && !currentProfile && !hasAutoSelected && !autoSelectionFailed) {
       // For staff members, automatically select their profile
       console.log('🚀 Auto-selecting profile for staff user:', userProfileId);
@@ -86,10 +76,7 @@ function Layout() {
 
   // Check if we're on an email-related route that should use 3-column layout
   const isEmailRoute = location.pathname.startsWith('/inbox') || 
-                      location.pathname.startsWith('/unread') || 
-                      location.pathname.startsWith('/sent') || 
-                      location.pathname.startsWith('/drafts') || 
-                      location.pathname.startsWith('/trash');
+                      location.pathname.startsWith('/unread');
 
   return (
     <FoldersColumnProvider>

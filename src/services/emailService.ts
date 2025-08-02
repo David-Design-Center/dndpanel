@@ -537,6 +537,17 @@ export const getTrashEmails = async (forceRefresh = false): Promise<Email[]> => 
   return response.emails;
 };
 
+export const getLabelEmails = async (
+  labelName: string, 
+  forceRefresh = false, 
+  maxResults = 10, 
+  pageToken?: string
+): Promise<PaginatedEmailServiceResponse> => {
+  // Use the label name to construct a Gmail query
+  const query = `label:"${labelName}"`;
+  return await getEmails(forceRefresh, query, maxResults, pageToken);
+};
+
 export const getEmailById = async (id: string): Promise<Email | undefined> => {
   // Check if we have a valid cached email for current profile
   if (emailCache.details[id] && 

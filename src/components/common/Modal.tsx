@@ -14,9 +14,6 @@ function Modal({ isOpen, onClose, children, title, size = 'xl', zIndex = 50 }: M
   const [isVisible, setIsVisible] = useState(false);
   const [shouldRender, setShouldRender] = useState(false);
 
-  // Debug logging
-  console.log('Modal render:', { isOpen, isVisible, shouldRender, title, timestamp: Date.now() });
-
   useEffect(() => {
     if (isOpen) {
       setShouldRender(true);

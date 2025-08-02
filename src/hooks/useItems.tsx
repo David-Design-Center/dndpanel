@@ -105,7 +105,6 @@ export function useItems() {
   };
 
   useEffect(() => {
-    console.log('useItems - effect triggered, user:', user);
     refreshItems();
   }, [user]);
 

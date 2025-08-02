@@ -1,5 +1,4 @@
-import { useState } from 'react';
-import { Inbox, Send, FileWarning, Trash, MailPlus, ChevronDown, ChevronRight, Clipboard, FileText, Settings, BarChart3, Package, Calendar } from 'lucide-react';
+import { Inbox, MailPlus, ChevronRight, Clipboard, FileText, Settings, BarChart3, Package, Calendar } from 'lucide-react';
 import { useLocation, Link } from 'react-router-dom';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import ProfileSelector from './ProfileSelector';
@@ -16,7 +15,6 @@ interface SidebarProps {
 
 function Sidebar({ onCompose }: SidebarProps) {
   const location = useLocation();
-  const [isDropdownOpen, setIsDropdownOpen] = useState(true);
   const { currentProfile } = useProfile();
   const { isAdmin } = useAuth();
   const { isOutOfOffice, setOutOfOffice } = useOutOfOffice();
@@ -28,19 +26,6 @@ function Sidebar({ onCompose }: SidebarProps) {
     icon: <Inbox size={20} className="text-blue-500" />, 
     label: 'Inbox', 
     path: '/inbox' 
-  };
-  
-  // Dropdown items - conditionally include Trash for specific profile
-  const dropdownItems = [
-    { icon: <Send size={20} className="text-blue-500" />, label: 'Sent', path: '/sent' },
-    { icon: <FileWarning size={20} className="text-yellow-500" />, label: 'Drafts', path: '/drafts' },
-    ...(currentProfile?.name === 'David' ? [
-      { icon: <Trash size={20} className="text-gray-500" />, label: 'Trash', path: '/trash' }
-    ] : [])
-  ];
-
-  const toggleDropdown = () => {
-    setIsDropdownOpen(!isDropdownOpen);
   };
 
   return (
@@ -168,70 +153,38 @@ function Sidebar({ onCompose }: SidebarProps) {
               )
             )}
 
-            {/* Main item with dropdown toggle */}
-            <div>
-              {isSidebarCollapsed ? (
-                <Tooltip delayDuration={300}>
-                  <TooltipTrigger asChild>
-                    <Link
-                      to={mainItem.path}
-                      className={`flex items-center justify-center p-2 text-sm font-medium transition-all duration-200 rounded-xl ${
-                        location.pathname === mainItem.path && !location.search
-                          ? 'text-gray-800 bg-white shadow-lg'
-                          : 'text-gray-600 hover:bg-white hover:shadow-md'
-                      }`}
-                    >
-                      <Inbox size={16} className="text-blue-500" />
-                    </Link>
-                  </TooltipTrigger>
-                  <TooltipContent side="right" className="bg-gray-800 text-white border-gray-700">
-                    <p>Inbox</p>
-                  </TooltipContent>
-                </Tooltip>
-              ) : (
-                <>
-                  <div className="flex items-center">
-                    <Link
-                      to={mainItem.path}
-                      className={`flex-1 flex items-center px-4 py-3 text-sm font-medium transition-all duration-200 rounded-xl min-w-0 overflow-hidden ${
-                        location.pathname === mainItem.path && !location.search
-                          ? 'text-gray-800 bg-white shadow-lg'
-                          : 'text-gray-600 hover:bg-white hover:shadow-md'
-                      }`}
-                    >
-                      <span className="mr-3 flex-shrink-0">{mainItem.icon}</span>
-                      <span className="truncate">{mainItem.label}</span>
-                    </Link>
-                    <button 
-                      onClick={toggleDropdown}
-                      className="px-3 py-2 text-gray-500 hover:text-gray-700 focus:outline-none flex-shrink-0"
-                    >
-                      {isDropdownOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                    </button>
-                  </div>
-
-                  {/* Dropdown menu */}
-                  <div className={`ml-4 mt-2 space-y-1 transition-all duration-300 ease-in-out overflow-hidden ${
-                    isDropdownOpen ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'
-                  }`}>
-                    {dropdownItems.map((item) => (
-                      <Link
-                        key={item.path}
-                        to={item.path}
-                        className={`flex items-center px-4 py-2.5 text-sm transition-all duration-300 rounded-lg min-w-0 overflow-hidden ${
-                          location.pathname === item.path
-                            ? 'text-gray-800 bg-white shadow-lg'
-                            : 'text-gray-600 hover:bg-white hover:shadow-md'
-                        }`}
-                      >
-                        <span className="mr-3 flex-shrink-0">{item.icon}</span>
-                        <span className="truncate">{item.label}</span>
-                      </Link>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
+            {/* Inbox item */}
+            {isSidebarCollapsed ? (
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <Link
+                    to={mainItem.path}
+                    className={`flex items-center justify-center p-2 text-sm font-medium transition-all duration-200 rounded-xl ${
+                      location.pathname === mainItem.path && !location.search
+                        ? 'text-gray-800 bg-white shadow-lg'
+                        : 'text-gray-600 hover:bg-white hover:shadow-md'
+                    }`}
+                  >
+                    <Inbox size={16} className="text-blue-500" />
+                  </Link>
+                </TooltipTrigger>
+                <TooltipContent side="right" className="bg-gray-800 text-white border-gray-700">
+                  <p>Inbox</p>
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              <Link
+                to={mainItem.path}
+                className={`flex items-center px-4 py-3 text-sm font-medium transition-all duration-200 rounded-xl min-w-0 overflow-hidden ${
+                  location.pathname === mainItem.path && !location.search
+                    ? 'text-gray-800 bg-white shadow-lg'
+                    : 'text-gray-600 hover:bg-white hover:shadow-md'
+                }`}
+              >
+                <span className="mr-3 flex-shrink-0">{mainItem.icon}</span>
+                <span className="truncate">{mainItem.label}</span>
+              </Link>
+            )}
             
             {/* Other main navigation items */}
             {isSidebarCollapsed ? (
