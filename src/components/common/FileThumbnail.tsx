@@ -135,7 +135,12 @@ const FileThumbnail: React.FC<FileThumbnailProps> = ({
           {showPreviewButton && canPreview(attachment.mimeType) && (
             <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-200 rounded-lg flex items-center justify-center">
               <button
-                onClick={onPreviewClick}
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onPreviewClick?.();
+                }}
                 className="opacity-0 group-hover:opacity-100 bg-white bg-opacity-90 hover:bg-opacity-100 rounded-full p-2 transition-all duration-200"
                 title="Preview file"
               >
@@ -155,7 +160,12 @@ const FileThumbnail: React.FC<FileThumbnailProps> = ({
         {showPreviewButton && canPreview(attachment.mimeType) && (
           <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-200 rounded-lg flex items-center justify-center">
             <button
-              onClick={onPreviewClick}
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onPreviewClick?.();
+              }}
               className="opacity-0 group-hover:opacity-100 bg-white bg-opacity-90 hover:bg-opacity-100 rounded-full p-2 transition-all duration-200"
               title="Preview file"
             >

@@ -532,6 +532,83 @@ interface EmailPart {
 }
 
 /**
+ * Enhanced HTML cleaning for promotional emails
+ */
+const cleanPromotionalHTML = (html: string): string => {
+  // Remove problematic elements that cause rendering issues
+  let cleaned = html
+    // Remove style blocks that contain font definitions and CSS
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    // Remove problematic font declarations
+    .replace(/@font-face[^}]*}/gi, '')
+    // Remove CSS media queries
+    .replace(/@media[^}]*{[^}]*}/gi, '')
+    // Clean up repeated characters (like fffffffff...)
+    .replace(/([a-zA-Z])\1{10,}/g, '') // Remove 10+ repeated chars
+    // Remove excessive CSS properties
+    .replace(/style="[^"]*font-family:[^"]*"/gi, 'style=""')
+    // Clean up malformed CSS
+    .replace(/[{;}]\s*[{;}]/g, ';')
+    // Remove empty style attributes
+    .replace(/style="\s*"/gi, '')
+    // Fix common encoding issues
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"');
+
+  // Extract readable text content while preserving basic structure
+  const tempDiv = document.createElement('div');
+  tempDiv.innerHTML = cleaned;
+  
+  // Remove script tags, style tags, and other non-content elements
+  const unwantedElements = tempDiv.querySelectorAll('script, style, meta, link');
+  unwantedElements.forEach(el => el.remove());
+  
+  // Get clean text content with basic formatting
+  let textContent = tempDiv.innerHTML;
+  
+  // Clean up extra whitespace and line breaks
+  textContent = textContent
+    .replace(/\s+/g, ' ')
+    .replace(/\n\s*\n/g, '\n')
+    .trim();
+    
+  return textContent || cleaned;
+};
+
+/**
+ * Detect if this is a promotional/marketing email
+ */
+const isPromotionalEmail = (headers: Array<{ name: string; value: string }>, body: string): boolean => {
+  const subject = headers.find(h => h.name.toLowerCase() === 'subject')?.value || '';
+  const from = headers.find(h => h.name.toLowerCase() === 'from')?.value || '';
+  
+  // Check for marketing indicators
+  const marketingKeywords = [
+    'newsletter', 'unsubscribe', 'marketing', 'promotion', 'deal', 'offer',
+    'sale', 'discount', 'limited time', 'exclusive', 'special offer'
+  ];
+  
+  const hasMarketingKeywords = marketingKeywords.some(keyword => 
+    subject.toLowerCase().includes(keyword) || 
+    from.toLowerCase().includes(keyword) ||
+    body.toLowerCase().includes(keyword)
+  );
+  
+  // Check for typical promotional email structures
+  const hasPromotionalStructure = 
+    body.includes('@font-face') ||
+    body.includes('font-family:') ||
+    !!body.match(/([a-zA-Z])\1{8,}/) || // Repeated characters (!! converts to boolean)
+    body.includes('href=') && body.includes('utm_') || // Tracking links
+    body.includes('style=') && body.length > 10000; // Heavy styling
+    
+  return hasMarketingKeywords || hasPromotionalStructure;
+};
+
+/**
  * Extract text from email part, handling different encodings
  */
 const extractTextFromPart = (part: EmailPart): string => {
@@ -603,9 +680,18 @@ const extractTextFromPart = (part: EmailPart): string => {
     const decoded = new TextDecoder(charset).decode(finalBytes);
     
     // STEP 4: Final cleanup - decode HTML entities if present
-    const cleanedContent = decodeHtmlEntities(decoded);
+    let cleanedContent = decodeHtmlEntities(decoded);
     
-    // STEP 5: For plain text content, convert newlines to HTML breaks for display
+    // STEP 5: Enhanced cleaning for promotional emails (HTML content)
+    if (part.mimeType === 'text/html') {
+      // Check if this looks like a promotional email with styling issues
+      if (isPromotionalEmail(part.headers || [], cleanedContent)) {
+        console.log('Detected promotional email, applying enhanced cleaning...');
+        cleanedContent = cleanPromotionalHTML(cleanedContent);
+      }
+    }
+    
+    // STEP 6: For plain text content, convert newlines to HTML breaks for display
     if (part.mimeType === 'text/plain') {
       return cleanedContent
         .replace(/\r\n/g, '<br>')
@@ -659,10 +745,13 @@ export const fetchGmailMessages = async (
       };
     }
 
-    const emails: Email[] = await Promise.all(
-      response.result.messages.map(async (message: any) => {
-        if (!message.id) return null;
+    const emails: Email[] = [];
+    
+    // Fetch emails sequentially to avoid rate limits
+    for (const message of response.result.messages) {
+      if (!message.id) continue;
 
+      try {
         const msg = await window.gapi.client.gmail.users.messages.get({
           userId: 'me',
           id: message.id,
@@ -670,7 +759,7 @@ export const fetchGmailMessages = async (
           metadataHeaders: ['Subject', 'From', 'To', 'Date'] // Only get headers we need
         });
 
-        if (!msg.result || !msg.result.payload) return null;
+        if (!msg.result || !msg.result.payload) continue;
         const payload = msg.result.payload as EmailPart;
 
         const headers = payload.headers || [];
@@ -687,46 +776,46 @@ export const fetchGmailMessages = async (
           fromEmail = fromMatch[2].trim();
         }
 
+        // Parse the To header similar to From header
+        let toName = toHeader;
+        let toEmail = toHeader;
+        const toMatch = toHeader.match(/(.*)<(.*)>/);
+        if (toMatch && toMatch.length === 3) {
+          toName = toMatch[1].trim();
+          toEmail = toMatch[2].trim();
+        }
+
         let preview = msg.result.snippet ? decodeHtmlEntities(msg.result.snippet) : '';
         // For inbox list view, use snippet as body to avoid expensive body processing
         let body = preview;
 
-        // Process inline images and replace CID references with data URIs
-        // NOTE: Skip inline image processing for inbox list view for performance
-        // Images will be processed when the email is actually opened
-        // if (body) {
-        //   try {
-        //     body = await processInlineImages(message.id, body, payload);
-        //   } catch (error) {
-        //     console.warn(`Failed to process inline images for message ${message.id}:`, error);
-        //     // Continue with original body if inline image processing fails
-        //   }
-        // }
-
         // Skip attachment processing for inbox list view (metadata format doesn't include payload)
-        // Attachments will be processed when the email is actually opened
         const attachments: NonNullable<Email['attachments']> = [];
 
-        return {
+        emails.push({
           id: message.id,
           from: { name: fromName, email: fromEmail },
-          to: [{ name: 'Me', email: toHeader }],
+          to: [{ name: toName, email: toEmail }],
           subject: subject,
           body: body,
           preview: preview,
           isRead: !msg.result.labelIds?.includes('UNREAD'),
-          isImportant: msg.result.labelIds?.includes('STARRED'),
+          isImportant: msg.result.labelIds?.includes('IMPORTANT'),
           date: format(new Date(dateHeader), "yyyy-MM-dd'T'HH:mm:ss"),
           attachments: attachments.length > 0 ? attachments : undefined,
           threadId: msg.result.threadId
-        } as Email;
-      })
-    );
+        } as Email);
 
-    const validEmails = emails.filter((email): email is Email => email !== null);
+        // Add shorter delay between individual message fetches for speed
+        await new Promise(resolve => setTimeout(resolve, 25));
+      } catch (messageError) {
+        console.warn(`Failed to fetch message ${message.id}:`, messageError);
+        // Continue with other messages if one fails
+      }
+    }
 
     return {
-      emails: validEmails,
+      emails: emails,
       nextPageToken: response.result.nextPageToken,
       resultSizeEstimate: response.result.resultSizeEstimate || 0
     };
@@ -775,6 +864,15 @@ export const fetchGmailMessageById = async (id: string): Promise<Email | undefin
       fromEmail = fromMatch[2].trim();
     }
 
+    // Parse the To header similar to From header
+    let toName = toHeader;
+    let toEmail = toHeader;
+    const toMatch = toHeader.match(/(.*)<(.*)>/);
+    if (toMatch && toMatch.length === 3) {
+      toName = toMatch[1].trim();
+      toEmail = toMatch[2].trim();
+    }
+
     let preview = msg.result.snippet ? decodeHtmlEntities(msg.result.snippet) : '';
     let body = '';
 
@@ -783,6 +881,17 @@ export const fetchGmailMessageById = async (id: string): Promise<Email | undefin
     if (bodyPart) {
       console.log(`Body part found, type: ${bodyPart.mimeType}`);
       body = extractTextFromPart(bodyPart);
+      
+      // Check for promotional email issues specifically
+      if (isPromotionalEmail(headers, body)) {
+        console.log('Promotional email detected - applying special handling');
+        
+        // If body has repeated characters or styling issues, try alternative approach
+        if (body.match(/([a-zA-Z])\1{8,}/) || body.includes('@font-face')) {
+          console.log('Detected styling corruption in promotional email, trying cleanup...');
+          body = cleanPromotionalHTML(body);
+        }
+      }
       
       if (!body || body.length < 20) {
         console.warn('Body part found but content is empty or very short, trying alternate parsing approach');
@@ -805,7 +914,14 @@ export const fetchGmailMessageById = async (id: string): Promise<Email | undefin
         
         if (htmlParts.length > 0) {
           console.log('Found HTML parts via alternate approach, trying to decode...');
-          body = htmlParts.map(p => extractTextFromPart(p)).join('<hr>');
+          let alternateBody = htmlParts.map(p => extractTextFromPart(p)).join('<hr>');
+          
+          // Apply promotional cleaning to alternate approach as well
+          if (isPromotionalEmail(headers, alternateBody)) {
+            alternateBody = cleanPromotionalHTML(alternateBody);
+          }
+          
+          body = alternateBody;
         } else if (textParts.length > 0) {
           console.log('Found text parts via alternate approach, trying to decode...');
           body = textParts.map(p => extractTextFromPart(p)).join('<hr>');
@@ -876,12 +992,12 @@ export const fetchGmailMessageById = async (id: string): Promise<Email | undefin
     return {
       id: id,
       from: { name: fromName, email: fromEmail },
-      to: [{ name: 'Me', email: toHeader }],
+      to: [{ name: toName, email: toEmail }],
       subject: subject,
       body: body,
       preview: preview,
       isRead: !msg.result.labelIds?.includes('UNREAD'),
-      isImportant: msg.result.labelIds?.includes('STARRED'),
+      isImportant: msg.result.labelIds?.includes('IMPORTANT'),
       date: format(new Date(dateHeader), "yyyy-MM-dd'T'HH:mm:ss"),
       attachments: attachments.length > 0 ? attachments : undefined,
       threadId: msg.result.threadId
@@ -2307,7 +2423,7 @@ export const markGmailMessageAsStarred = async (messageId: string): Promise<void
       userId: 'me',
       id: messageId,
       resource: {
-        addLabelIds: ['STARRED']
+        addLabelIds: ['IMPORTANT']
       }
     });
 
@@ -2333,7 +2449,7 @@ export const markGmailMessageAsUnstarred = async (messageId: string): Promise<vo
       userId: 'me',
       id: messageId,
       resource: {
-        removeLabelIds: ['STARRED']
+        removeLabelIds: ['IMPORTANT']
       }
     });
 
@@ -2393,21 +2509,82 @@ export const getGmailUserProfile = async (): Promise<{ name: string; email: stri
 };
 
 /**
+ * Test function to verify People API connectivity
+ * Can be called from browser console: window.testPeopleAPI()
+ */
+export const testPeopleAPI = async (): Promise<void> => {
+  console.log('=== Testing People API ===');
+  
+  try {
+    // Check basic authentication
+    console.log('1. Checking Gmail sign-in status:', isGmailSignedIn());
+    
+    if (!isGmailSignedIn()) {
+      console.error('Not signed in to Gmail - cannot test People API');
+      return;
+    }
+    
+    // Check if gapi is available
+    console.log('2. Checking gapi availability:', !!window.gapi);
+    console.log('3. Checking gapi.client availability:', !!window.gapi?.client);
+    
+    // List all available APIs
+    console.log('4. Available APIs:', Object.keys(window.gapi?.client || {}));
+    
+    // Check if People API is available
+    console.log('5. Checking People API availability:', !!window.gapi?.client?.people);
+    
+    if (window.gapi?.client?.people) {
+      console.log('6. People API object:', window.gapi.client.people);
+      console.log('7. People connections method available:', 
+        !!window.gapi.client.people.people?.connections?.list);
+    }
+    
+    // Test People API calls
+    console.log('8. Testing fetchPeopleConnections...');
+    const peopleConnections = await fetchPeopleConnections();
+    console.log('9. People connections result:', peopleConnections);
+    
+    console.log('10. Testing fetchOtherContacts...');
+    const otherContacts = await fetchOtherContacts();
+    console.log('11. Other contacts result:', otherContacts);
+    
+    console.log('=== People API Test Complete ===');
+    console.log(`Results: ${peopleConnections.length} people connections, ${otherContacts.length} other contacts`);
+    
+  } catch (error) {
+    console.error('=== People API Test Failed ===');
+    console.error('Error:', error);
+  }
+};
+
+// Make it available globally for testing
+if (typeof window !== 'undefined') {
+  (window as any).testPeopleAPI = testPeopleAPI;
+}
+
+/**
  * Fetch frequently contacted people and my contacts from Google People API
  */
 export const fetchPeopleConnections = async (): Promise<any[]> => {
   try {
     if (!isGmailSignedIn()) {
+      console.warn('fetchPeopleConnections: Not signed in to Gmail');
       throw new Error('Not signed in to Gmail');
     }
 
+    console.log('fetchPeopleConnections: Starting to fetch...');
+    console.log('fetchPeopleConnections: gapi.client available:', !!window.gapi?.client);
+    console.log('fetchPeopleConnections: people API available:', !!window.gapi?.client?.people);
+
     // Check if People API is available
     if (!window.gapi?.client?.people) {
-      console.warn('People API not available - this is normal and contacts will still work');
+      console.warn('fetchPeopleConnections: People API not available - checking what is available');
+      console.log('Available APIs:', Object.keys(window.gapi?.client || {}));
       return [];
     }
 
-    console.log('Fetching people connections...');
+    console.log('fetchPeopleConnections: Calling People API...');
     
     const response = await window.gapi.client.people.people.connections.list({
       resourceName: 'people/me',
@@ -2416,9 +2593,13 @@ export const fetchPeopleConnections = async (): Promise<any[]> => {
       personFields: 'names,emailAddresses,photos,metadata'
     });
 
-    return response.result?.connections || [];
+    console.log('fetchPeopleConnections: API response received:', response);
+    const connections = response.result?.connections || [];
+    console.log(`fetchPeopleConnections: Found ${connections.length} connections`);
+    
+    return connections;
   } catch (error) {
-    console.error('Error fetching people connections:', error);
+    console.error('fetchPeopleConnections: Error fetching people connections:', error);
     return []; // Return empty array instead of throwing
   }
 };
@@ -2429,10 +2610,11 @@ export const fetchPeopleConnections = async (): Promise<any[]> => {
 export const fetchOtherContacts = async (): Promise<any[]> => {
   try {
     if (!isGmailSignedIn()) {
+      console.warn('fetchOtherContacts: Not signed in to Gmail');
       throw new Error('Not signed in to Gmail');
     }
 
-    console.log('Fetching other contacts...');
+    console.log('fetchOtherContacts: Starting to fetch...');
     
     const response = await window.gapi.client.request({
       path: 'https://people.googleapis.com/v1/otherContacts',
@@ -2442,10 +2624,21 @@ export const fetchOtherContacts = async (): Promise<any[]> => {
       }
     });
 
-    return response.result.otherContacts || [];
+    console.log('fetchOtherContacts: API response received:', response);
+    const otherContacts = response.result.otherContacts || [];
+    console.log(`fetchOtherContacts: Found ${otherContacts.length} other contacts`);
+
+    return otherContacts;
   } catch (error) {
-    console.error('Error fetching other contacts:', error);
-    throw error;
+    console.error('fetchOtherContacts: Error fetching other contacts:', error);
+    if (error instanceof Error) {
+      console.error('fetchOtherContacts: Error details:', {
+        message: error.message,
+        status: (error as any).status,
+        details: (error as any).result
+      });
+    }
+    return []; // Return empty array instead of throwing for this function too
   }
 };
 
@@ -2529,6 +2722,67 @@ export const deleteGmailFilter = async (filterId: string): Promise<void> => {
     });
   } catch (error) {
     console.error('Error deleting Gmail filter:', error);
+    throw error;
+  }
+};
+
+/**
+ * Permanently delete all messages in trash (empty trash)
+ */
+export const emptyGmailTrash = async (): Promise<void> => {
+  try {
+    if (!isGmailSignedIn()) {
+      throw new Error('Not signed in to Gmail');
+    }
+
+    console.log('Emptying Gmail trash...');
+
+    // First, get all messages in trash
+    const trashResponse = await window.gapi.client.gmail.users.messages.list({
+      userId: 'me',
+      q: 'in:trash',
+      maxResults: 500 // Process in batches
+    });
+
+    const messages = trashResponse.result.messages || [];
+    
+    if (messages.length === 0) {
+      console.log('Trash is already empty');
+      return;
+    }
+
+    console.log(`Found ${messages.length} messages in trash. Permanently deleting...`);
+
+    // Delete messages in batches to avoid API limits
+    const batchSize = 100;
+    for (let i = 0; i < messages.length; i += batchSize) {
+      const batch = messages.slice(i, i + batchSize);
+      
+      // Use Promise.allSettled to handle partial failures gracefully
+      const deletePromises = batch.map(async (message: any) => {
+        try {
+          await window.gapi.client.request({
+            path: `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}`,
+            method: 'DELETE'
+          });
+          return { success: true, messageId: message.id };
+        } catch (error: any) {
+          console.warn(`Failed to delete message ${message.id}:`, error);
+          return { success: false, messageId: message.id, error };
+        }
+      });
+
+      await Promise.allSettled(deletePromises);
+      
+      // Add a small delay between batches to be respectful to the API
+      if (i + batchSize < messages.length) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+
+    console.log(`✅ Successfully emptied trash - deleted ${messages.length} messages`);
+  } catch (error) {
+    console.error('Error emptying Gmail trash:', error);
     throw error;
   }
 };

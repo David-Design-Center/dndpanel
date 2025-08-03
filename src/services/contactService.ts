@@ -21,23 +21,26 @@ export class ContactService {
    */
   async loadContacts(): Promise<Contact[]> {
     if (this.isLoaded) {
+      console.log('ContactService: Contacts already loaded, returning cached data');
       return this.contacts;
     }
 
     try {
-      console.log('Loading contacts from Google People API...');
+      console.log('ContactService: Loading contacts from Google People API...');
       
       // Fetch both types of contacts
       const [peopleConnections, otherContacts] = await Promise.all([
         fetchPeopleConnections().catch(err => {
-          console.warn('Failed to fetch people connections:', err);
+          console.warn('ContactService: Failed to fetch people connections:', err);
           return [];
         }),
         fetchOtherContacts().catch(err => {
-          console.warn('Failed to fetch other contacts:', err);
+          console.warn('ContactService: Failed to fetch other contacts:', err);
           return [];
         })
       ]);
+
+      console.log(`ContactService: Raw data - people connections: ${peopleConnections.length}, other contacts: ${otherContacts.length}`);
 
       // Process and combine contacts
       const combinedContacts = this.processContacts(peopleConnections, otherContacts);
@@ -45,10 +48,12 @@ export class ContactService {
       this.contacts = combinedContacts;
       this.isLoaded = true;
       
-      console.log(`Loaded ${combinedContacts.length} contacts`);
+      console.log(`ContactService: Successfully loaded ${combinedContacts.length} total contacts`);
       return combinedContacts;
     } catch (error) {
-      console.error('Error loading contacts:', error);
+      console.error('ContactService: Error loading contacts:', error);
+      this.contacts = [];
+      this.isLoaded = false;
       throw error;
     }
   }
@@ -197,6 +202,13 @@ export class ContactService {
    */
   getContacts(): Contact[] {
     return this.contacts;
+  }
+
+  /**
+   * Check if contacts are already loaded
+   */
+  isContactsLoaded(): boolean {
+    return this.isLoaded && this.contacts.length > 0;
   }
 
   /**

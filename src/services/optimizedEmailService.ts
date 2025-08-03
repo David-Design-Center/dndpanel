@@ -65,7 +65,7 @@ export class OptimizedEmailService {  /**
       body: processed.body,
       preview: processed.snippet,
       isRead: !processed.labels.includes('UNREAD'),
-      isImportant: processed.labels.includes('STARRED'),
+      isImportant: processed.labels.includes('IMPORTANT'),
       date: processed.date,
       attachments: processed.attachments.length > 0 ? processed.attachments.map(att => ({
         name: att.filename,

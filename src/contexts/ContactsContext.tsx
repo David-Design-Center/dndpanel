@@ -55,21 +55,26 @@ export const ContactsProvider: React.FC<ContactsProviderProps> = ({ children }) 
       return;
     }
 
+    // Prevent multiple simultaneous loads
     if (isLoading) {
       return;
     }
 
     setIsLoading(true);
+    setError(null);
     try {
-      const contactsData = await contactService.getContacts();
+      devLog.info('ContactsContext: Loading contacts from API...');
+      const contactsData = await contactService.loadContacts();
       setContacts(contactsData);
+      devLog.info(`ContactsContext: Loaded ${contactsData.length} contacts`);
     } catch (error) {
       console.error('Error loading contacts:', error);
+      setError(error instanceof Error ? error.message : 'Failed to load contacts');
       setContacts([]);
     } finally {
       setIsLoading(false);
     }
-  }, [user, currentProfile, authFlowCompleted, isLoading, location]);
+  }, [user, currentProfile, authFlowCompleted, location]); // Removed isLoading from dependencies
 
   const refreshContacts = useCallback(async () => {
     contactService.clearContacts();
@@ -89,10 +94,12 @@ export const ContactsProvider: React.FC<ContactsProviderProps> = ({ children }) 
 
   // Load contacts whenever user, profile, and Gmail sign-in are available
   useEffect(() => {
-    if (!isLoading && !error && user && currentProfile && isGmailSignedIn) {
+    // Only load if we don't have contacts yet, not already loading, no error, and all required conditions are met
+    if (!contactService.isContactsLoaded() && !isLoading && !error && user && currentProfile && isGmailSignedIn) {
+      devLog.info('ContactsContext: Triggering initial contact load');
       loadContacts();
     }
-  }, [isLoading, error, loadContacts, user, currentProfile, isGmailSignedIn]);
+  }, [user, currentProfile, isGmailSignedIn, isLoading, error, loadContacts]);
 
   // Listen for profile switches and clear cache
   useEffect(() => {

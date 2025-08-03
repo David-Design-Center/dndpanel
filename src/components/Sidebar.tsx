@@ -347,8 +347,8 @@ function Sidebar({ onCompose }: SidebarProps) {
           </div>
         </nav>
         
-        {/* Out of Office Toggle - For David and Marti */}
-        {(currentProfile?.name === 'David' || currentProfile?.name === 'Marti') && (
+        {/* Out of Office Toggle - For all users */}
+        {(currentProfile?.name === 'David' || currentProfile?.name === 'Marti' || currentProfile?.name === 'Natalia' || currentProfile?.name === 'Dimitry') && (
           isSidebarCollapsed ? (
             <div className="p-4">
               <Tooltip delayDuration={300}>

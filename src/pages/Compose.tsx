@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { X, Paperclip, Minimize, Maximize, CheckCircle } from 'lucide-react';
+import { X, Paperclip, Minimize, Maximize, CheckCircle, Plus } from 'lucide-react';
 import { sendEmail, getThreadEmails, clearEmailCache, saveDraft, deleteDraft } from '../services/emailService';
 import { Email, Contact } from '../types';
 import { getProfileInitial } from '../lib/utils';
@@ -39,8 +39,13 @@ function Compose() {
   const { currentProfile } = useProfile();
   const { searchContacts } = useContacts();
   const [to, setTo] = useState('');
+  const [ccRecipients, setCcRecipients] = useState<string[]>(['david.v@dnddesigncenter.com']); // Hardcoded first CC recipient
+  const [showCc, setShowCc] = useState(true); // Show CC by default since we have hardcoded recipient
+  const [ccInput, setCcInput] = useState('');
   const [showContactDropdown, setShowContactDropdown] = useState(false);
+  const [showCcContactDropdown, setShowCcContactDropdown] = useState(false);
   const [filteredContacts, setFilteredContacts] = useState<Contact[]>([]);
+  const [filteredCcContacts, setFilteredCcContacts] = useState<Contact[]>([]);
   const [subject, setSubject] = useState('');
   const [newBodyHtml, setNewBodyHtml] = useState(''); // User's editable message (now HTML)
   const [originalEmailHtml, setOriginalEmailHtml] = useState(''); // Pre-filled HTML content
@@ -112,6 +117,7 @@ function Compose() {
     if (location.state) {
       const { 
         to: replyTo, 
+        cc: replyCC,
         subject: replySubject, 
         body: plainTextBody,
         originalBody: htmlBody,
@@ -125,6 +131,16 @@ function Compose() {
       if (replyTo) setTo(replyTo);
       if (replySubject) setSubject(replySubject);
       
+      // Handle CC recipients from reply all
+      if (replyCC) {
+        const incomingCcRecipients = replyCC.split(',').map((email: string) => email.trim()).filter((email: string) => email);
+        // Add to existing CC recipients, but avoid duplicates
+        setCcRecipients(prev => {
+          const combined = [...prev, ...incomingCcRecipients];
+          return Array.from(new Set(combined)); // Remove duplicates
+        });
+      }
+      
       // If this is a draft being edited, set the draft ID
       if (isDraft && draftId) {
         setCurrentDraftId(draftId);
@@ -134,8 +150,13 @@ function Compose() {
       // Set the user's editable text
       if (plainTextBody) {
         if (isDraft) {
-          // For drafts, the body is already plain text - use it directly
-          setNewBodyHtml(convertPlainTextToHtml(plainTextBody));
+          // For drafts, the body might already be HTML or plain text
+          // If it contains HTML tags, use it directly, otherwise convert to HTML
+          if (plainTextBody.includes('<') && plainTextBody.includes('>')) {
+            setNewBodyHtml(plainTextBody);
+          } else {
+            setNewBodyHtml(convertPlainTextToHtml(plainTextBody));
+          }
         } else {
           // For replies, convert plain text to HTML for rich text editor
           const htmlBody = convertPlainTextToHtml(plainTextBody);
@@ -259,6 +280,9 @@ function Compose() {
         finalBodyHtml = '<div style="font-family: Arial, sans-serif; color: #333;"></div>';
       }
 
+      // Prepare CC recipients string for saving
+      const ccRecipientsString = ccRecipients.filter(email => email.trim()).join(',');
+
       const result = await saveDraft({
         from: {
           name: 'Me',
@@ -272,7 +296,7 @@ function Compose() {
         ],
         subject,
         body: finalBodyHtml
-      }, processedAttachments, currentDraftId);
+      }, processedAttachments, currentDraftId, ccRecipientsString);
 
       if (result.success) {
         setCurrentDraftId(result.draftId);
@@ -316,6 +340,16 @@ function Compose() {
     
     if (!to) {
       alert('Please specify at least one recipient');
+      return;
+    }
+
+    // Validate CC recipients (email format)
+    const invalidCcEmails = ccRecipients.filter(email => 
+      email.trim() && !email.includes('@')
+    );
+    
+    if (invalidCcEmails.length > 0) {
+      alert(`Invalid CC email addresses: ${invalidCcEmails.join(', ')}`);
       return;
     }
     
@@ -390,6 +424,9 @@ function Compose() {
         finalBodyHtml = '<div style="font-family: Arial, sans-serif; color: #333;"></div>';
       }
       
+      // Prepare CC recipients string (filter out empty values)
+      const ccRecipientsString = ccRecipients.filter(email => email.trim()).join(',');
+
       await sendEmail({
         from: {
           name: 'Me',
@@ -403,7 +440,7 @@ function Compose() {
         ],
         subject,
         body: finalBodyHtml
-      }, processedAttachments, currentThreadId);
+      }, processedAttachments, currentThreadId, ccRecipientsString);
       
       // Delete the draft if it exists (since we just sent the email)
       if (currentDraftId) {
@@ -542,6 +579,64 @@ function Compose() {
     }, 150);
   };
 
+  // CC input handlers
+  const handleCcInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setCcInput(value);
+
+    // Update filtered contacts based on input
+    const contacts = searchContacts(value, 5);
+    setFilteredCcContacts(contacts);
+    const shouldShow = value.trim().length > 0;
+    setShowCcContactDropdown(shouldShow);
+  };
+
+  const handleCcContactSelect = (contact: Contact) => {
+    // Add to CC recipients if not already present
+    if (!ccRecipients.includes(contact.email)) {
+      setCcRecipients(prev => [...prev, contact.email]);
+    }
+    setCcInput('');
+    setShowCcContactDropdown(false);
+    setFilteredCcContacts([]);
+  };
+
+  const handleCcInputFocus = () => {
+    if (ccInput.trim().length > 0) {
+      const contacts = searchContacts(ccInput, 5);
+      setFilteredCcContacts(contacts);
+      setShowCcContactDropdown(contacts.length > 0);
+    }
+  };
+
+  const handleCcInputBlur = () => {
+    setTimeout(() => {
+      setShowCcContactDropdown(false);
+    }, 150);
+  };
+
+  const handleCcInputKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && ccInput.trim()) {
+      e.preventDefault();
+      // Add email if it's valid and not already in the list
+      const email = ccInput.trim();
+      if (email && !ccRecipients.includes(email) && email.includes('@')) {
+        setCcRecipients(prev => [...prev, email]);
+        setCcInput('');
+      }
+    }
+  };
+
+  const removeCcRecipient = (email: string) => {
+    // Don't allow removing the hardcoded email
+    if (email === 'david.v@dnddesigncenter.com') return;
+    setCcRecipients(prev => prev.filter(recipient => recipient !== email));
+  };
+
+  const addCcRecipient = () => {
+    setCcRecipients(prev => [...prev, '']);
+  };
+
   // Function to render attachment preview
   const renderAttachmentPreview = (attachment: AttachmentItem, index: number) => {
     // Create a compatible attachment object for FileThumbnail
@@ -560,6 +655,7 @@ function Compose() {
           <FileThumbnail
             attachment={compatibleAttachment}
             emailId="compose" // Dummy emailId for compose mode
+            userEmail="me@example.com" // Add userEmail prop
             size="small"
             showPreviewButton={true}
             onPreviewClick={() => handleAttachmentPreview(attachment)}
@@ -650,12 +746,14 @@ function Compose() {
               </div>
               <div className="flex space-x-2">
                 <button 
+                  type="button"
                   onClick={() => setIsMinimized(true)}
                   className="text-gray-500 hover:text-gray-700"
                 >
                   <Minimize size={18} />
                 </button>
                 <button 
+                  type="button"
                   onClick={handleCancel}
                   className="text-gray-500 hover:text-gray-700"
                 >
@@ -722,6 +820,114 @@ function Compose() {
                   </div>
                 )}
               </div>
+              
+              {/* CC Section */}
+              {showCc && (
+                <div className="relative">
+                  <div className="flex items-start border-b border-gray-200 py-2">
+                    <span className="w-20 text-gray-500 text-sm pt-2">CC:</span>
+                    <div className="flex-1">
+                      {/* Display existing CC recipients */}
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        {ccRecipients.map((email, index) => (
+                          <div key={index} className="flex items-center bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm">
+                            <span className={email === 'david.v@dnddesigncenter.com' ? 'text-blue-600 font-medium' : ''}>
+                              {email === 'david.v@dnddesigncenter.com' ? email + ' (default)' : email}
+                            </span>
+                            {email !== 'david.v@dnddesigncenter.com' && (
+                              <button
+                                type="button"
+                                onClick={() => removeCcRecipient(email)}
+                                className="ml-1 text-blue-600 hover:text-blue-800"
+                              >
+                                <X size={14} />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      
+                      {/* CC Input field */}
+                      <input
+                        type="text"
+                        value={ccInput}
+                        onChange={handleCcInputChange}
+                        onFocus={handleCcInputFocus}
+                        onBlur={handleCcInputBlur}
+                        onKeyPress={handleCcInputKeyPress}
+                        className="w-full outline-none text-sm"
+                        placeholder="Add CC recipients..."
+                      />
+                    </div>
+                    
+                    {/* Add CC button */}
+                    <button
+                      type="button"
+                      onClick={addCcRecipient}
+                      className="ml-2 p-1 text-blue-600 hover:text-blue-800 rounded"
+                      title="Add another CC recipient"
+                    >
+                      <Plus size={16} />
+                    </button>
+                  </div>
+                  
+                  {/* CC Contact dropdown */}
+                  {showCcContactDropdown && (
+                    <div className="absolute top-full left-0 right-0 z-[998] bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                      {filteredCcContacts.length > 0 ? (
+                        filteredCcContacts.map((contact, index) => (
+                          <div
+                            key={`cc-${contact.email}-${index}`}
+                            onClick={() => handleCcContactSelect(contact)}
+                            className="flex items-center px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                          >
+                            {contact.photoUrl ? (
+                              <img
+                                src={contact.photoUrl}
+                                alt={contact.name}
+                                className="w-8 h-8 rounded-full mr-3 flex-shrink-0"
+                              />
+                            ) : (
+                              <div className="w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center text-sm font-medium mr-3 flex-shrink-0">
+                                {getProfileInitial(contact.name, contact.email)}
+                              </div>
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-medium text-gray-900 truncate">
+                                  {contact.name}
+                                </span>
+                                {contact.isFrequentlyContacted && (
+                                  <span className="px-2 py-1 text-xs bg-green-100 text-green-700 rounded-full flex-shrink-0">
+                                    Frequent
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-sm text-gray-500 truncate">{contact.email}</p>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="px-4 py-3 text-gray-500 text-sm">No contacts found</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+              
+              {/* Show/Hide CC toggle */}
+              {!showCc && (
+                <div className="flex items-center">
+                  <button
+                    type="button"
+                    onClick={() => setShowCc(true)}
+                    className="text-blue-600 hover:text-blue-800 text-sm flex items-center gap-1"
+                  >
+                    <Plus size={14} />
+                    Add CC
+                  </button>
+                </div>
+              )}
               
               <div className="flex items-center border-b border-gray-200 py-2">
                 <span className="w-20 text-gray-500 text-sm">Subject:</span>
@@ -1004,6 +1210,7 @@ function Compose() {
                                 
                                 {/* Download button */}
                                 <button 
+                                  type="button"
                                   onClick={() => {
                                     // Handle download - for now just log, but you could implement download logic here
                                     console.log('Download attachment:', attachment.name);

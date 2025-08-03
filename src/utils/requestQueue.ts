@@ -13,9 +13,9 @@ interface QueuedRequest {
 class RequestQueue {
   private queue: QueuedRequest[] = [];
   private processing = false;
-  private maxConcurrent = 2; // Limit concurrent requests to avoid rate limits
+  private maxConcurrent = 5; // More aggressive for speed
   private activeRequests = 0;
-  private requestDelay = 250; // Minimum delay between requests in ms
+  private requestDelay = 50; // Even faster - 50ms delay
 
   /**
    * Add a request to the queue
@@ -61,15 +61,28 @@ class RequestQueue {
   }
 
   /**
-   * Execute a single request with error handling
+   * Execute a single request with error handling and retry logic
    */
-  private async executeRequest(queuedRequest: QueuedRequest) {
+  private async executeRequest(queuedRequest: QueuedRequest, retryCount = 0) {
+    const maxRetries = 3;
+    
     try {
-      console.log(`🔄 Executing queued request: ${queuedRequest.id}`);
+      console.log(`🔄 Executing queued request: ${queuedRequest.id}${retryCount > 0 ? ` (retry ${retryCount})` : ''}`);
       const result = await queuedRequest.request();
       queuedRequest.resolve(result);
       console.log(`✅ Completed queued request: ${queuedRequest.id}`);
-    } catch (error) {
+    } catch (error: any) {
+      // Check if it's a rate limit error (429) and we haven't exceeded max retries
+      if (error?.status === 429 && retryCount < maxRetries) {
+        const backoffDelay = Math.pow(2, retryCount) * 1000; // Exponential backoff: 1s, 2s, 4s
+        console.log(`⏳ Rate limit hit for ${queuedRequest.id}, retrying in ${backoffDelay}ms (attempt ${retryCount + 1}/${maxRetries})`);
+        
+        setTimeout(() => {
+          this.executeRequest(queuedRequest, retryCount + 1);
+        }, backoffDelay);
+        return; // Don't resolve/reject yet, let the retry handle it
+      }
+      
       console.error(`❌ Failed queued request: ${queuedRequest.id}`, error);
       queuedRequest.reject(error);
     } finally {

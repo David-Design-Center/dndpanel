@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useProfile } from '../../contexts/ProfileContext';
 import HeaderBar from './components/HeaderBar';
 import NewOrderButton from './components/NewOrderButton';
 import OrdersSpreadsheet from './components/OrdersSpreadsheet';
@@ -43,6 +44,7 @@ const AUTO_REFRESH_INTERVAL = 12 * 60 * 60 * 1000;
 function Orders() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { currentProfile } = useProfile();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [filteredInvoices, setFilteredInvoices] = useState<Invoice[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -70,11 +72,29 @@ function Orders() {
       setIsRefreshing(true);
       setError(null);
 
-      // Fetch invoices from the database
-      const { data: invoiceData, error: invoiceError } = await supabase
+      // Build query based on user role
+      let query = supabase
         .from('invoices')
-        .select('*')
-        .order('created_at', { ascending: false });
+        .select('*');
+
+      // Role-based filtering
+      if (currentProfile?.name === 'David') {
+        // David (admin) can see all orders and invoices
+        query = query.order('created_at', { ascending: false });
+      } else if (currentProfile?.name && ['Marti', 'Natalia', 'Dimitry'].includes(currentProfile.name)) {
+        // Staff can only see their own orders and invoices
+        query = query
+          .eq('created_by', currentProfile.name)
+          .order('created_at', { ascending: false });
+      } else {
+        // If no valid profile, return empty array
+        setInvoices([]);
+        setFilteredInvoices([]);
+        setLastRefreshed(new Date());
+        return;
+      }
+
+      const { data: invoiceData, error: invoiceError } = await query;
 
       if (invoiceError) {
         throw invoiceError;
@@ -98,7 +118,7 @@ function Orders() {
   const handleRefreshOrders = useCallback(async (forceRefresh: boolean = false) => {
     console.log(`handleRefreshOrders starting, force refresh: ${forceRefresh}`);
     await fetchInvoices();
-  }, []);
+  }, [currentProfile?.name]); // Add currentProfile dependency
 
   // Handle search functionality
   const handleSearch = useCallback(async (term: string) => {

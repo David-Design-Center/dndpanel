@@ -17,7 +17,8 @@ import {
   applyGmailLabels,
   getGmailUserProfile,
   saveGmailDraft,
-  deleteGmailDraft
+  deleteGmailDraft,
+  emptyGmailTrash
 } from '../integrations/gapiService';
 import { queueGmailRequest } from '../utils/requestQueue';
 import { authCoordinator } from '../utils/authCoordinator';
@@ -522,19 +523,33 @@ export const getUnreadEmails = async (forceRefresh = false): Promise<Email[]> =>
   return response.emails;
 };
 
-export const getSentEmails = async (forceRefresh = false): Promise<Email[]> => {
-  const response = await getEmails(forceRefresh, 'in:sent');
-  return response.emails;
+export const getSentEmails = async (
+  forceRefresh = false, 
+  maxResults = 20, 
+  pageToken?: string
+): Promise<PaginatedEmailServiceResponse> => {
+  return getEmails(forceRefresh, 'in:sent', maxResults, pageToken);
 };
 
 export const getDraftEmails = async (forceRefresh = false): Promise<Email[]> => {
-  const response = await getEmails(forceRefresh, 'in:drafts');
+  const response = await getEmails(forceRefresh, 'in:draft');
   return response.emails;
 };
 
-export const getTrashEmails = async (forceRefresh = false): Promise<Email[]> => {
-  const response = await getEmails(forceRefresh, 'in:trash');
-  return response.emails;
+export const getTrashEmails = async (
+  forceRefresh = false, 
+  maxResults = 20, 
+  pageToken?: string
+): Promise<PaginatedEmailServiceResponse> => {
+  return getEmails(forceRefresh, 'in:trash', maxResults, pageToken);
+};
+
+export const getImportantEmails = async (
+  forceRefresh = false, 
+  maxResults = 20, 
+  pageToken?: string
+): Promise<PaginatedEmailServiceResponse> => {
+  return getEmails(forceRefresh, 'is:important', maxResults, pageToken);
 };
 
 export const getLabelEmails = async (
@@ -647,18 +662,19 @@ export const getThreadEmails = async (threadId: string): Promise<Email[]> => {
 export const saveDraft = async (
   email: Omit<Email, 'id' | 'date' | 'isRead' | 'preview'>, 
   attachments?: Array<{ name: string; mimeType: string; data: string; cid?: string }>,
-  draftId?: string // For updating existing drafts
+  draftId?: string, // For updating existing drafts
+  ccRecipients?: string
 ): Promise<{success: boolean; draftId?: string}> => {
   try {
     // Try to save via Gmail
     const to = email.to.map(recipient => recipient.email).join(',');
-    const cc = "";
+    const cc = ccRecipients || "";
     
     const result = await saveGmailDraft(to, cc, email.subject, email.body, attachments, draftId);
     
     if (result.success) {
       // Invalidate the drafts cache to ensure the saved draft appears on next refresh
-      if (emailCache.list && emailCache.list.query.includes('in:drafts')) {
+      if (emailCache.list && emailCache.list.query.includes('in:draft')) {
         emailCache.list.timestamp = 0;
       }
       return { 
@@ -683,7 +699,7 @@ export const deleteDraft = async (draftId: string): Promise<void> => {
     await deleteGmailDraft(draftId);
     
     // Invalidate the drafts cache to ensure the deleted draft is removed immediately
-    if (emailCache.list && emailCache.list.query.includes('in:drafts')) {
+    if (emailCache.list && emailCache.list.query.includes('in:draft')) {
       emailCache.list.timestamp = 0;
     }
     
@@ -729,13 +745,14 @@ export const getAttachmentDownloadUrl = async (
 export const sendEmail = async (
   email: Omit<Email, 'id' | 'date' | 'isRead' | 'preview'>, 
   attachments?: Array<{ name: string; mimeType: string; data: string; cid?: string }>,
-  conversationThreadId?: string
+  conversationThreadId?: string,
+  ccRecipients?: string
 ): Promise<{success: boolean; threadId?: string}> => {
   try {
     // Try to send via Gmail
     const to = email.to.map(recipient => recipient.email).join(',');
-    // Add the hidden CC to all outgoing emails
-    const cc = "";
+    // Use provided CC recipients or empty string
+    const cc = ccRecipients || "";
     const result = await sendGmailMessage(to, cc, email.subject, email.body, attachments, conversationThreadId);
     
     if (result.success) {
@@ -978,5 +995,27 @@ export const markAsUnimportant = async (id: string): Promise<{success: boolean}>
   } catch (error) {
     console.error('Error marking email as unimportant:', error);
     return { success: false };
+  }
+};
+
+/**
+ * Empty trash - permanently delete all messages in trash
+ */
+export const emptyTrash = async (): Promise<void> => {
+  try {
+    console.log('🗑️ Emptying trash...');
+    
+    await emptyGmailTrash();
+    
+    // Clear relevant caches - specifically the inbox/all emails cache since trash affects overall counts
+    emailCache.list = undefined;
+    
+    // Clear all local storage caches that might contain trash emails
+    clearEmailCache();
+    
+    console.log('✅ Trash emptied successfully and caches cleared');
+  } catch (error) {
+    console.error('❌ Error emptying trash:', error);
+    throw error;
   }
 };

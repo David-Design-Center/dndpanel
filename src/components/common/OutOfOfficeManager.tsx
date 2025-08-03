@@ -52,8 +52,8 @@ function OutOfOfficeManager() {
     setMessage(defaultSettings.autoReplyMessage || '');
   };
 
-  // Don't show for profiles that don't support out-of-office
-  if (!currentProfile || !['David', 'Marti', 'Natalia', 'Dimitry'].includes(currentProfile.name)) {
+  // Show out-of-office manager for all authenticated profiles
+  if (!currentProfile) {
     return null;
   }
 

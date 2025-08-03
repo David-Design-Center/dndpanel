@@ -13,9 +13,10 @@ interface EmailListItemProps {
   onEmailUpdate?: (email: Email) => void;
   onEmailDelete?: (emailId: string) => void;
   isDraft?: boolean;
+  currentTab?: 'all' | 'unread' | 'sent' | 'drafts' | 'trash' | 'important';
 }
 
-function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEmailDelete, isDraft = false }: EmailListItemProps) {
+function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEmailDelete, isDraft = false, currentTab }: EmailListItemProps) {
   const [isToggling, setIsToggling] = useState(false);
   const [isTogglingImportance, setIsTogglingImportance] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -156,10 +157,17 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
     >
       <div className="flex items-start justify-between min-w-0">
         <div className="flex-1 min-w-0 mr-6 overflow-hidden">
-          {/* Sender Name */}
+          {/* Sender/Recipient Name */}
           <div className="flex items-center mb-1 min-w-0">
             <span className={`text-sm ${!email.isRead ? 'font-semibold text-gray-900' : 'font-medium text-gray-800'} truncate flex-1 min-w-0`}>
-              {email.from.name || email.from.email}
+              {currentTab === 'sent' 
+                ? (email.to && email.to.length > 0 
+                    ? (email.to[0].name && email.to[0].name !== 'Me' && email.to[0].name.trim() !== ''
+                        ? email.to[0].name 
+                        : email.to[0].email || 'Unknown recipient')
+                    : 'Unknown recipient')
+                : (email.from.name || email.from.email)
+              }
             </span>
             {!email.isRead && (
               <span className="w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0 ml-2"></span>

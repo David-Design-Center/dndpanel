@@ -292,7 +292,7 @@ export async function markMessageAsStarred(messageId: string): Promise<void> {
         {
           method: 'POST',
           body: JSON.stringify({
-            addLabelIds: ['STARRED']
+            addLabelIds: ['IMPORTANT']
           })
         }
       );
@@ -414,7 +414,7 @@ function convertGmailMessageToEmail(messageData: any): Email {
     body: body,
     preview: messageData.snippet || '',
     isRead: !messageData.labelIds?.includes('UNREAD'),
-    isImportant: messageData.labelIds?.includes('STARRED'),
+    isImportant: messageData.labelIds?.includes('IMPORTANT'),
     date: new Date(dateHeader).toISOString(),
     threadId: messageData.threadId
   } as Email;

@@ -45,8 +45,8 @@ function InvoicesList() {
         setLoading(true);
         setError(null);
 
-        // Fetch only invoices from the database (orders auto-generate invoices now)
-        const { data: invoiceData, error: invoiceError } = await supabase
+        // Build query based on user role
+        let query = supabase
           .from('invoices')
           .select(`
             id,
@@ -57,9 +57,28 @@ function InvoicesList() {
             balance_due,
             is_edited,
             original_invoice_id,
+            created_by,
             created_at
-          `)
-          .order('created_at', { ascending: false });
+          `);
+
+        // Role-based filtering
+        if (currentProfile?.name === 'David') {
+          // David (admin) can see all invoices
+          query = query.order('created_at', { ascending: false });
+        } else if (currentProfile?.name && ['Marti', 'Natalia', 'Dimitry'].includes(currentProfile.name)) {
+          // Staff can only see their own invoices
+          query = query
+            .eq('created_by', currentProfile.name)
+            .order('created_at', { ascending: false });
+        } else {
+          // If no valid profile, return empty array
+          setInvoices([]);
+          setFilteredInvoices([]);
+          setLoading(false);
+          return;
+        }
+
+        const { data: invoiceData, error: invoiceError } = await query;
 
         if (invoiceError) {
           throw invoiceError;
@@ -104,7 +123,7 @@ function InvoicesList() {
     };
 
     loadInvoices();
-  }, []);
+  }, [currentProfile?.name]); // Re-load when profile changes
 
   // Handle search functionality
   const handleSearch = async (term: string) => {

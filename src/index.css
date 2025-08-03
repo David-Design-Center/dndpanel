@@ -1303,6 +1303,36 @@ div[class*="flex"][class*="min-h-full"] {
   /* Internal scrolling allowed */
 }
 
+/* CRITICAL: Ensure email list containers can scroll WITHIN their panel */
+[data-panel] .bg-white.rounded-lg.shadow-sm .flex-1.overflow-y-auto,
+[data-panel] .bg-white.rounded-lg.shadow-sm .overflow-y-auto,
+[data-panel] .flex-1.overflow-y-auto.max-w-full {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  max-height: none !important;
+  /* This allows the email list to scroll within the inbox panel */
+}
+
+/* CRITICAL: Allow all children of scrollable containers to have normal overflow */
+[data-panel] .overflow-y-auto *,
+[data-panel] .flex-1.overflow-y-auto *,
+[data-panel] [class*="overflow-y-auto"] * {
+  overflow: visible !important;
+  text-overflow: clip !important;
+  white-space: normal !important;
+  /* Children of scrollable containers should not be truncated */
+}
+
+/* CRITICAL: Force email list scrolling to work properly */
+.email-list-container {
+  height: 0 !important;
+  flex: 1 1 0% !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  min-height: 0 !important;
+  max-height: none !important;
+}
+
 /* Ensure email list containers can scroll WITHIN their panel */
 [data-panel] .bg-white.rounded-lg.shadow-sm .flex-1.overflow-y-auto {
   overflow-y: auto !important;

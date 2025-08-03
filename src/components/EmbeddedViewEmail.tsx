@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Reply, Trash, Paperclip, Forward, ChevronDown, ChevronRight } from 'lucide-react';
+import { X, Reply, Trash, Paperclip, Forward, ChevronDown, ChevronRight, Users } from 'lucide-react';
 import { formatDistanceToNow, parseISO, format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 import { getEmailById, markEmailAsTrash, getThreadEmails } from '../services/emailService';
@@ -280,6 +280,46 @@ ${email.body}
         subject: subject,
         originalBody: forwardedBody,
         attachments: email.attachments // Include attachments when forwarding
+      } 
+    });
+  };
+
+  // Handle Reply All functionality
+  const handleReplyAll = () => {
+    if (!email) return;
+    
+    // Create a reply subject with "Re: " prefix if it doesn't already have it
+    const subject = email.subject.startsWith('Re: ') ? email.subject : `Re: ${email.subject}`;
+    
+    // Format the original email for the reply
+    const formattedDate = format(parseISO(email.date), 'PPpp');
+    const quotedBody = `
+<br><br>
+<div style="padding-left: 1em; margin-left: 1em; border-left: 2px solid #ccc;">
+  <p>On ${formattedDate}, ${email.from.name} <${email.from.email}> wrote:</p>
+  ${email.body}
+</div>
+`;
+    
+    // Collect all original recipients except the current user
+    const originalTo = email.to?.map(recipient => recipient.email) || [];
+    const allRecipients = [email.from.email, ...originalTo].filter(emailAddr => 
+      emailAddr !== 'me@example.com' && emailAddr !== 'david.v@dnddesigncenter.com'
+    );
+    
+    // Use the first recipient as "To" and the rest as CC
+    const toRecipient = allRecipients[0] || email.from.email;
+    const ccRecipients = allRecipients.slice(1);
+    
+    // Navigate to compose with prefilled data including CC recipients
+    navigate('/compose', { 
+      state: { 
+        to: toRecipient,
+        cc: ccRecipients.join(','), // Pass CC recipients as comma-separated string
+        subject: subject,
+        replyToId: email.id,
+        threadId: email.threadId,
+        originalBody: quotedBody
       } 
     });
   };
@@ -591,6 +631,13 @@ ${email.body}
             >
               <Reply size={14} className="mr-2" />
               Reply
+            </button>
+            <button 
+              onClick={handleReplyAll}
+              className="btn btn-secondary flex items-center text-sm px-3 py-2 flex-shrink-0"
+            >
+              <Users size={14} className="mr-2" />
+              Reply All
             </button>
             <button 
               onClick={handleForward}

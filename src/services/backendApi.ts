@@ -252,7 +252,7 @@ export const clearInvoiceByOrderIdCache = (orderId: string): void => {
 /**
  * Fetch invoices that don't have the standard 50% deposit
  */
-export const fetchUnderDepositInvoices = async (forceRefresh = false): Promise<any[]> => {
+export const fetchUnderDepositInvoices = async (forceRefresh = false, profileName?: string): Promise<any[]> => {
   // Return cached data if valid and not forcing refresh
   if (!forceRefresh && underDepositInvoicesCache && (Date.now() - underDepositInvoicesCache.timestamp < CACHE_DURATION_MS)) {
     console.log('Returning cached under-deposit invoices');
@@ -260,11 +260,26 @@ export const fetchUnderDepositInvoices = async (forceRefresh = false): Promise<a
   }
 
   try {
-    // Query all invoices and filter for under-deposit ones
-    const { data, error } = await supabase
+    // Build query based on user role
+    let query = supabase
       .from('invoices')
-      .select('*')
-      .order('invoice_date', { ascending: false });
+      .select('*');
+
+    // Role-based filtering
+    if (profileName === 'David') {
+      // David (admin) can see all invoices
+      query = query.order('invoice_date', { ascending: false });
+    } else if (profileName && ['Marti', 'Natalia', 'Dimitry'].includes(profileName)) {
+      // Staff can only see their own invoices
+      query = query
+        .eq('created_by', profileName)
+        .order('invoice_date', { ascending: false });
+    } else {
+      // If no valid profile, query all (for backward compatibility)
+      query = query.order('invoice_date', { ascending: false });
+    }
+
+    const { data, error } = await query;
     
     if (error) {
       console.error('Error fetching under-deposit invoices:', error);
@@ -897,7 +912,7 @@ export const fetchMonthlyRevenue = async (forceRefresh: boolean = false): Promis
  * @param date The date to fetch recent orders for (if undefined, fetch most recent orders)
  * @param forceRefresh If true, bypass the cache and fetch fresh data
  */
-export const fetchRecentOrders = async (date?: Date, forceRefresh: boolean = false): Promise<RecentOrder[]> => {
+export const fetchRecentOrders = async (date?: Date, forceRefresh: boolean = false, profileName?: string): Promise<RecentOrder[]> => {
   const dateKey = date ? date.toISOString().split('T')[0] : 'latest';
   
   // Check if the cache is valid for the requested date and we're not forcing a refresh
@@ -915,8 +930,21 @@ export const fetchRecentOrders = async (date?: Date, forceRefresh: boolean = fal
 
       let query = supabase
         .from('invoices')
-        .select('*')
-        .order('created_at', { ascending: false });
+        .select('*');
+      
+      // Role-based filtering
+      if (profileName === 'David') {
+        // David (admin) can see all orders
+        query = query.order('created_at', { ascending: false });
+      } else if (profileName && ['Marti', 'Natalia', 'Dimitry'].includes(profileName)) {
+        // Staff can only see their own orders
+        query = query
+          .eq('created_by', profileName)
+          .order('created_at', { ascending: false });
+      } else {
+        // If no valid profile, query all (for backward compatibility)
+        query = query.order('created_at', { ascending: false });
+      }
       
       // If a specific date is provided, filter invoices by that date
       if (date) {
@@ -1533,7 +1561,7 @@ export const fetchPriceRequests = async (forceRefresh: boolean = false): Promise
  * Fetch customer orders from Supabase
  * @param forceRefresh If true, bypass the cache and fetch fresh data
  */
-export const fetchCustomerOrders = async (forceRefresh: boolean = false): Promise<CustomerOrder[]> => {
+export const fetchCustomerOrders = async (forceRefresh: boolean = false, profileName?: string): Promise<CustomerOrder[]> => {
   // Check if there's already a fetch in progress, return that promise instead of starting a new one
   if (currentCustomerOrdersFetchPromise) {
     console.log('Customer orders fetch already in progress, returning existing promise');
@@ -1551,11 +1579,26 @@ export const fetchCustomerOrders = async (forceRefresh: boolean = false): Promis
     try {
       console.log('Fetching customer orders from Supabase');
       
-      const { data, error } = await supabase
+      let query = supabase
         .from('orders')
         .select('*')
-        .eq('type', 'Customer Order')
-        .order('created_at', { ascending: false });
+        .eq('type', 'Customer Order');
+
+      // Role-based filtering
+      if (profileName === 'David') {
+        // David (admin) can see all orders
+        query = query.order('created_at', { ascending: false });
+      } else if (profileName && ['Marti', 'Natalia', 'Dimitry'].includes(profileName)) {
+        // Staff can only see their own orders
+        query = query
+          .eq('created_by', profileName)
+          .order('created_at', { ascending: false });
+      } else {
+        // If no valid profile, query all (for backward compatibility)
+        query = query.order('created_at', { ascending: false });
+      }
+
+      const { data, error } = await query;
 
       if (error) {
         console.error('Error fetching customer orders from Supabase:', error);

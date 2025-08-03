@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Reply, Trash, Paperclip, Tag, ChevronDown, Forward } from 'lucide-react';
+import { ArrowLeft, Reply, Trash, Paperclip, Tag, ChevronDown, Forward, Users } from 'lucide-react';
 import { formatDistanceToNow, parseISO, format } from 'date-fns';
 import { getAttachmentDownloadUrl, markEmailAsTrash, applyLabelsToEmail, deleteDraft } from '../services/emailService';
 import { optimizedEmailService } from '../services/optimizedEmailService';
@@ -849,6 +849,44 @@ function ViewEmail() {
     });
   };
 
+  // Function to handle replying to all recipients of a specific message
+  const handleReplyAllToMessage = (threadMessage: Email) => {
+    // Create a reply subject with "Re: " prefix if it doesn't already have it
+    const subject = threadMessage.subject.startsWith('Re: ') ? threadMessage.subject : `Re: ${threadMessage.subject}`;
+    
+    // Format the original email for the reply
+    const formattedDate = format(parseISO(threadMessage.date), 'PPpp');
+    const quotedBody = `
+<br><br>
+<div style="padding-left: 1em; margin-left: 1em; border-left: 2px solid #ccc;">
+  <p>On ${formattedDate}, ${threadMessage.from.name} <${threadMessage.from.email}> wrote:</p>
+  ${threadMessage.body}
+</div>
+`;
+    
+    // Collect all original recipients except the current user
+    const originalTo = threadMessage.to?.map(recipient => recipient.email) || [];
+    const allRecipients = [threadMessage.from.email, ...originalTo].filter(email => 
+      email !== 'me@example.com' && email !== 'david.v@dnddesigncenter.com'
+    );
+    
+    // Use the first recipient as "To" and the rest as CC (plus our hardcoded CC)
+    const toRecipient = allRecipients[0] || threadMessage.from.email;
+    const ccRecipients = allRecipients.slice(1);
+    
+    // Navigate to compose with prefilled data including CC recipients
+    navigate('/compose', { 
+      state: { 
+        to: toRecipient,
+        cc: ccRecipients.join(','), // Pass CC recipients as comma-separated string
+        subject: subject,
+        replyToId: threadMessage.id,
+        threadId: threadMessage.threadId,
+        originalBody: quotedBody
+      } 
+    });
+  };
+
   // Function to handle forwarding a specific message
   const handleForwardMessage = (threadMessage: Email) => {
     // Create a forward subject with "Fwd: " prefix
@@ -1237,6 +1275,18 @@ ${threadMessage.body}
                         >
                           <Reply size={14} className="mr-1.5" />
                           Reply
+                        </button>
+                        
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleReplyAllToMessage(threadMessage);
+                          }}
+                          className="flex items-center px-3 py-1.5 text-sm text-gray-600 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                          title="Reply to all recipients"
+                        >
+                          <Users size={14} className="mr-1.5" />
+                          Reply All
                         </button>
                         
                         <button 

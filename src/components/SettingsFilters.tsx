@@ -11,7 +11,6 @@ import {
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Checkbox } from './ui/checkbox';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
@@ -50,22 +49,11 @@ function useDebouncedValue<T>(value: T, delay: number): T {
 interface FilterFormData {
   criteria: {
     from: string;
-    to: string;
-    subject: string;
-    query: string;
     hasAttachment: boolean;
-    size: string;
-    sizeComparison: 'larger' | 'smaller';
   };
   action: {
     addLabelIds: string[];
-    removeLabelIds: string[];
-    forward: string;
-    markAsRead: boolean;
-    markAsSpam: boolean;
-    markAsImportant: boolean;
     delete: boolean;
-    neverSpam: boolean;
   };
 }
 
@@ -178,48 +166,25 @@ function SettingsFilters() {
   
   // Form state
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [editingFilter, setEditingFilter] = useState<any | null>(null);
   const [editStep, setEditStep] = useState<'criteria' | 'actions' | null>(null);
   const [editFormData, setEditFormData] = useState<FilterFormData>({
     criteria: {
       from: '',
-      to: '',
-      subject: '',
-      query: '',
-      hasAttachment: false,
-      size: '',
-      sizeComparison: 'larger'
+      hasAttachment: false
     },
     action: {
       addLabelIds: [],
-      removeLabelIds: [],
-      forward: '',
-      markAsRead: false,
-      markAsSpam: false,
-      markAsImportant: false,
-      delete: false,
-      neverSpam: false
+      delete: false
     }
   });
   const [formData, setFormData] = useState<FilterFormData>({
     criteria: {
       from: '',
-      to: '',
-      subject: '',
-      query: '',
-      hasAttachment: false,
-      size: '',
-      sizeComparison: 'larger'
+      hasAttachment: false
     },
     action: {
       addLabelIds: [],
-      removeLabelIds: [],
-      forward: '',
-      markAsRead: false,
-      markAsSpam: false,
-      markAsImportant: false,
-      delete: false,
-      neverSpam: false
+      delete: false
     }
   });
   
@@ -240,34 +205,16 @@ function SettingsFilters() {
     return labels.filter(label => !addLabelIds.includes(label.id));
   }, [labels, debouncedFormData.action.addLabelIds]);
 
-  const availableLabelsForRemove = useMemo(() => {
-    const removeLabelIds = debouncedFormData.action.removeLabelIds;
-    return labels.filter(label => !removeLabelIds.includes(label.id));
-  }, [labels, debouncedFormData.action.removeLabelIds]);
-
   // Expert's approach: Debounced validation - only run expensive operations after user stops typing
   useEffect(() => {
     // Only run validation on debounced data (after user stops typing for 500ms)
     if (debouncedFormData && (debouncedFormData.criteria.from || 
-                             debouncedFormData.criteria.to || 
-                             debouncedFormData.criteria.subject || 
-                             debouncedFormData.criteria.query ||
-                             debouncedFormData.criteria.size ||
-                             debouncedFormData.action.forward)) {
+                             debouncedFormData.criteria.hasAttachment)) {
       
-      // Expensive validation only runs here, after user stops typing
+      // Simple validation only for the remaining fields
       const errors: Record<string, string> = {};
       
-      // Validate email format for forward
-      if (debouncedFormData.action.forward && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(debouncedFormData.action.forward)) {
-        errors.forward = 'Please enter a valid email address';
-      }
-      
-      // Validate size if specified
-      if (debouncedFormData.criteria.size && isNaN(Number(debouncedFormData.criteria.size))) {
-        errors.size = 'Size must be a number';
-      }
-      
+      // No complex validation needed for our simplified fields
       setFormErrors(errors);
     } else {
       // Clear errors when fields are empty
@@ -343,27 +290,15 @@ function SettingsFilters() {
   const handleEditFilter = useCallback((filterId: string) => {
     const filter = filters.find(f => f.id === filterId);
     if (filter) {
-      setEditingFilter(filter);
       // Pre-populate edit form with current filter data
       setEditFormData({
         criteria: {
           from: filter.criteria.from || '',
-          to: filter.criteria.to || '',
-          subject: filter.criteria.subject || '',
-          query: filter.criteria.query || '',
-          hasAttachment: filter.criteria.hasAttachment || false,
-          size: filter.criteria.size ? filter.criteria.size.toString() : '',
-          sizeComparison: filter.criteria.sizeComparison || 'larger'
+          hasAttachment: filter.criteria.hasAttachment || false
         },
         action: {
           addLabelIds: filter.action.addLabelIds || [],
-          removeLabelIds: filter.action.removeLabelIds || [],
-          forward: filter.action.forward || '',
-          markAsRead: filter.action.markAsRead || false,
-          markAsSpam: filter.action.markAsSpam || false,
-          markAsImportant: filter.action.markAsImportant || false,
-          delete: filter.action.delete || false,
-          neverSpam: filter.action.neverSpam || false
+          delete: filter.action.delete || false
         }
       });
       setEditStep('criteria');
@@ -401,11 +336,7 @@ function SettingsFilters() {
     
     // At least one criteria should be specified
     const hasCriteria = formData.criteria.from || 
-                       formData.criteria.to || 
-                       formData.criteria.subject || 
-                       formData.criteria.query ||
-                       formData.criteria.hasAttachment ||
-                       formData.criteria.size;
+                       formData.criteria.hasAttachment;
     
     if (!hasCriteria) {
       errors.criteria = 'At least one filter criteria must be specified';
@@ -413,13 +344,7 @@ function SettingsFilters() {
     
     // At least one action should be specified
     const hasAction = formData.action.addLabelIds.length > 0 ||
-                     formData.action.removeLabelIds.length > 0 ||
-                     formData.action.forward ||
-                     formData.action.markAsRead ||
-                     formData.action.markAsSpam ||
-                     formData.action.markAsImportant ||
-                     formData.action.delete ||
-                     formData.action.neverSpam;
+                     formData.action.delete;
     
     if (!hasAction) {
       errors.action = 'At least one filter action must be specified';
@@ -444,25 +369,12 @@ function SettingsFilters() {
       // Build criteria object (only include non-empty values)
       const criteria: any = {};
       if (formData.criteria.from) criteria.from = formData.criteria.from;
-      if (formData.criteria.to) criteria.to = formData.criteria.to;
-      if (formData.criteria.subject) criteria.subject = formData.criteria.subject;
-      if (formData.criteria.query) criteria.query = formData.criteria.query;
       if (formData.criteria.hasAttachment) criteria.hasAttachment = true;
-      if (formData.criteria.size) {
-        criteria.size = parseInt(formData.criteria.size);
-        criteria.sizeComparison = formData.criteria.sizeComparison;
-      }
       
       // Build action object (only include specified actions)
       const action: any = {};
       if (formData.action.addLabelIds.length > 0) action.addLabelIds = formData.action.addLabelIds;
-      if (formData.action.removeLabelIds.length > 0) action.removeLabelIds = formData.action.removeLabelIds;
-      if (formData.action.forward) action.forward = formData.action.forward;
-      if (formData.action.markAsRead) action.markAsRead = true;
-      if (formData.action.markAsSpam) action.markAsSpam = true;
-      if (formData.action.markAsImportant) action.markAsImportant = true;
       if (formData.action.delete) action.delete = true;
-      if (formData.action.neverSpam) action.neverSpam = true;
       
       await createGmailFilter(criteria, action);
       
@@ -473,22 +385,11 @@ function SettingsFilters() {
       setFormData({
         criteria: {
           from: '',
-          to: '',
-          subject: '',
-          query: '',
-          hasAttachment: false,
-          size: '',
-          sizeComparison: 'larger'
+          hasAttachment: false
         },
         action: {
           addLabelIds: [],
-          removeLabelIds: [],
-          forward: '',
-          markAsRead: false,
-          markAsSpam: false,
-          markAsImportant: false,
-          delete: false,
-          neverSpam: false
+          delete: false
         }
       });
       setShowCreateForm(false);
@@ -550,10 +451,6 @@ function SettingsFilters() {
   const handleAddLabelsChange = useCallback((newLabelIds: string[]) => {
     updateAction('addLabelIds', newLabelIds);
   }, [updateAction]); // updateAction is already memoized
-
-  const handleRemoveLabelsChange = useCallback((newLabelIds: string[]) => {
-    updateAction('removeLabelIds', newLabelIds);
-  }, [updateAction]);
 
   const deleteBulkFilters = useCallback(async () => {
     const selectedCount = selectedFilters.size;
@@ -706,33 +603,6 @@ function SettingsFilters() {
                       placeholder="sender@example.com"
                     />
                   </div>
-                  <div>
-                    <Label htmlFor="to">To</Label>
-                    <Input
-                      id="to"
-                      value={formData.criteria.to}
-                      onChange={(e) => updateCriteria('to', e.target.value)}
-                      placeholder="recipient@example.com"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="subject">Subject</Label>
-                    <Input
-                      id="subject"
-                      value={formData.criteria.subject}
-                      onChange={(e) => updateCriteria('subject', e.target.value)}
-                      placeholder="Subject contains..."
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="query">Search Query</Label>
-                    <Input
-                      id="query"
-                      value={formData.criteria.query}
-                      onChange={(e) => updateCriteria('query', e.target.value)}
-                      placeholder="Advanced search query"
-                    />
-                  </div>
                   <div className="flex items-center space-x-2">
                     <Checkbox
                       id="hasAttachment"
@@ -741,30 +611,6 @@ function SettingsFilters() {
                       className="w-4 h-4 rounded-sm border-2 border-gray-400 data-[state=checked]:border-blue-600 data-[state=checked]:bg-transparent data-[state=checked]:text-blue-600"
                     />
                     <Label htmlFor="hasAttachment">Has attachment</Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Select
-                      value={formData.criteria.sizeComparison}
-                      onValueChange={(value: 'larger' | 'smaller') => updateCriteria('sizeComparison', value)}
-                    >
-                      <SelectTrigger className="w-24">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="larger">Larger</SelectItem>
-                        <SelectItem value="smaller">Smaller</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Label>than</Label>
-                    <Input
-                      value={formData.criteria.size}
-                      onChange={(e) => updateCriteria('size', e.target.value)}
-                      placeholder="Size in bytes"
-                      className="flex-1"
-                    />
-                    {formErrors.size && (
-                      <p className="text-red-500 text-xs">{formErrors.size}</p>
-                    )}
                   </div>
                 </div>
               </div>
@@ -781,8 +627,8 @@ function SettingsFilters() {
                   <p className="text-red-500 text-xs mb-2">{formErrors.action}</p>
                 )}
                 <div className="space-y-4">
-                  {/* Expert's solution: Isolated LabelSelector components for performance */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Expert's solution: Only one LabelSelector component for adding labels */}
+                  <div className="grid grid-cols-1 gap-4">
                     <LabelSelector
                       type="add"
                       allLabels={labelsMap}
@@ -791,59 +637,10 @@ function SettingsFilters() {
                       onLabelChange={handleAddLabelsChange}
                       disabled={isCreating}
                     />
-                    <LabelSelector
-                      type="remove"
-                      allLabels={labelsMap}
-                      availableLabels={availableLabelsForRemove}
-                      selectedLabelIds={formData.action.removeLabelIds}
-                      onLabelChange={handleRemoveLabelsChange}
-                      disabled={isCreating}
-                    />
                   </div>
 
-                  {/* Forward Action */}
-                  <div>
-                    <Label htmlFor="forward">Forward to</Label>
-                    <Input
-                      id="forward"
-                      value={formData.action.forward}
-                      onChange={(e) => updateAction('forward', e.target.value)}
-                      placeholder="forward@example.com"
-                    />
-                    {formErrors.forward && (
-                      <p className="text-red-500 text-xs mt-1">{formErrors.forward}</p>
-                    )}
-                  </div>
-
-                  {/* Checkbox Actions */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="flex items-center space-x-2">
-                      <Checkbox
-                        id="markAsRead"
-                        checked={formData.action.markAsRead}
-                        onCheckedChange={(checked) => updateAction('markAsRead', checked)}
-                        className="w-4 h-4 rounded-sm border-2 border-gray-400 data-[state=checked]:border-blue-600 data-[state=checked]:bg-transparent data-[state=checked]:text-blue-600"
-                      />
-                      <Label htmlFor="markAsRead">Mark as read</Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <Checkbox
-                        id="markAsSpam"
-                        checked={formData.action.markAsSpam}
-                        onCheckedChange={(checked) => updateAction('markAsSpam', checked)}
-                        className="w-4 h-4 rounded-sm border-2 border-gray-400 data-[state=checked]:border-blue-600 data-[state=checked]:bg-transparent data-[state=checked]:text-blue-600"
-                      />
-                      <Label htmlFor="markAsSpam">Mark as spam</Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <Checkbox
-                        id="markAsImportant"
-                        checked={formData.action.markAsImportant}
-                        onCheckedChange={(checked) => updateAction('markAsImportant', checked)}
-                        className="w-4 h-4 rounded-sm border-2 border-gray-400 data-[state=checked]:border-blue-600 data-[state=checked]:bg-transparent data-[state=checked]:text-blue-600"
-                      />
-                      <Label htmlFor="markAsImportant">Mark as important</Label>
-                    </div>
+                  {/* Delete Action */}
+                  <div className="grid grid-cols-1 gap-4">
                     <div className="flex items-center space-x-2">
                       <Checkbox
                         id="delete"
@@ -852,15 +649,6 @@ function SettingsFilters() {
                         className="w-4 h-4 rounded-sm border-2 border-gray-400 data-[state=checked]:border-blue-600 data-[state=checked]:bg-transparent data-[state=checked]:text-blue-600"
                       />
                       <Label htmlFor="delete">Delete</Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <Checkbox
-                        id="neverSpam"
-                        checked={formData.action.neverSpam}
-                        onCheckedChange={(checked) => updateAction('neverSpam', checked)}
-                        className="w-4 h-4 rounded-sm border-2 border-gray-400 data-[state=checked]:border-blue-600 data-[state=checked]:bg-transparent data-[state=checked]:text-blue-600"
-                      />
-                      <Label htmlFor="neverSpam">Never mark as spam</Label>
                     </div>
                   </div>
                 </div>
@@ -945,83 +733,77 @@ function SettingsFilters() {
         </div>
       </div>
 
-      {/* Edit Filter Criteria Dialog */}
+      {/* Edit Filter Dialog - All fields in one dialog */}
       <Sheet open={editStep === 'criteria'} onOpenChange={(open) => !open && setEditStep(null)}>
         <SheetContent className="w-[600px] sm:w-[540px]">
           <SheetHeader>
-            <SheetTitle>Edit Filter Criteria</SheetTitle>
+            <SheetTitle>Edit Filter</SheetTitle>
             <SheetDescription>
-              Update the search criteria for your filter
+              Update the criteria and actions for your Gmail filter
             </SheetDescription>
           </SheetHeader>
           <div className="space-y-6 py-6">
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="edit-from">From</Label>
-                <Input
-                  id="edit-from"
-                  value={editFormData.criteria.from}
-                  onChange={(e) => updateEditCriteria('from', e.target.value)}
-                  placeholder="sender@example.com"
-                />
+            {/* Filter Criteria */}
+            <div>
+              <h3 className="text-sm font-medium mb-3 flex items-center">
+                <Mail className="w-4 h-4 mr-2" />
+                Filter Criteria
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="edit-from">From</Label>
+                  <Input
+                    id="edit-from"
+                    value={editFormData.criteria.from}
+                    onChange={(e) => updateEditCriteria('from', e.target.value)}
+                    placeholder="sender@example.com"
+                  />
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="edit-hasAttachment"
+                    checked={editFormData.criteria.hasAttachment}
+                    onCheckedChange={(checked) => updateEditCriteria('hasAttachment', checked)}
+                    className="w-4 h-4 rounded-sm border-2 border-gray-400 data-[state=checked]:border-blue-600 data-[state=checked]:bg-transparent data-[state=checked]:text-blue-600"
+                  />
+                  <Label htmlFor="edit-hasAttachment">Has attachment</Label>
+                </div>
               </div>
-              <div>
-                <Label htmlFor="edit-to">To</Label>
-                <Input
-                  id="edit-to"
-                  value={editFormData.criteria.to}
-                  onChange={(e) => updateEditCriteria('to', e.target.value)}
-                  placeholder="recipient@example.com"
-                />
-              </div>
-              <div>
-                <Label htmlFor="edit-subject">Subject</Label>
-                <Input
-                  id="edit-subject"
-                  value={editFormData.criteria.subject}
-                  onChange={(e) => updateEditCriteria('subject', e.target.value)}
-                  placeholder="Subject contains..."
-                />
-              </div>
-              <div>
-                <Label htmlFor="edit-query">Has the words</Label>
-                <Input
-                  id="edit-query"
-                  value={editFormData.criteria.query}
-                  onChange={(e) => updateEditCriteria('query', e.target.value)}
-                  placeholder="Enter words to search for"
-                />
-              </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="edit-hasAttachment"
-                  checked={editFormData.criteria.hasAttachment}
-                  onCheckedChange={(checked) => updateEditCriteria('hasAttachment', checked)}
-                  className="w-4 h-4 rounded-sm border-2 border-gray-400 data-[state=checked]:border-blue-600 data-[state=checked]:bg-transparent data-[state=checked]:text-blue-600"
-                />
-                <Label htmlFor="edit-hasAttachment">Has attachment</Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Label>Size</Label>
-                <Select
-                  value={editFormData.criteria.sizeComparison}
-                  onValueChange={(value: 'larger' | 'smaller') => updateEditCriteria('sizeComparison', value)}
-                >
-                  <SelectTrigger className="w-32">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="larger">greater than</SelectItem>
-                    <SelectItem value="smaller">less than</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Input
-                  value={editFormData.criteria.size}
-                  onChange={(e) => updateEditCriteria('size', e.target.value)}
-                  placeholder="Size"
-                  className="w-24"
-                />
-                <span className="text-sm text-gray-500">MB</span>
+            </div>
+
+            <Separator />
+
+            {/* Filter Actions */}
+            <div>
+              <h3 className="text-sm font-medium mb-3 flex items-center">
+                <Settings className="w-4 h-4 mr-2" />
+                Filter Actions
+              </h3>
+              <div className="space-y-4">
+                {/* Add Labels */}
+                <div className="grid grid-cols-1 gap-4">
+                  <LabelSelector
+                    type="add"
+                    allLabels={labelsMap}
+                    availableLabels={labels.filter(label => !editFormData.action.addLabelIds.includes(label.id))}
+                    selectedLabelIds={editFormData.action.addLabelIds}
+                    onLabelChange={(newLabelIds) => updateEditAction('addLabelIds', newLabelIds)}
+                    disabled={false}
+                  />
+                </div>
+
+                {/* Delete Action */}
+                <div className="grid grid-cols-1 gap-4">
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="edit-delete"
+                      checked={editFormData.action.delete}
+                      onCheckedChange={(checked) => updateEditAction('delete', checked)}
+                      className="w-4 h-4 rounded-sm border-2 border-gray-400 data-[state=checked]:border-blue-600 data-[state=checked]:bg-transparent data-[state=checked]:text-blue-600"
+                    />
+                    <Label htmlFor="edit-delete">Delete</Label>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1033,134 +815,10 @@ function SettingsFilters() {
               Cancel
             </Button>
             <Button
-              onClick={() => setEditStep('actions')}
-            >
-              Continue
-            </Button>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
-
-      {/* Edit Filter Actions Dialog */}
-      <Sheet open={editStep === 'actions'} onOpenChange={(open) => !open && setEditStep(null)}>
-        <SheetContent className="w-[600px] sm:w-[540px]">
-          <SheetHeader>
-            <SheetTitle>Edit Filter Actions</SheetTitle>
-            <SheetDescription>
-              When a message is an exact match for your search criteria:
-            </SheetDescription>
-          </SheetHeader>
-          <div className="space-y-6 py-6">
-            <div className="space-y-4">
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="edit-skipInbox"
-                  checked={editFormData.action.delete}
-                  onCheckedChange={(checked) => updateEditAction('delete', checked)}
-                  className="w-4 h-4 rounded-sm border-2 border-gray-400 data-[state=checked]:border-blue-600 data-[state=checked]:bg-transparent data-[state=checked]:text-blue-600"
-                />
-                <Label htmlFor="edit-skipInbox">Skip the Inbox (Archive it)</Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="edit-markAsRead"
-                  checked={editFormData.action.markAsRead}
-                  onCheckedChange={(checked) => updateEditAction('markAsRead', checked)}
-                  className="w-4 h-4 rounded-sm border-2 border-gray-400 data-[state=checked]:border-blue-600 data-[state=checked]:bg-transparent data-[state=checked]:text-blue-600"
-                />
-                <Label htmlFor="edit-markAsRead">Mark as read</Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="edit-starIt"
-                  checked={editFormData.action.markAsImportant}
-                  onCheckedChange={(checked) => updateEditAction('markAsImportant', checked)}
-                  className="w-4 h-4 rounded-sm border-2 border-gray-400 data-[state=checked]:border-blue-600 data-[state=checked]:bg-transparent data-[state=checked]:text-blue-600"
-                />
-                <Label htmlFor="edit-starIt">Star it</Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="edit-applyLabel"
-                  checked={editFormData.action.addLabelIds.length > 0}
-                  onCheckedChange={(checked) => {
-                    if (!checked) {
-                      updateEditAction('addLabelIds', []);
-                    }
-                  }}
-                  className="w-4 h-4 rounded-sm border-2 border-gray-400 data-[state=checked]:border-blue-600 data-[state=checked]:bg-transparent data-[state=checked]:text-blue-600"
-                />
-                <Label htmlFor="edit-applyLabel">Apply the label:</Label>
-                <Select
-                  value={editFormData.action.addLabelIds[0] || ''}
-                  onValueChange={(value) => updateEditAction('addLabelIds', value ? [value] : [])}
-                  disabled={editFormData.action.addLabelIds.length === 0}
-                >
-                  <SelectTrigger className="w-48">
-                    <SelectValue placeholder="Choose label..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {labels.map((label) => (
-                      <SelectItem key={label.id} value={label.id}>
-                        {label.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="edit-forward"
-                  checked={!!editFormData.action.forward}
-                  onCheckedChange={(checked) => {
-                    if (!checked) {
-                      updateEditAction('forward', '');
-                    }
-                  }}
-                  className="w-4 h-4 rounded-sm border-2 border-gray-400 data-[state=checked]:border-blue-600 data-[state=checked]:bg-transparent data-[state=checked]:text-blue-600"
-                />
-                <Label htmlFor="edit-forward">Forward it</Label>
-                <Input
-                  value={editFormData.action.forward}
-                  onChange={(e) => updateEditAction('forward', e.target.value)}
-                  placeholder="Add forwarding address"
-                  className="flex-1"
-                  disabled={!editFormData.action.forward && !editFormData.action.forward}
-                />
-              </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="edit-delete"
-                  checked={editFormData.action.delete}
-                  onCheckedChange={(checked) => updateEditAction('delete', checked)}
-                  className="w-4 h-4 rounded-sm border-2 border-gray-400 data-[state=checked]:border-blue-600 data-[state=checked]:bg-transparent data-[state=checked]:text-blue-600"
-                />
-                <Label htmlFor="edit-delete">Delete it</Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="edit-neverSpam"
-                  checked={editFormData.action.neverSpam}
-                  onCheckedChange={(checked) => updateEditAction('neverSpam', checked)}
-                  className="w-4 h-4 rounded-sm border-2 border-gray-400 data-[state=checked]:border-blue-600 data-[state=checked]:bg-transparent data-[state=checked]:text-blue-600"
-                />
-                <Label htmlFor="edit-neverSpam">Never send it to Spam</Label>
-              </div>
-            </div>
-          </div>
-          <SheetFooter>
-            <Button
-              variant="outline"
-              onClick={() => setEditStep('criteria')}
-            >
-              Back
-            </Button>
-            <Button
               onClick={async () => {
                 // TODO: Implement filter update
                 console.log('Update filter with:', editFormData);
                 setEditStep(null);
-                setEditingFilter(null);
               }}
             >
               Update filter

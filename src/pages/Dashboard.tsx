@@ -110,7 +110,7 @@ function Dashboard() {
       // Set under deposit invoices
       try {
         setLoadingInvoices(true);
-        const invoicesData = await fetchUnderDepositInvoices(forceRefresh);
+        const invoicesData = await fetchUnderDepositInvoices(forceRefresh, currentProfile?.name);
         setUnderDepositInvoices(invoicesData);
       } catch (error) {
         console.error('Error fetching under-deposit invoices:', error);
@@ -138,7 +138,7 @@ function Dashboard() {
         await fetchOrdersForDate(date, forceRefresh);
       } else {
         // Otherwise fetch the latest orders
-        const recentOrders = await fetchRecentOrders(undefined, forceRefresh);
+        const recentOrders = await fetchRecentOrders(undefined, forceRefresh, currentProfile?.name);
         setRecentOrdersList(recentOrders);
       }
     } catch (err) {
@@ -154,7 +154,7 @@ function Dashboard() {
   const fetchOrdersForDate = async (selectedDate: Date, forceRefresh = false) => {
     try {
       setLoadingOrders(true);
-      const orders = await fetchRecentOrders(selectedDate, forceRefresh);
+      const orders = await fetchRecentOrders(selectedDate, forceRefresh, currentProfile?.name);
       setRecentOrdersList(orders);
     } catch (error) {
       console.error('Error fetching orders for date:', error);

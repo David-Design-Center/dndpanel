@@ -18,7 +18,7 @@ export const getAllOutOfOfficeStatuses = async (): Promise<OutOfOfficeStatus[]> 
     const { data: profiles, error } = await supabase
       .from('profiles')
       .select('name, out_of_office_status, updated_at')
-      .in('name', ['David', 'Marti']);
+      .in('name', ['David', 'Marti', 'Natalia', 'Dimitry']);
 
     if (error) {
       console.error('Error fetching out-of-office statuses:', error);
