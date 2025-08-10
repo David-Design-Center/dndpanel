@@ -39,7 +39,7 @@ function Compose() {
   const { currentProfile } = useProfile();
   const { searchContacts } = useContacts();
   const [to, setTo] = useState('');
-  const [ccRecipients, setCcRecipients] = useState<string[]>(['david.v@dnddesigncenter.com']); // Hardcoded first CC recipient
+  const [ccRecipients, setCcRecipients] = useState<string[]>([]); // Start empty, will be set in useEffect
   const [showCc, setShowCc] = useState(true); // Show CC by default since we have hardcoded recipient
   const [ccInput, setCcInput] = useState('');
   const [showContactDropdown, setShowContactDropdown] = useState(false);
@@ -75,6 +75,17 @@ function Compose() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const location = useLocation();
+
+  // Set initial CC recipients based on profile
+  useEffect(() => {
+    if (currentProfile?.name === 'David') {
+      // David can choose whether to CC himself or not - start with empty CC
+      setCcRecipients([]);
+    } else {
+      // All other users must CC David by default
+      setCcRecipients(['david.v@dnddesigncenter.com']);
+    }
+  }, [currentProfile?.name]);
 
   // Handle Price Request insertion
   // Handle opening the price request panel
@@ -525,6 +536,18 @@ function Compose() {
     }
   };
 
+  // Handle file attachments from RichTextEditor
+  const handleRichTextFileAttachment = (files: FileList) => {
+    const fileList = Array.from(files);
+    const newAttachments = fileList.map(file => ({
+      name: file.name,
+      mimeType: file.type || 'application/octet-stream',
+      file: file,
+      size: file.size
+    }));
+    setAttachments(prev => [...prev, ...newAttachments]);
+  };
+
   const removeAttachment = (index: number) => {
     setAttachments(prev => prev.filter((_, i) => i !== index));
     // Reset the file input to allow selecting the same file again
@@ -628,8 +651,11 @@ function Compose() {
   };
 
   const removeCcRecipient = (email: string) => {
-    // Don't allow removing the hardcoded email
-    if (email === 'david.v@dnddesigncenter.com') return;
+    // Allow David to remove any CC recipients, including himself
+    // For other users, don't allow removing the hardcoded David email
+    if (email === 'david.v@dnddesigncenter.com' && currentProfile?.name !== 'David') {
+      return; // Non-David users cannot remove David's CC
+    }
     setCcRecipients(prev => prev.filter(recipient => recipient !== email));
   };
 
@@ -831,10 +857,13 @@ function Compose() {
                       <div className="flex flex-wrap gap-2 mb-2">
                         {ccRecipients.map((email, index) => (
                           <div key={index} className="flex items-center bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm">
-                            <span className={email === 'david.v@dnddesigncenter.com' ? 'text-blue-600 font-medium' : ''}>
-                              {email === 'david.v@dnddesigncenter.com' ? email + ' (default)' : email}
+                            <span className={email === 'david.v@dnddesigncenter.com' && currentProfile?.name !== 'David' ? 'text-blue-600 font-medium' : ''}>
+                              {email === 'david.v@dnddesigncenter.com' && currentProfile?.name !== 'David' 
+                                ? email + ' (owner)' 
+                                : email}
                             </span>
-                            {email !== 'david.v@dnddesigncenter.com' && (
+                            {/* Show remove button based on user permissions */}
+                            {(email !== 'david.v@dnddesigncenter.com' || currentProfile?.name === 'David') && (
                               <button
                                 type="button"
                                 onClick={() => removeCcRecipient(email)}
@@ -955,6 +984,8 @@ function Compose() {
                   disabled={isSending}
                   showPriceRequestButton={true}
                   onOpenPriceRequest={handleOpenPriceRequest}
+                  showFileAttachmentButton={true}
+                  onFileAttachment={handleRichTextFileAttachment}
                 />
               </div>
 

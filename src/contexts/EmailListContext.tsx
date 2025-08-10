@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useMemo, ReactNode } from 'react';
 
 interface EmailListContextType {
   isEmailListCollapsed: boolean;
@@ -15,22 +15,22 @@ interface EmailListProviderProps {
 export function EmailListProvider({ children }: EmailListProviderProps) {
   const [isEmailListCollapsed, setIsEmailListCollapsed] = useState(false);
 
-  const toggleEmailList = () => {
+  const toggleEmailList = useCallback(() => {
     setIsEmailListCollapsed(prev => !prev);
-  };
+  }, []);
 
-  const setEmailListCollapsed = (collapsed: boolean) => {
+  const setEmailListCollapsed = useCallback((collapsed: boolean) => {
     setIsEmailListCollapsed(collapsed);
-  };
+  }, []);
+
+  const value = useMemo(() => ({
+    isEmailListCollapsed, 
+    toggleEmailList, 
+    setEmailListCollapsed 
+  }), [isEmailListCollapsed, toggleEmailList, setEmailListCollapsed]);
 
   return (
-    <EmailListContext.Provider 
-      value={{ 
-        isEmailListCollapsed, 
-        toggleEmailList, 
-        setEmailListCollapsed 
-      }}
-    >
+    <EmailListContext.Provider value={value}>
       {children}
     </EmailListContext.Provider>
   );

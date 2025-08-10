@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useProfile } from '../contexts/ProfileContext';
+import { useFilterCreation } from '../contexts/FilterCreationContext';
 import { GmailLabel } from '../types';
 import { 
   listGmailFilters, 
@@ -48,12 +49,26 @@ function useDebouncedValue<T>(value: T, delay: number): T {
 
 interface FilterFormData {
   criteria: {
-    from: string;
-    hasAttachment: boolean;
+    from?: string;
+    to?: string;
+    subject?: string;
+    hasTheWord?: string;
+    doesNotHave?: string;
+    hasAttachment?: boolean;
+    excludeChats?: boolean;
+    size?: number;
+    sizeComparison?: 'larger' | 'smaller';
   };
   action: {
-    addLabelIds: string[];
-    delete: boolean;
+    addLabelIds?: string[];
+    removeLabelIds?: string[];
+    forward?: string;
+    markAsRead?: boolean;
+    markAsImportant?: boolean;
+    neverSpam?: boolean;
+    neverMarkAsImportant?: boolean;
+    alwaysMarkAsImportant?: boolean;
+    delete?: boolean;
   };
 }
 
@@ -151,6 +166,7 @@ FilterItem.displayName = 'FilterItem';
 function SettingsFilters() {
   const { isGmailSignedIn } = useAuth();
   const { currentProfile } = useProfile();
+  const { filterCreation, clearFilterCreation, markCreateOpened } = useFilterCreation();
   
   // State for filters
   const [filters, setFilters] = useState<any[]>([]);
@@ -201,7 +217,7 @@ function SettingsFilters() {
 
   // Memoized filtered labels for dropdowns - use debounced data to prevent re-calc on every keystroke
   const availableLabelsForAdd = useMemo(() => {
-    const addLabelIds = debouncedFormData.action.addLabelIds;
+    const addLabelIds = debouncedFormData.action.addLabelIds || [];
     return labels.filter(label => !addLabelIds.includes(label.id));
   }, [labels, debouncedFormData.action.addLabelIds]);
 
@@ -275,6 +291,26 @@ function SettingsFilters() {
     };
   }, [isGmailSignedIn, currentProfile]);
 
+  // Handle filter creation from context (when coming from email list item)
+  useEffect(() => {
+    if (filterCreation.isCreating && filterCreation.emailData && filterCreation.shouldOpenCreate) {
+      // Auto-fill the form with email data
+      setFormData(prev => ({
+        ...prev,
+        criteria: {
+          ...prev.criteria,
+          from: filterCreation.emailData?.from.email || ''
+        }
+      }));
+      
+      // Open the create form
+      setShowCreateForm(true);
+      
+      // Mark as opened so it doesn't keep reopening
+      markCreateOpened();
+    }
+  }, [filterCreation.isCreating, filterCreation.emailData, filterCreation.shouldOpenCreate, markCreateOpened]);
+
   const handleSelectFilter = useCallback((filterId: string, selected: boolean) => {
     setSelectedFilters(prev => {
       const newSet = new Set(prev);
@@ -286,6 +322,26 @@ function SettingsFilters() {
       return newSet;
     });
   }, []);
+
+  // Handle closing the create form
+  const handleCloseCreateForm = useCallback(() => {
+    setShowCreateForm(false);
+    // Clear the filter creation context when closing
+    if (filterCreation.isCreating) {
+      clearFilterCreation();
+    }
+    // Reset form data
+    setFormData({
+      criteria: {
+        from: '',
+        hasAttachment: false
+      },
+      action: {
+        addLabelIds: [],
+        delete: false
+      }
+    });
+  }, [filterCreation.isCreating, clearFilterCreation]);
 
   const handleEditFilter = useCallback((filterId: string) => {
     const filter = filters.find(f => f.id === filterId);
@@ -343,7 +399,7 @@ function SettingsFilters() {
     }
     
     // At least one action should be specified
-    const hasAction = formData.action.addLabelIds.length > 0 ||
+    const hasAction = (formData.action.addLabelIds?.length || 0) > 0 ||
                      formData.action.delete;
     
     if (!hasAction) {
@@ -373,7 +429,7 @@ function SettingsFilters() {
       
       // Build action object (only include specified actions)
       const action: any = {};
-      if (formData.action.addLabelIds.length > 0) action.addLabelIds = formData.action.addLabelIds;
+      if (formData.action.addLabelIds && formData.action.addLabelIds.length > 0) action.addLabelIds = formData.action.addLabelIds;
       if (formData.action.delete) action.delete = true;
       
       await createGmailFilter(criteria, action);
@@ -633,7 +689,7 @@ function SettingsFilters() {
                       type="add"
                       allLabels={labelsMap}
                       availableLabels={availableLabelsForAdd}
-                      selectedLabelIds={formData.action.addLabelIds}
+                      selectedLabelIds={formData.action.addLabelIds || []}
                       onLabelChange={handleAddLabelsChange}
                       disabled={isCreating}
                     />
@@ -657,7 +713,7 @@ function SettingsFilters() {
               <div className="flex justify-end space-x-2">
                 <Button
                   variant="outline"
-                  onClick={() => setShowCreateForm(false)}
+                  onClick={handleCloseCreateForm}
                   disabled={isCreating}
                 >
                   Cancel
@@ -785,8 +841,8 @@ function SettingsFilters() {
                   <LabelSelector
                     type="add"
                     allLabels={labelsMap}
-                    availableLabels={labels.filter(label => !editFormData.action.addLabelIds.includes(label.id))}
-                    selectedLabelIds={editFormData.action.addLabelIds}
+                    availableLabels={labels.filter(label => !(editFormData.action.addLabelIds || []).includes(label.id))}
+                    selectedLabelIds={editFormData.action.addLabelIds || []}
                     onLabelChange={(newLabelIds) => updateEditAction('addLabelIds', newLabelIds)}
                     disabled={false}
                   />

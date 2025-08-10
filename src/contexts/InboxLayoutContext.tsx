@@ -42,19 +42,19 @@ function InboxLayoutProviderInternal({ children }: { children: ReactNode }) {
   const { isFoldersColumnExpanded, toggleFoldersColumn } = useFoldersColumn();
   const { isEmailListCollapsed, toggleEmailList } = useEmailList();
 
-  const selectEmail = (id: string) => {
+  const selectEmail = useCallback((id: string) => {
     setSelectedEmailId(id);
     setIsEmailPanelOpen(true);
-  };
+  }, []);
 
-  const clearSelection = () => {
+  const clearSelection = useCallback(() => {
     setSelectedEmailId(null);
     setIsEmailPanelOpen(false);
-  };
+  }, []);
 
-  const toggleSidebar = () => {
+  const toggleSidebar = useCallback(() => {
     setIsSidebarCollapsed(!isSidebarCollapsed);
-  };
+  }, [isSidebarCollapsed]);
 
   // Integrated collapse state getters
   const isFoldersCollapsed = !isFoldersColumnExpanded;
@@ -86,7 +86,7 @@ function InboxLayoutProviderInternal({ children }: { children: ReactNode }) {
   }, []); // No dependencies - always return the same layout
 
   // Reset layout to default universal view
-  const resetToDefaultLayout = () => {
+  const resetToDefaultLayout = useCallback(() => {
     // 1. Collapse sidebar
     if (!isSidebarCollapsed) setIsSidebarCollapsed(true);
     // 2. Ensure folders are expanded to default state (15%)
@@ -95,19 +95,19 @@ function InboxLayoutProviderInternal({ children }: { children: ReactNode }) {
     // The layout percentages are now fixed and universal:
     // Sidebar: 4% (collapsed), Folders: 15%, Inbox: 28%, Email: 52%
     console.log('Reset to universal layout: Sidebar 4%, Folders 15%, Inbox 28%, Email 52%');
-  };
+  }, [isSidebarCollapsed, isFoldersColumnExpanded, toggleFoldersColumn]);
 
-  const autoCollapseForMobile = () => {
+  const autoCollapseForMobile = useCallback(() => {
     // Simple: just collapse folders on mobile
     if (window.innerWidth < 768) {
       if (isFoldersColumnExpanded) toggleFoldersColumn();
     }
-  };
+  }, [isFoldersColumnExpanded, toggleFoldersColumn]);
 
-  const expandAllPanels = () => {
+  const expandAllPanels = useCallback(() => {
     // Simple: just expand folders
     if (!isFoldersColumnExpanded) toggleFoldersColumn();
-  };
+  }, [isFoldersColumnExpanded, toggleFoldersColumn]);
 
   return (
     <InboxLayoutContext.Provider

@@ -585,6 +585,20 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     }
   };
 
+  // Handle create filter from context menu
+  const handleCreateFilter = (email: Email) => {
+    // Navigate to settings filters page
+    navigate('/settings', {
+      state: { 
+        createFilter: true,
+        emailData: {
+          from: email.from.email,
+          subject: email.subject,
+        }
+      }
+    });
+  };
+
   // Simple and reliable search suggestions
   const generateSimpleSearchSuggestions = (query: string): SearchSuggestion[] => {
     if (!query.trim()) return [];
@@ -966,11 +980,12 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                       {activeTab === 'trash' && trashCount > 0 && (
                         <button 
                           onClick={handleEmptyTrash}
-                          className="p-2 hover:bg-red-50 rounded-md transition-colors flex items-center justify-center text-red-600 hover:text-red-700"
+                          className="px-2 py-2 hover:bg-red-50 rounded-md transition-colors flex items-center justify-center text-red-600 hover:text-red-700"
                           disabled={refreshing || isSearching || isEmptyingTrash}
                           title="Empty trash (permanently delete all)"
                         >
-                          <Trash2 size={16} className={isEmptyingTrash ? 'animate-pulse' : ''} />
+                          <Trash2 size={16} className={`mr-1 ${isEmptyingTrash ? 'animate-pulse' : ''}`} />
+                          <span className="text-sm font-medium">Delete all</span>
                         </button>
                       )}
                       <button 
@@ -1052,6 +1067,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                     onClick={handleEmailClick}
                     onEmailUpdate={handleEmailUpdate}
                     onEmailDelete={handleEmailDelete}
+                    onCreateFilter={handleCreateFilter}
                     currentTab={pageType === 'inbox' && !labelName ? activeTab : undefined}
                   />
                 ))}
@@ -1106,6 +1122,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                     isDraggable={false}
                     onEmailUpdate={() => {}}
                     onEmailDelete={() => {}}
+                    onCreateFilter={() => {}}
                   />
                 </div>
               ) : null}

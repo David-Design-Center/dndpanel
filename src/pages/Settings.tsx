@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import SignatureManager from '../components/common/SignatureManager';
 import OutOfOfficeManager from '../components/common/OutOfOfficeManager';
 import SettingsFilters from '../components/SettingsFilters';
 import { useAuth } from '../contexts/AuthContext';
 import { useProfile } from '../contexts/ProfileContext';
+import { useFilterCreation } from '../contexts/FilterCreationContext';
 import { 
   PenTool, 
   Clock, 
@@ -15,7 +17,31 @@ import {
 function Settings() {
   const { isGmailSignedIn, signInGmail, signOutGmail } = useAuth();
   const { currentProfile } = useProfile();
+  const { filterCreation } = useFilterCreation();
   const [activeSection, setActiveSection] = useState<'signature' | 'outofoffice' | 'filters' | null>(null);
+  const location = useLocation();
+
+  // Check if we should auto-open filters section from context menu or filter creation context
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const tabParam = params.get('tab');
+    
+    // Check URL parameters first
+    if (tabParam === 'filters') {
+      setActiveSection('filters');
+    }
+    
+    // Check filter creation context
+    if (filterCreation.isCreating && filterCreation.shouldOpenCreate) {
+      setActiveSection('filters');
+    }
+    
+    // Legacy: Check location state
+    const state = location.state as any;
+    if (state?.createFilter) {
+      setActiveSection('filters');
+    }
+  }, [location.search, location.state, filterCreation.isCreating, filterCreation.shouldOpenCreate]);
 
   const handleSignInGmail = async () => {
     if (!currentProfile) {

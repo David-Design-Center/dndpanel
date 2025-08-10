@@ -15,6 +15,7 @@ import {
   FileSignature,
   Globe,
   FileSpreadsheet,
+  Paperclip,
 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Toggle } from '../ui/toggle';
@@ -31,6 +32,8 @@ interface RichTextEditorProps {
   showSignatureButton?: boolean;
   showPriceRequestButton?: boolean;
   onOpenPriceRequest?: () => void;
+  onFileAttachment?: (files: FileList) => void;
+  showFileAttachmentButton?: boolean;
 }
 
 const RichTextEditor: React.FC<RichTextEditorProps> = ({
@@ -43,10 +46,13 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
   signature = '',
   showSignatureButton = false,
   showPriceRequestButton = false,
-  onOpenPriceRequest
+  onOpenPriceRequest,
+  onFileAttachment,
+  showFileAttachmentButton = false
 }) => {
   const editorRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [showHighlightColors, setShowHighlightColors] = useState(false);
   const [showImageSizes, setShowImageSizes] = useState(false);
   const [showImageUrlDialog, setShowImageUrlDialog] = useState(false); // Add this state
@@ -527,6 +533,25 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
     setShowImageUrlDialog(true);
   }, [disabled, saveSelection]);
 
+  // Handle file attachment
+  const handleFileAttachment = useCallback(() => {
+    if (disabled) return;
+    fileInputRef.current?.click();
+  }, [disabled]);
+
+  // Handle file selection
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0 && onFileAttachment) {
+      onFileAttachment(files);
+    }
+
+    // Reset input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  }, [onFileAttachment]);
+
   return (
     <>
       <div className={cn("border border-gray-200 rounded-lg overflow-hidden rich-text-editor", className)}>
@@ -769,6 +794,21 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
             <Globe size={14} />
           </Button>
           
+          {/* File Attachment Button */}
+          {showFileAttachmentButton && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={handleFileAttachment}
+              disabled={disabled}
+              title="Attach File (PDF, DOC, CSV, etc.)"
+              className="h-8 px-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50"
+            >
+              <Paperclip size={14} />
+            </Button>
+          )}
+          
           {/* Price Request Button */}
           {showPriceRequestButton && (
             <Button
@@ -901,6 +941,16 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
         type="file"
         accept="image/*"
         onChange={handleImageFile}
+        style={{ display: 'none' }}
+      />
+      
+      {/* Hidden file input for attachments */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip,.rar,.ppt,.pptx"
+        onChange={handleFileSelect}
+        multiple
         style={{ display: 'none' }}
       />
       </div>

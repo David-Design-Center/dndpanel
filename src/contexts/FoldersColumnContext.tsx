@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useMemo, ReactNode } from 'react';
 
 interface FoldersColumnContextType {
   isFoldersColumnExpanded: boolean;
@@ -11,18 +11,18 @@ const FoldersColumnContext = createContext<FoldersColumnContextType | undefined>
 export function FoldersColumnProvider({ children }: { children: ReactNode }) {
   const [isFoldersColumnExpanded, setIsFoldersColumnExpanded] = useState(true);
 
-  const toggleFoldersColumn = () => {
+  const toggleFoldersColumn = useCallback(() => {
     setIsFoldersColumnExpanded(prev => !prev);
-  };
+  }, []);
+
+  const value = useMemo(() => ({
+    isFoldersColumnExpanded,
+    setIsFoldersColumnExpanded,
+    toggleFoldersColumn,
+  }), [isFoldersColumnExpanded, toggleFoldersColumn]);
 
   return (
-    <FoldersColumnContext.Provider
-      value={{
-        isFoldersColumnExpanded,
-        setIsFoldersColumnExpanded,
-        toggleFoldersColumn,
-      }}
-    >
+    <FoldersColumnContext.Provider value={value}>
       {children}
     </FoldersColumnContext.Provider>
   );

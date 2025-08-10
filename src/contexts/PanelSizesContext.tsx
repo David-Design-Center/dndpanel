@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useMemo, ReactNode } from 'react';
 
 interface PanelSizesContextType {
   panelSizes: {
@@ -22,18 +22,18 @@ export function PanelSizesProvider({ children }: { children: ReactNode }) {
     };
   });
 
-  const updatePanelSizes = (sizes: { folders: number; emailList: number; emailView: number }) => {
+  const updatePanelSizes = useCallback((sizes: { folders: number; emailList: number; emailView: number }) => {
     setPanelSizes(sizes);
     localStorage.setItem('emailPanelSizes', JSON.stringify(sizes));
-  };
+  }, []);
+
+  const value = useMemo(() => ({
+    panelSizes,
+    updatePanelSizes,
+  }), [panelSizes, updatePanelSizes]);
 
   return (
-    <PanelSizesContext.Provider
-      value={{
-        panelSizes,
-        updatePanelSizes,
-      }}
-    >
+    <PanelSizesContext.Provider value={value}>
       {children}
     </PanelSizesContext.Provider>
   );

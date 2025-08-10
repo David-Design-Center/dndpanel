@@ -23,7 +23,6 @@ function AnimatedThreeColumnLayout({ children, onEmailUpdate }: AnimatedThreeCol
     isFoldersCollapsed,
     toggleFolders,
     getOptimalLayout,
-    autoCollapseForMobile,
     expandAllPanels
   } = useInboxLayout();
 
@@ -39,18 +38,19 @@ function AnimatedThreeColumnLayout({ children, onEmailUpdate }: AnimatedThreeCol
   // Simple responsive behavior - only auto-collapse folders on mobile
   useEffect(() => {
     const handleResize = () => {
-      if (window.innerWidth < 768) {
-        autoCollapseForMobile();
-      }
+      // Temporarily disabled to debug remount issue
+      // if (window.innerWidth < 768) {
+      //   autoCollapseForMobile();
+      // }
     };
 
-    // Initial check
-    handleResize();
+    // Initial check - disabled
+    // handleResize();
     
     // Listen for resize
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [autoCollapseForMobile]);
+  }, []); // Removed autoCollapseForMobile dependency
 
   // Add keyboard shortcuts for power users
   useEffect(() => {

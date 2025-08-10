@@ -29,6 +29,7 @@ export interface Email {
   isRead: boolean;
   isImportant?: boolean;
   date: string;
+  labelIds?: string[]; // Gmail label IDs assigned to this email
   attachments?: {
     name: string;
     url: string;

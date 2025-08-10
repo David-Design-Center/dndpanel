@@ -261,7 +261,6 @@ export const InvoicePreviewModal: React.FC<InvoicePreviewModalProps> = ({
                       /* Target specific data fields for precise positioning */
                       [data-field="customer-name"],
                       [data-field="customer-address"],
-                      [data-field="customer-location"],
                       [data-field="customer-phone"],
                       [data-field="customer-email"],
                       [data-field="subtotal"],
@@ -297,24 +296,6 @@ export const InvoicePreviewModal: React.FC<InvoicePreviewModalProps> = ({
                         bottom: 0px;
                         background-color: ${isFieldChanged('customer_address', invoice.customer_address) ? 'rgba(239, 68, 68, 0.15)' : 'transparent'};
                         border: ${isFieldChanged('customer_address', invoice.customer_address) ? '1px solid rgba(239, 68, 68, 0.5)' : 'none'};
-                        border-radius: 2px;
-                        pointer-events: none;
-                        z-index: 10;
-                      }
-                      
-                      [data-field="customer-location"]::after {
-                        content: '';
-                        position: absolute;
-                        top: 0px;
-                        left: 0px;
-                        right: 0px;
-                        bottom: 0px;
-                        background-color: ${(isFieldChanged('customer_city', invoice.customer_city) || 
-                          isFieldChanged('customer_state', invoice.customer_state) || 
-                          isFieldChanged('customer_zip', invoice.customer_zip)) ? 'rgba(239, 68, 68, 0.15)' : 'transparent'};
-                        border: ${(isFieldChanged('customer_city', invoice.customer_city) || 
-                          isFieldChanged('customer_state', invoice.customer_state) || 
-                          isFieldChanged('customer_zip', invoice.customer_zip)) ? '1px solid rgba(239, 68, 68, 0.5)' : 'none'};
                         border-radius: 2px;
                         pointer-events: none;
                         z-index: 10;
@@ -416,27 +397,6 @@ export const InvoicePreviewModal: React.FC<InvoicePreviewModalProps> = ({
                         border: ${isFieldChanged('customer_address', invoice.customer_address) ? '2px solid rgba(239, 68, 68, 0.6)' : 'none'};
                         border-radius: 4px;
                         box-shadow: ${isFieldChanged('customer_address', invoice.customer_address) ? '0 0 5px rgba(239, 68, 68, 0.4)' : 'none'};
-                        pointer-events: none;
-                        z-index: 10;
-                      }
-                      
-                      [data-field="customer-location"]::after {
-                        content: '';
-                        position: absolute;
-                        top: -2px;
-                        left: -2px;
-                        right: -2px;
-                        bottom: -2px;
-                        background-color: ${(isFieldChanged('customer_city', invoice.customer_city) || 
-                          isFieldChanged('customer_state', invoice.customer_state) || 
-                          isFieldChanged('customer_zip', invoice.customer_zip)) ? 'rgba(239, 68, 68, 0.2)' : 'transparent'};
-                        border: ${(isFieldChanged('customer_city', invoice.customer_city) || 
-                          isFieldChanged('customer_state', invoice.customer_state) || 
-                          isFieldChanged('customer_zip', invoice.customer_zip)) ? '2px solid rgba(239, 68, 68, 0.6)' : 'none'};
-                        border-radius: 4px;
-                        box-shadow: ${(isFieldChanged('customer_city', invoice.customer_city) || 
-                          isFieldChanged('customer_state', invoice.customer_state) || 
-                          isFieldChanged('customer_zip', invoice.customer_zip)) ? '0 0 5px rgba(239, 68, 68, 0.4)' : 'none'};
                         pointer-events: none;
                         z-index: 10;
                       }
@@ -561,7 +521,6 @@ export const InvoicePreviewModal: React.FC<InvoicePreviewModalProps> = ({
                       @media print {
                         [data-field="customer-name"]::after,
                         [data-field="customer-address"]::after,
-                        [data-field="customer-location"]::after,
                         [data-field="customer-phone"]::after,
                         [data-field="customer-email"]::after,
                         [data-field="subtotal"]::after,

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Folder, Tag, Plus, Search, X, ChevronLeft, MoreVertical, Edit, Trash2, Filter, ChevronRight, ChevronDown, FolderOpen } from 'lucide-react';
@@ -13,6 +13,7 @@ import {
 import { useToast } from '@/components/ui/use-toast';
 import { useLabel } from '../contexts/LabelContext';
 import { GmailLabel } from '../types';
+import FoldersWithUnread from './FoldersWithUnread';
 
 interface NestedLabel {
   id: string;
@@ -31,7 +32,7 @@ interface FoldersColumnProps {
 }
 
 function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
-  const { labels, loadingLabels } = useLabel();
+  const { labels, loadingLabels, deleteLabel } = useLabel();
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
   const [editingLabelId, setEditingLabelId] = useState<string | null>(null);
@@ -130,6 +131,12 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
         node.labelObj = label;
         node.messagesUnread = label.messagesUnread || 0;
         node.id = label.id;
+        
+        // Debug: Log unread count assignment
+        if (label.messagesUnread && label.messagesUnread > 0) {
+          console.log(`🏷️ Assigning unread count to ${label.name}: ${label.messagesUnread}`);
+        }
+        
         // Don't override isLeaf and isFolder here - they should be determined by the dynamic check
         // The final isLeaf determination happens in convertMapToArray based on children count
       }
@@ -150,6 +157,11 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
           isLeaf: node.children.size === 0 // Dynamic check: if no children, it's a leaf
         };
         
+        // Debug: Log converted node with unread counts
+        if (node.messagesUnread > 0) {
+          console.log(`🔄 Converting node "${node.name}" with ${node.messagesUnread} unread messages`);
+        }
+        
         result.push(nestedLabel);
       }
       
@@ -158,10 +170,35 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
       return result;
     };
 
-    const finalTree = convertMapToArray(root.children);
-    console.log('🌳 Final label tree:', finalTree);
+    // Step 4: Calculate total unread counts including children (bubble up)
+    const calculateTotalUnreadCounts = (nodes: NestedLabel[]): NestedLabel[] => {
+      return nodes.map(node => {
+        // First, recursively process children
+        const updatedChildren = calculateTotalUnreadCounts(node.children);
+        
+        // Calculate total unread count: own count + sum of all children's total counts
+        const childrenUnreadTotal = updatedChildren.reduce((sum, child) => sum + (child.messagesUnread || 0), 0);
+        const ownUnreadCount = node.messagesUnread || 0;
+        const totalUnreadCount = ownUnreadCount + childrenUnreadTotal;
+        
+        return {
+          ...node,
+          children: updatedChildren,
+          messagesUnread: totalUnreadCount
+        };
+      });
+    };
+
+    const treeWithCounts = calculateTotalUnreadCounts(convertMapToArray(root.children));
     
-    return finalTree;
+    console.log('🌳 Final label tree with bubbled unread counts:', treeWithCounts.map(item => ({
+      name: item.name,
+      displayName: item.displayName,
+      messagesUnread: item.messagesUnread,
+      children: item.children.length
+    })));
+    
+    return treeWithCounts;
   }, [labels]);
 
   // Filter tree based on search term
@@ -207,6 +244,14 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
     }
   };
 
+  const handleLabelClickById = useCallback((labelId: string) => {
+    // Find the label by ID and get its name
+    const label = labels.find(l => l.id === labelId);
+    if (label) {
+      navigate(`/inbox?labelName=${encodeURIComponent(label.name)}`);
+    }
+  }, [labels, navigate]);
+
   const handleCreateLabel = async () => {
     if (!newLabelName.trim()) return;
     
@@ -238,14 +283,13 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
     
     if (window.confirm(`Are you sure you want to delete the label "${label.displayName}"? This action cannot be undone.`)) {
       try {
-        // TODO: Implement label deletion API call
         console.log('Deleting label:', label.name);
+        await deleteLabel(label.id);
+        
         toast({
           title: "Label Deleted",
           description: `Successfully deleted label "${label.displayName}"`,
         });
-        // You'll need to add this to your label context
-        // await deleteLabel(label.id);
       } catch (error) {
         console.error('Failed to delete label:', error);
         toast({
@@ -303,10 +347,10 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
   // Recursive component for rendering label tree
   const renderLabelTree = (nodes: NestedLabel[], depth: number = 0) => {
     return nodes.map((node) => (
-      <div key={node.fullPath} className="mb-1">
+      <div key={node.fullPath} className="">
         {editingLabelId === node.id ? (
           // Edit mode (only for leaf nodes)
-          <div className="px-3 py-2 space-y-2" style={{ marginLeft: `${depth * 16}px` }}>
+          <div className="px-2 py-1 space-y-1" style={{ marginLeft: `${depth * 12}px` }}>
             <Input
               value={editingLabelName}
               onChange={(e) => setEditingLabelName(e.target.value)}
@@ -349,7 +393,7 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
               <Button
                 variant="ghost"
                 onClick={() => handleLabelClick(node)}
-                className="flex-1 justify-start px-3 py-2 text-left h-[36px] rounded-r-none border-r-0 min-w-0 overflow-hidden"
+                className="flex-1 justify-start px-3 py-1.5 text-left h-[32px] rounded-r-none border-r-0 min-w-0 overflow-hidden"
               >
                 <div className="flex items-center w-full min-w-0">
                   {/* Folder/Label Icon with Expand/Collapse */}
@@ -363,14 +407,14 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
                           <ChevronRight size={14} className="text-gray-400 mr-1" />
                         )}
                         {expandedFolders.has(node.fullPath) ? (
-                          <FolderOpen size={14} className="text-blue-500" />
+                          <FolderOpen size={14} className="text-yellow-500" />
                         ) : (
-                          <Folder size={14} className="text-gray-400 group-hover:text-blue-500 transition-colors" />
+                          <Folder size={14} className="text-yellow-500 transition-colors" />
                         )}
                       </>
                     ) : (
                       // Label
-                      <Tag size={14} className="text-gray-400 group-hover:text-blue-500 flex-shrink-0 transition-colors ml-5" />
+                      <Tag size={14} className="text-green-500 flex-shrink-0 transition-colors ml-5" />
                     )}
                   </div>
                   
@@ -384,11 +428,22 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
                     </p>
                   </div>
                   
-                  {(node.messagesUnread && node.messagesUnread > 0) && (
-                    <div className="ml-2 bg-blue-100 text-blue-700 text-xs px-1.5 py-0.5 rounded-full min-w-[20px] text-center flex-shrink-0">
-                      {node.messagesUnread > 99 ? '99+' : node.messagesUnread}
-                    </div>
-                  )}
+                  {/* Show count badges */}
+                  <div className="flex items-center space-x-1 ml-2">
+                    {/* Unread count badge - only show if count > 0 */}
+                    {(node.messagesUnread || 0) > 0 && (
+                      <div className="bg-blue-100 text-blue-700 text-xs px-1.5 py-0.5 rounded-full min-w-[20px] text-center flex-shrink-0">
+                        {(node.messagesUnread || 0) > 99 ? '99+' : (node.messagesUnread || 0)}
+                      </div>
+                    )}
+                    
+                    {/* Total messages count - only show if count > 0 and it's a leaf label */}
+                    {node.isLeaf && node.labelObj && (node.labelObj.messagesTotal || 0) > 0 && (
+                      <div className="bg-gray-100 text-gray-600 text-xs px-1.5 py-0.5 rounded-full text-center flex-shrink-0">
+                        {(node.labelObj.messagesTotal || 0) > 999 ? `${Math.floor((node.labelObj.messagesTotal || 0) / 1000)}k` : (node.labelObj.messagesTotal || 0)}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </Button>
               
@@ -399,7 +454,7 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-[36px] w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity rounded-l-none"
+                      className="h-[32px] w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity rounded-l-none"
                     >
                       <MoreVertical size={14} className="text-gray-400" />
                     </Button>
@@ -427,7 +482,7 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
             
             {/* Render children if folder is expanded */}
             {!node.isLeaf && expandedFolders.has(node.fullPath) && node.children.length > 0 && (
-              <div className="mt-1">
+              <div className="mt-0.5">
                 {renderLabelTree(node.children, depth + 1)}
               </div>
             )}
@@ -563,24 +618,37 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
 
               {/* Folders List */}
               <div className="flex-1 overflow-y-auto custom-scrollbar">
-                {loadingLabels ? (
-                  <div className="p-4 text-center">
-                    <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-blue-500 mx-auto mb-2"></div>
-                    <p className="text-xs text-gray-500">Loading folders...</p>
-                  </div>
-                ) : filteredTree.length > 0 ? (
+                <div className="space-y-4">
+                  {/* Folders with Unread Section - Always render */}
                   <div className="p-2">
-                    {renderLabelTree(filteredTree)}
+                    <FoldersWithUnread 
+                      onOpenLabel={handleLabelClickById}
+                      maxUnreadToScan={1000}
+                      topN={12}
+                    />
                   </div>
-                ) : searchTerm ? (
-                  <div className="p-4 text-center">
-                    <p className="text-xs text-gray-500">No folders found for "{searchTerm}"</p>
-                  </div>
-                ) : (
-                  <div className="p-4 text-center">
-                    <p className="text-xs text-gray-500">No folders available</p>
-                  </div>
-                )}
+
+                  {/* Regular Folders Tree */}
+                  {loadingLabels ? (
+                    <div className="p-4 text-center">
+                      <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-blue-500 mx-auto mb-2"></div>
+                      <p className="text-xs text-gray-500">Loading folders...</p>
+                    </div>
+                  ) : filteredTree.length > 0 ? (
+                    <div className="p-2">
+                      <div className="mb-2">
+                        <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">All Folders</h4>
+                      </div>
+                      {renderLabelTree(filteredTree)}
+                    </div>
+                  ) : (
+                    <div className="p-4 text-center">
+                      <p className="text-xs text-gray-500">
+                        {searchTerm ? 'No folders match your search.' : 'No folders found.'}
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
             </motion.div>
           )}

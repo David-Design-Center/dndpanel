@@ -11,7 +11,6 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { useProfile } from '../contexts/ProfileContext';
-import { useAuth } from '../contexts/AuthContext';
 import { 
   fetchDashboardMetrics,
   DashboardMetrics,
@@ -40,7 +39,6 @@ import { format } from 'date-fns';
 
 function Dashboard() {
   const { currentProfile } = useProfile();
-  const { isAdmin } = useAuth();
   const navigate = useNavigate();
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [loading, setLoading] = useState(true);
@@ -76,13 +74,13 @@ function Dashboard() {
     { name: 'Dec', total: 1890 },
   ];
 
-  // Redirect if not admin
+  // Redirect if not David
   useEffect(() => {
-    if (!isAdmin) {
+    if (currentProfile && currentProfile.name !== 'David') {
       navigate('/inbox');
       return;
     }
-  }, [isAdmin, navigate]);
+  }, [currentProfile, navigate]);
 
   // Fetch dashboard data
   const fetchData = async (forceRefresh = false) => {
@@ -110,7 +108,7 @@ function Dashboard() {
       // Set under deposit invoices
       try {
         setLoadingInvoices(true);
-        const invoicesData = await fetchUnderDepositInvoices(forceRefresh, currentProfile?.name);
+        const invoicesData = await fetchUnderDepositInvoices(forceRefresh);
         setUnderDepositInvoices(invoicesData);
       } catch (error) {
         console.error('Error fetching under-deposit invoices:', error);
@@ -138,7 +136,7 @@ function Dashboard() {
         await fetchOrdersForDate(date, forceRefresh);
       } else {
         // Otherwise fetch the latest orders
-        const recentOrders = await fetchRecentOrders(undefined, forceRefresh, currentProfile?.name);
+        const recentOrders = await fetchRecentOrders(undefined, forceRefresh);
         setRecentOrdersList(recentOrders);
       }
     } catch (err) {
@@ -154,7 +152,7 @@ function Dashboard() {
   const fetchOrdersForDate = async (selectedDate: Date, forceRefresh = false) => {
     try {
       setLoadingOrders(true);
-      const orders = await fetchRecentOrders(selectedDate, forceRefresh, currentProfile?.name);
+      const orders = await fetchRecentOrders(selectedDate, forceRefresh);
       setRecentOrdersList(orders);
     } catch (error) {
       console.error('Error fetching orders for date:', error);
@@ -181,8 +179,8 @@ function Dashboard() {
     fetchData(true);
   };
 
-  // If not admin, show access denied
-  if (!isAdmin) {
+  // If not David, show access denied
+  if (currentProfile && currentProfile.name !== 'David') {
     return (
       <div className="fade-in">
         <div className="text-center py-16">
@@ -192,7 +190,7 @@ function Dashboard() {
             </div>
             <h3 className="text-lg font-medium text-gray-900 mb-2">Access Denied</h3>
             <p className="text-gray-600 mb-6">
-              This dashboard is only accessible to administrators.
+              This dashboard is only accessible to authorized users.
             </p>
             <button
               onClick={() => navigate('/inbox')}

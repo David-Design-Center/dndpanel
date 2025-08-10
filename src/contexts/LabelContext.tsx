@@ -5,7 +5,7 @@ import { fetchGmailLabels, createGmailLabel, updateGmailLabel, deleteGmailLabel 
 import { useAuth } from './AuthContext';
 import { useProfile } from './ProfileContext';
 import { useSecurity } from './SecurityContext';
-import { securityLog, devLog } from '../utils/logging';
+import { devLog } from '../utils/logging';
 import { shouldBlockDataFetches } from '../utils/authFlowUtils';
 
 interface LabelContextType {
@@ -84,6 +84,17 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       setError(null);
       
       const gmailLabels = await fetchGmailLabels();
+      
+      // Debug: Log labels with counts (only those with counts to reduce noise)
+      const labelsWithCounts = gmailLabels.filter(label => 
+        (label.messagesUnread || 0) > 0 || (label.messagesTotal || 0) > 0
+      );
+      console.log('Labels with counts:', labelsWithCounts.map(label => ({
+        name: label.name,
+        messagesUnread: label.messagesUnread,
+        messagesTotal: label.messagesTotal
+      })));
+      
       setLabels(gmailLabels);
       
       // Cache the result
@@ -94,11 +105,15 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       
     } catch (err) {
       console.error('Error fetching Gmail labels:', err);
-      setError(err instanceof Error ? err.message : 'Failed to fetch labels');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch labels';
+      setError(errorMessage);
+      
+      // Don't clear existing labels on error, keep showing what we have
+      // This prevents the UI from going blank during rate limit errors
     } finally {
       setLoadingLabels(false);
     }
-  }, [isGmailSignedIn, isGmailApiReady, currentProfile, isDataLoadingAllowed, authFlowCompleted, location.pathname]);
+  }, [isGmailSignedIn, isGmailApiReady, currentProfile?.id, isDataLoadingAllowed, authFlowCompleted]); // Removed location.pathname to prevent unnecessary refreshes on navigation
 
   const clearLabelsCache = () => {
     labelsCache.current = {};

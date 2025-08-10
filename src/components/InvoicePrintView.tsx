@@ -91,7 +91,7 @@ function InvoicePrintView({ invoice, innerRef, showInternalView = false }: Invoi
               src="https://res.cloudinary.com/designcenter/image/upload/v1741965462/DnD_Logo_Transparent.svg"
               alt="D&D Design Center Logo"
               style={{
-                height: '60px',
+                height: '100px',
                 width: 'auto',
                 marginRight: '12px'
               }}
@@ -224,23 +224,6 @@ function InvoicePrintView({ invoice, innerRef, showInternalView = false }: Invoi
                 }}
                 data-field="customer-address"
               >{invoice.address}</span>
-            </p>
-            <p style={{
-              margin: '2px 0',
-              fontSize: '11px',
-              fontWeight: '500'
-            }}>
-              <span style={{
-                fontSize: '10px',
-                fontWeight: 'bold',
-                color: '#666'
-              }}>Location: </span>
-              <span 
-                style={{
-                  fontSize: '11px'
-                }}
-                data-field="customer-location"
-              >{invoice.city}, {invoice.state} {invoice.zip}</span>
             </p>
             <p style={{
               margin: '2px 0',

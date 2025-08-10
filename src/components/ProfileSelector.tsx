@@ -70,7 +70,7 @@ function ProfileSelector() {
             className="flex items-center px-4 py-2 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-50 w-full text-left border-t border-gray-100 rounded-b-lg transition-colors"
           >
             <ArrowRight size={12} className="mr-2" />
-            <span>Switch Profile</span>
+            <span>Log Out</span>
           </button>
         )}
       </div>

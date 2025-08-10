@@ -37,6 +37,7 @@ declare global {
             };
             labels: {
               list: (params: any) => Promise<any>;
+              get: (params: any) => Promise<any>;
               create: (params: any) => Promise<any>;
               update: (params: any) => Promise<any>;
               delete: (params: any) => Promise<any>;
@@ -802,6 +803,7 @@ export const fetchGmailMessages = async (
           isRead: !msg.result.labelIds?.includes('UNREAD'),
           isImportant: msg.result.labelIds?.includes('IMPORTANT'),
           date: format(new Date(dateHeader), "yyyy-MM-dd'T'HH:mm:ss"),
+          labelIds: msg.result.labelIds || [],
           attachments: attachments.length > 0 ? attachments : undefined,
           threadId: msg.result.threadId
         } as Email);
@@ -999,6 +1001,7 @@ export const fetchGmailMessageById = async (id: string): Promise<Email | undefin
       isRead: !msg.result.labelIds?.includes('UNREAD'),
       isImportant: msg.result.labelIds?.includes('IMPORTANT'),
       date: format(new Date(dateHeader), "yyyy-MM-dd'T'HH:mm:ss"),
+      labelIds: msg.result.labelIds || [],
       attachments: attachments.length > 0 ? attachments : undefined,
       threadId: msg.result.threadId
     } as Email;
@@ -1271,9 +1274,9 @@ export const processInlineImages = async (
   try {
     console.log(`🖼️ processInlineImages: Starting for message ${messageId}`);
     console.log(`📝 Original HTML length: ${htmlContent.length}`);
-    console.log(`🔍 HTML contains img tags: ${htmlContent.includes('<img')}`);
-    console.log(`🔍 HTML contains data: URLs: ${htmlContent.includes('data:')}`);
-    console.log(`🔍 HTML contains cid: references: ${htmlContent.includes('cid:')}`);
+    console.log(` HTML contains img tags: ${htmlContent.includes('<img')}`);
+    console.log(` HTML contains data: URLs: ${htmlContent.includes('data:')}`);
+    console.log(` HTML contains cid: references: ${htmlContent.includes('cid:')}`);
     
     // If HTML already contains data URLs, it's likely already processed
     if (htmlContent.includes('data:image/') && !htmlContent.includes('cid:')) {
@@ -1352,7 +1355,7 @@ export const processInlineImages = async (
         }
         
         if (!replacementMade) {
-          console.warn(`⚠️ processInlineImages: No replacement made for CID ${img.contentId}. Checking if img tag exists...`);
+          console.warn(` processInlineImages: No replacement made for CID ${img.contentId}. Checking if img tag exists...`);
           // Look for any img tag that might reference this image by filename
           if (img.filename) {
             const filenamePattern = new RegExp(`<img[^>]*alt=["\'][^"']*${img.filename}[^"']*["\'][^>]*>`, 'gi');
@@ -1370,7 +1373,7 @@ export const processInlineImages = async (
     console.log(`Processed inline images for message ${messageId}: ${processedImages.length} images replaced`);
     return processedHtml;
   } catch (error) {
-    console.error(`❌ processInlineImages: Error processing inline images for message ${messageId}:`, error);
+    console.error(` processInlineImages: Error processing inline images for message ${messageId}:`, error);
     // Return original content on error
     return htmlContent;
   }
@@ -1755,7 +1758,7 @@ export const sendGmailMessage = async (
       resource: requestBody
     });
 
-    console.log(`✅ Email sent successfully:`, response);
+    console.log(` Email sent successfully:`, response);
 
     return { 
       success: true, 
@@ -1763,7 +1766,7 @@ export const sendGmailMessage = async (
     };
 
   } catch (error) {
-    console.error('❌ Error sending email via Gmail:', error);
+    console.error(' Error sending email via Gmail:', error);
     throw error;
   }
 };
@@ -2072,7 +2075,7 @@ export const saveGmailDraft = async (
       });
     }
 
-    console.log(`✅ Draft saved successfully:`, response);
+    console.log(` Draft saved successfully:`, response);
 
     return { 
       success: true, 
@@ -2080,7 +2083,7 @@ export const saveGmailDraft = async (
     };
 
   } catch (error) {
-    console.error('❌ Error saving draft via Gmail:', error);
+    console.error(' Error saving draft via Gmail:', error);
     throw error;
   }
 };
@@ -2101,10 +2104,10 @@ export const deleteGmailDraft = async (draftId: string): Promise<void> => {
       id: draftId
     });
 
-    console.log(`✅ Draft deleted successfully: ${draftId}`);
+    console.log(` Draft deleted successfully: ${draftId}`);
 
   } catch (error) {
-    console.error('❌ Error deleting draft:', error);
+    console.error(' Error deleting draft:', error);
     throw error;
   }
 };
@@ -2120,6 +2123,7 @@ export const fetchGmailLabels = async (): Promise<GmailLabel[]> => {
 
     console.log('Fetching Gmail labels...');
 
+    // Step 1: Get all labels (this only returns basic info, no counters)
     const response = await window.gapi.client.gmail.users.labels.list({
       userId: 'me'
     });
@@ -2129,17 +2133,79 @@ export const fetchGmailLabels = async (): Promise<GmailLabel[]> => {
       return [];
     }
 
-    const labels: GmailLabel[] = response.result.labels.map((label: any) => ({
+    console.log(' Raw Gmail API response from list:', response.result);
+    console.log(`� Found ${response.result.labels.length} labels, now fetching details with counters...`);
+
+    // Step 2: Get detailed info for ONLY key system labels to avoid rate limits
+    const keySystemLabels = response.result.labels.filter((label: any) => {
+      const keyLabels = ['INBOX', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'IMPORTANT', 'STARRED'];
+      return keyLabels.includes(label.id);
+    });
+
+    console.log(` Fetching detailed info for ${keySystemLabels.length} key system labels only`);
+
+    // Process system labels with delays to avoid rate limiting
+    const labelDetails = [...response.result.labels]; // Start with all basic labels
+    
+    for (let i = 0; i < keySystemLabels.length; i++) {
+      const label = keySystemLabels[i];
+      try {
+        // Add delay between requests to avoid rate limiting
+        if (i > 0) {
+          await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
+        }
+        
+        const detailResponse = await window.gapi.client.gmail.users.labels.get({
+          userId: 'me',
+          id: label.id
+        });
+        
+        // Replace the basic label with detailed info
+        const labelIndex = labelDetails.findIndex(l => l.id === label.id);
+        if (labelIndex !== -1) {
+          labelDetails[labelIndex] = detailResponse.result;
+        }
+        
+        console.log(` Fetched details for ${label.name}`);
+      } catch (error: any) {
+        if (error?.status === 429) {
+          console.warn(` Rate limited for ${label.name}, using basic info`);
+          // Add longer delay if rate limited
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        } else {
+          console.warn(` Failed to fetch details for ${label.name}:`, error?.message || error);
+        }
+      }
+    }
+
+    console.log(' Raw label details with counters:', labelDetails);
+
+    const labels: GmailLabel[] = labelDetails.map((label: any) => ({
       id: label.id,
       name: label.name,
       messageListVisibility: label.messageListVisibility,
       labelListVisibility: label.labelListVisibility,
       type: label.type,
-      messagesTotal: label.messagesTotal,
-      messagesUnread: label.messagesUnread,
-      threadsTotal: label.threadsTotal,
-      threadsUnread: label.threadsUnread
+      messagesTotal: label.messagesTotal || 0,
+      messagesUnread: label.messagesUnread || 0,
+      threadsTotal: label.threadsTotal || 0,
+      threadsUnread: label.threadsUnread || 0
     }));
+
+    // Log statistics
+    const labelsWithCounts = labels.filter(label => 
+      (label.messagesTotal || 0) > 0 || (label.messagesUnread || 0) > 0
+    );
+
+    console.log(`Found ${labelsWithCounts.length} labels with message counts`);
+
+    // Log key system labels only
+    const keyLabels = ['INBOX', 'SENT', 'DRAFT'].map(name => labels.find(l => l.name === name)).filter(Boolean);
+    console.log('KEY SYSTEM LABELS:', keyLabels.map(label => ({
+      name: label?.name,
+      total: label?.messagesTotal,
+      unread: label?.messagesUnread
+    })));
 
     console.log(`Successfully fetched ${labels.length} Gmail labels`);
     return labels;
@@ -2283,17 +2349,19 @@ export const deleteGmailLabel = async (id: string): Promise<void> => {
       throw new Error('Cannot delete system labels');
     }
 
-    console.log(`Deleting Gmail label: ${id}`);
+    console.log(`Attempting to delete Gmail label with ID: ${id}`);
 
-    await window.gapi.client.gmail.users.labels.delete({
+    const response = await window.gapi.client.gmail.users.labels.delete({
       userId: 'me',
       id: id
     });
 
+    console.log(`Gmail API delete response:`, response);
     console.log(`Successfully deleted Gmail label: ${id}`);
 
   } catch (error) {
     console.error('Error deleting Gmail label:', error);
+    console.error('Error details:', JSON.stringify(error, null, 2));
     throw error;
   }
 };
@@ -2780,7 +2848,7 @@ export const emptyGmailTrash = async (): Promise<void> => {
       }
     }
 
-    console.log(`✅ Successfully emptied trash - deleted ${messages.length} messages`);
+    console.log(` Successfully emptied trash - deleted ${messages.length} messages`);
   } catch (error) {
     console.error('Error emptying Gmail trash:', error);
     throw error;
