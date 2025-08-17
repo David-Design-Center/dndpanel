@@ -11,7 +11,7 @@ import InvoicePrintView, {
   calculateRowTotal,
   calculatePaymentMethodTotals,
   formatCurrency 
-} from '../components/InvoicePrintView';
+} from '../components/invoice/InvoicePrintView';
 import {
   fetchInvoiceByOrderId,
   saveInvoiceToSupabase,

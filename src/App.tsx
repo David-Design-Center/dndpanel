@@ -11,6 +11,8 @@ import { GooeyFilter } from './components/ui/liquid-toggle';
 
 // Lazy load non-critical components only
 const Auth = lazy(() => import('./pages/Auth'));
+const ResetPassword = lazy(() => import('./pages/ResetPassword'));
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ViewEmail = lazy(() => import('./pages/ViewEmail'));
 const Compose = lazy(() => import('./pages/Compose'));
 const Settings = lazy(() => import('./pages/Settings'));
@@ -25,7 +27,7 @@ const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 
 // Import core email components directly for instant loading
-import Layout from './components/Layout';
+import Layout from './components/layout/Layout';
 import Inbox from './pages/Inbox';
 import Unread from './pages/Unread';
 
@@ -88,6 +90,18 @@ function App() {
         <Route path="/auth" element={
           <Suspense fallback={<Loading />}>
             <Auth />
+          </Suspense>
+        } />
+        
+        <Route path="/auth/reset" element={
+          <Suspense fallback={<Loading />}>
+            <ResetPassword />
+          </Suspense>
+        } />
+        
+        <Route path="/auth/forgot" element={
+          <Suspense fallback={<Loading />}>
+            <ForgotPassword />
           </Suspense>
         } />
         

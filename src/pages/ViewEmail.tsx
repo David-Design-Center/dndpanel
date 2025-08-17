@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Reply, Trash, Paperclip, Tag, ChevronDown, Forward, Users } from 'lucide-react';
+import { ArrowLeft, Reply, Trash, Paperclip, Tag, ChevronDown, Forward, Users, MoreHorizontal, Eye, Download } from 'lucide-react';
 import { formatDistanceToNow, parseISO, format } from 'date-fns';
-import { getAttachmentDownloadUrl, markEmailAsTrash, applyLabelsToEmail, deleteDraft } from '../services/emailService';
+import { getAttachmentDownloadUrl, markEmailAsTrash, applyLabelsToEmail, deleteDraft, markAsRead } from '../services/emailService';
 import { optimizedEmailService } from '../services/optimizedEmailService';
 import { Email } from '../types';
 import { useProfile } from '../contexts/ProfileContext';
@@ -30,6 +30,10 @@ const stripQuotedContent = (html: string): string => {
       cleaned = cleaned.replace(/On\s+[^<]*wrote:\s*<br[^>]*>/gi, '');
       cleaned = cleaned.replace(/<p[^>]*>On\s+[^<]*wrote:[\s\S]*?<\/p>/gi, '');
       
+      // Remove email headers (De:, From:, Sent:, To:, Subject:, etc.) - Support multiple languages
+      cleaned = cleaned.replace(/(De:|From:|Enviada:|Sent:|Para:|To:|Assunto:|Subject:|Cc:|Data:|Date:|Von:|An:|Betreff:|Gesendet:|Objet:|Envoyé:|Da:|A:|Oggetto:|Inviato:)[^<\n]*(<br[^>]*>|\n)/gi, '');
+      cleaned = cleaned.replace(/<p[^>]*>(De:|From:|Enviada:|Sent:|Para:|To:|Assunto:|Subject:|Cc:|Data:|Date:|Von:|An:|Betreff:|Gesendet:|Objet:|Envoyé:|Da:|A:|Oggetto:|Inviato:)[^<]*<\/p>/gi, '');
+      
       return cleaned.trim().length > 20 ? cleaned : html;
     } catch (error) {
       console.warn('Error with regex cleaning, falling back to original:', error);
@@ -46,11 +50,30 @@ const stripQuotedContent = (html: string): string => {
     const quotedElements = tempDiv.querySelectorAll('.gmail_quote, blockquote, [class*="quote"]');
     quotedElements.forEach(el => el.remove());
     
+    // Remove email header patterns - Support multiple languages
+    const headerPatterns = [
+      /^(De:|From:|Enviada:|Sent:|Para:|To:|Assunto:|Subject:|Cc:|Data:|Date:|Von:|An:|Betreff:|Gesendet:|Objet:|Envoyé:|Da:|A:|Oggetto:|Inviato:)/i
+    ];
+    
+    // Find and remove paragraphs or text nodes that contain email headers
+    const allElements = tempDiv.querySelectorAll('p, div, span');
+    allElements.forEach(element => {
+      const text = element.textContent || '';
+      const isHeader = headerPatterns.some(pattern => pattern.test(text.trim()));
+      if (isHeader) {
+        element.remove();
+      }
+    });
+    
+    // Remove standalone header text patterns - Support multiple languages
+    let htmlContent = tempDiv.innerHTML;
+    htmlContent = htmlContent.replace(/(De:|From:|Enviada:|Sent:|Para:|To:|Assunto:|Subject:|Cc:|Data:|Date:|Von:|An:|Betreff:|Gesendet:|Objet:|Envoyé:|Da:|A:|Oggetto:|Inviato:)[^<\n]*(<br[^>]*>|\n)/gi, '');
+    tempDiv.innerHTML = htmlContent;
+    
     // Remove "On [date], [person] wrote:" patterns at the end
     const textContent = tempDiv.textContent || '';
     if (textContent.match(/\n\s*On\s+.+wrote:\s*$/gi)) {
-      const htmlContent = tempDiv.innerHTML;
-      const cleanedHtml = htmlContent.replace(/<[^>]*>On\s+[^<]*wrote:[^<]*<\/[^>]*>[\s\S]*$/gi, '');
+      const cleanedHtml = tempDiv.innerHTML.replace(/<[^>]*>On\s+[^<]*wrote:[^<]*<\/[^>]*>[\s\S]*$/gi, '');
       if (cleanedHtml.trim().length > 20) {
         tempDiv.innerHTML = cleanedHtml;
       }
@@ -180,6 +203,51 @@ const getSenderColor = (email: string): string => {
   // Use the hash to pick a color consistently
   const colorIndex = Math.abs(hash) % colors.length;
   return colors[colorIndex];
+};
+
+// Function to check if the email is from the current user
+const isCurrentUser = (email: string, currentProfile?: any): boolean => {
+  if (!currentProfile) return false;
+  const currentUserEmails = [
+    'me@example.com',
+    'david.v@dnddesigncenter.com',
+    currentProfile.email,
+    currentProfile.name?.toLowerCase() + '@dnddesigncenter.com'
+  ].filter(Boolean);
+  
+  return currentUserEmails.some(userEmail => 
+    email.toLowerCase() === userEmail?.toLowerCase()
+  );
+};
+
+// Component for rendering a profile avatar with better styling
+const ProfileAvatar = ({ 
+  name, 
+  email, 
+  isCurrentUser: isCurrentUserProp, 
+  size = 'default' 
+}: { 
+  name: string; 
+  email: string; 
+  isCurrentUser?: boolean;
+  size?: 'small' | 'default' | 'large';
+}) => {
+  const sizeClasses = {
+    small: 'h-8 w-8 text-sm',
+    default: 'h-12 w-12 text-base',
+    large: 'h-16 w-16 text-lg'
+  };
+
+  const initial = getProfileInitial(name, email);
+  const colorClasses = isCurrentUserProp 
+    ? 'from-gray-600 to-gray-700' // Current user gets a consistent gray
+    : getSenderColor(email);
+
+  return (
+    <div className={`${sizeClasses[size]} rounded-full bg-gradient-to-br ${colorClasses} flex items-center justify-center text-white font-semibold shadow-sm flex-shrink-0 ring-2 ring-white`}>
+      {initial}
+    </div>
+  );
 };
 
 // Function to extract preview text from HTML content
@@ -525,6 +593,7 @@ function ViewEmail() {
     emailId: string;
   } | null>(null);
   const [isDraft, setIsDraft] = useState(false);
+  const [messageActionDropdowns, setMessageActionDropdowns] = useState<Set<string>>(new Set());
   const navigate = useNavigate();
   const { currentProfile } = useProfile();
   const { user } = useAuth();
@@ -597,12 +666,20 @@ function ViewEmail() {
         return new Date(b.date).getTime() - new Date(a.date).getTime();
       });
       
-      console.log(`✅ Server-side processing completed: ${sortedEmails.length} emails`);
-      setProcessedThreadMessages(sortedEmails);
+      console.log(`✅ Server-side processing completed: ${sortedEmails.length} individual emails`);
+      
+      // Ensure each email has a unique ID to prevent grouping
+      const uniqueEmails = sortedEmails.map((email, index) => ({
+        ...email,
+        id: email.id || `${threadId}-message-${index}`, // Ensure unique ID
+        uniqueKey: `${email.id}-${index}` // Add a unique key for React rendering
+      }));
+      
+      setProcessedThreadMessages(uniqueEmails);
       
       // Auto-expand the first (newest/top) message
-      if (sortedEmails.length > 0) {
-        setExpandedMessages(new Set([sortedEmails[0].id]));
+      if (uniqueEmails.length > 0) {
+        setExpandedMessages(new Set([uniqueEmails[0].id]));
       }
       
       return;
@@ -671,11 +748,21 @@ function ViewEmail() {
     }
   }, [location.state, email?.threadId]);
 
+  // Mark email as read when it's viewed (optimistic update)
+  useEffect(() => {
+    if (email && !email.isRead) {
+      // Mark as read in the background, but don't wait for it
+      markAsRead(email.id).catch(error => {
+        console.error('Failed to mark email as read in ViewEmail:', error);
+      });
+    }
+  }, [email?.id, email?.isRead]);
+
   // Function to process messages with progress tracking
   const processMessages = async (emails: Email[]) => {
     if (emails.length === 0) return;
     
-    console.log(`🔄 Starting to process ${emails.length} emails`);
+    console.log(`🔄 Starting to process ${emails.length} individual emails`);
     setProcessingThread(true);
     setProcessingProgress({ current: 0, total: emails.length });
     
@@ -695,13 +782,20 @@ function ViewEmail() {
       console.log(`⏳ Waiting for minimum delay to complete`);
       await minDelay;
       
-      console.log(`✅ Setting processed messages: ${processed.length} items`);
-      setProcessedThreadMessages(processed);
+      console.log(`✅ Setting processed messages: ${processed.length} individual items`);
+      
+      // Ensure each processed email has a unique identifier for rendering
+      const uniqueProcessed = processed.map((email, index) => ({
+        ...email,
+        uniqueKey: `${email.id}-processed-${index}` // Add unique key for React
+      }));
+      
+      setProcessedThreadMessages(uniqueProcessed);
       
       // Auto-expand the first (newest/top) message after processing
-      if (processed.length > 0) {
-        console.log(`🔍 Auto-expanding first message: ${processed[0].id}`);
-        setExpandedMessages(new Set([processed[0].id]));
+      if (uniqueProcessed.length > 0) {
+        console.log(`🔍 Auto-expanding first message: ${uniqueProcessed[0].id}`);
+        setExpandedMessages(new Set([uniqueProcessed[0].id]));
       }
     } catch (error) {
       console.error('Error processing thread messages:', error);
@@ -739,6 +833,30 @@ function ViewEmail() {
     });
   };
 
+  // Function to toggle action dropdown
+  const toggleActionDropdown = (messageId: string) => {
+    setMessageActionDropdowns(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(messageId)) {
+        newSet.delete(messageId);
+      } else {
+        newSet.clear(); // Close all other dropdowns
+        newSet.add(messageId);
+      }
+      return newSet;
+    });
+  };
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = () => {
+      setMessageActionDropdowns(new Set());
+    };
+    
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, []);
+
   // Function to handle applying a label
   const handleAssignLabel = async (labelId: string) => {
     if (!email) return;
@@ -770,14 +888,8 @@ function ViewEmail() {
       'pixel', 'tracking', 'beacon', 'transparent', 'blank'
     ];
     
-    // Filter out very small images (likely logos or spacers)
-    const isVerySmallImage = mimeType.startsWith('image/') && attachment.size < 5000; // Less than 5KB
-    
-    // Filter out common irrelevant file extensions
-    const irrelevantExtensions = ['.gif', '.png', '.jpg', '.jpeg', '.svg'];
-    const hasIrrelevantExtension = irrelevantExtensions.some(ext => 
-      name.endsWith(ext) && attachment.size < 10000 // Small images with these extensions
-    );
+    // Filter out very small images that are likely logos or spacers (reduced threshold)
+    const isVerySmallImage = mimeType.startsWith('image/') && attachment.size < 2000; // Less than 2KB (reduced from 5KB)
     
     // Check if name contains irrelevant patterns
     const hasIrrelevantPattern = irrelevantPatterns.some(pattern => name.includes(pattern));
@@ -785,15 +897,14 @@ function ViewEmail() {
     // Filter out attachments that are likely inline/embedded content
     const isLikelyInlineContent = (
       isVerySmallImage || 
-      hasIrrelevantPattern || 
-      (hasIrrelevantExtension && attachment.size < 10000) ||
+      hasIrrelevantPattern ||
       name.startsWith('image') ||
       name.includes('cid:') ||
       name.match(/^[a-f0-9-]{20,}$/) // Random hash-like names
     );
     
-    // Only show attachments that are likely actual files the user attached
-    return !isLikelyInlineContent && attachment.size > 1000; // At least 1KB
+    // Show more attachments - only require 500 bytes minimum (reduced from 1KB)
+    return !isLikelyInlineContent && attachment.size > 500;
   };
 
   // Utility function to filter duplicate attachments and remove irrelevant ones
@@ -945,15 +1056,20 @@ ${threadMessage.body}
 
   const handleDownloadAttachment = async (attachment: NonNullable<Email['attachments']>[0], emailId?: string) => {
     try {
-      console.log('🔍 Download attempt - Full attachment object:', attachment);
+      console.log('🔍 Download attempt - Full attachment object:', {
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+        attachmentId: attachment.attachmentId,
+        partId: attachment.partId
+      });
       
       if (!attachment.attachmentId) {
-        console.error('❌ No attachment ID available. Attachment:', attachment);
+        console.error('❌ No attachment ID available. Full attachment:', attachment);
         alert(`No attachment ID available for download. This attachment might not be downloadable: ${attachment.name}`);
         return;
       }
       
-      // Debug: Check user email
       console.log('🔍 Download attempt - User email:', user?.email);
       
       setDownloadingAttachment(attachment.name);
@@ -961,13 +1077,15 @@ ${threadMessage.body}
       // Use the provided emailId (for thread emails) or fall back to the main email ID
       const messageId = emailId || email?.id;
       if (!messageId) {
-        console.error('No message ID available for download');
-        throw new Error('No message ID available for download');
+        console.error('❌ No message ID available for download');
+        alert('No message ID available for download');
+        return;
       }
       
       if (!user?.email) {
-        console.error('No user email available for download');
-        throw new Error('User email is required for attachment download');
+        console.error('❌ No user email available for download');
+        alert('User email is required for attachment download');
+        return;
       }
       
       console.log('🔍 Calling getAttachmentDownloadUrl with:', {
@@ -989,6 +1107,12 @@ ${threadMessage.body}
       
       console.log('✅ Download URL obtained:', downloadUrl);
       
+      if (!downloadUrl) {
+        console.error('❌ No download URL returned');
+        alert('Failed to get download URL for attachment');
+        return;
+      }
+      
       // Create a link element and trigger the download
       const link = document.createElement('a');
       link.href = downloadUrl;
@@ -998,9 +1122,12 @@ ${threadMessage.body}
       link.click();
       document.body.removeChild(link);
       
+      console.log('✅ Download triggered successfully');
+      
     } catch (error) {
       console.error('❌ Error downloading attachment:', error);
-      alert(`Failed to download attachment: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Failed to download attachment: ${errorMessage}`);
     } finally {
       setDownloadingAttachment(null);
     }
@@ -1192,126 +1319,226 @@ ${threadMessage.body}
       </div>
 
       {/* Thread Messages */}
-      <div className="space-y-6">
+      <div className="space-y-2 pb-6">
         {allThreadMessages.map((threadMessage, index) => {
           const previewText = extractPreviewText(threadMessage.body, 120);
           const isLastMessage = index === allThreadMessages.length - 1;
           const isExpanded = expandedMessages.has(threadMessage.id);
+          const isFromCurrentUser = isCurrentUser(threadMessage.from.email, currentProfile);
+          const isDropdownOpen = messageActionDropdowns.has(threadMessage.id);
           
-          console.log(`Message ${index + 1} preview:`, previewText); // Debug log
+          // Use a unique key that combines multiple identifiers
+          const uniqueKey = (threadMessage as any).uniqueKey || `${threadMessage.id}-${index}-${threadMessage.date}`;
           
           return (
             <div 
-              key={threadMessage.id} 
-              className={`bg-white rounded-xl border shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden ${
-                isLastMessage ? 'border-blue-200 ring-1 ring-blue-100' : 'border-gray-200'
-              }`}
+              key={uniqueKey}
+              className={`relative bg-white border border-gray-200 shadow-sm transition-all duration-200 overflow-hidden ${
+                isLastMessage ? 'border-l-4 border-l-blue-500 shadow-md' : ''
+              } ${isFromCurrentUser ? 'ml-8' : 'mr-8'}`}
+              style={{
+                borderRadius: isLastMessage ? '12px' : '8px',
+                marginBottom: index < allThreadMessages.length - 1 ? '2px' : '0'
+              }}
             >
-              <div className="p-6">
-                <div className="flex items-start space-x-4">
-                  {/* Avatar/Bubble */}
-                  <div className={`h-12 w-12 rounded-full bg-gradient-to-br ${getSenderColor(threadMessage.from.email)} flex items-center justify-center text-white text-base font-semibold shadow-sm flex-shrink-0`}>
-                    {getProfileInitial(threadMessage.from.name, threadMessage.from.email)}
-                  </div>
-                  
-                  {/* Message Content */}
+              {/* Clean Separator Line */}
+              {index > 0 && (
+                <div className="absolute -top-1 left-0 right-0 h-px bg-gradient-to-r from-transparent via-gray-300 to-transparent"></div>
+              )}
+              
+              {/* Message Header */}
+              <div className="flex items-center justify-between p-4 bg-gray-50 border-b border-gray-100">
+                <div className="flex items-center space-x-3">
+                  <ProfileAvatar
+                    name={threadMessage.from.name}
+                    email={threadMessage.from.email}
+                    isCurrentUser={isFromCurrentUser}
+                    size="default"
+                  />
                   <div className="flex-1 min-w-0">
-                    {/* Header with sender and date */}
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center space-x-2 min-w-0 flex-1">
-                        <span className="text-base font-semibold text-gray-900 truncate">
-                          {threadMessage.from.name || threadMessage.from.email}
-                        </span>
-                        <span className="text-sm text-gray-500 truncate">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-sm font-semibold text-gray-900 truncate">
+                        {isFromCurrentUser ? 'You' : (threadMessage.from.name || threadMessage.from.email)}
+                      </span>
+                      {!isFromCurrentUser && (
+                        <span className="text-xs text-gray-500 truncate">
                           &lt;{threadMessage.from.email}&gt;
                         </span>
-                      </div>
-                      <span className="text-sm text-gray-500 flex-shrink-0 ml-2" title={format(parseISO(threadMessage.date), 'PPpp')}>
-                        {formatDistanceToNow(parseISO(threadMessage.date), { addSuffix: true })}
-                      </span>
-                    </div>
-                    
-                    {/* Message Preview or Full Content */}
-                    <div className="cursor-pointer" onClick={() => toggleMessageExpansion(threadMessage.id)}>
-                      {isExpanded ? (
-                        <div className="border border-gray-200 rounded-xl p-6 bg-gray-50 overflow-hidden">
-                          <div className="prose prose-sm max-w-none overflow-hidden">
-                            <div className="email-content-container max-w-full overflow-hidden">
-                              <IframeEmailRenderer 
-                                html={threadMessage.body} 
-                                attachments={threadMessage.attachments}
-                                className="w-full max-w-full overflow-hidden rounded-lg"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="text-base text-gray-700 leading-relaxed mb-3 hover:text-gray-900 transition-colors">
-                          <div className="line-clamp-3 break-words">
-                            {previewText}
-                          </div>
-                        </div>
                       )}
                     </div>
+                    <div className="flex items-center space-x-2 mt-1">
+                      <span className="text-xs text-gray-500" title={format(parseISO(threadMessage.date), 'PPpp')}>
+                        {formatDistanceToNow(parseISO(threadMessage.date), { addSuffix: true })}
+                      </span>
+                      {threadMessage.to && threadMessage.to.length > 0 && (
+                        <span className="text-xs text-gray-400">
+                          to {threadMessage.to.map(t => t.name || t.email).join(', ')}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex items-center space-x-2">
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleReplyToMessage(threadMessage);
+                    }}
+                    className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                    title="Reply"
+                  >
+                    <Reply size={16} />
+                  </button>
+                  
+                  <div className="relative">
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleActionDropdown(threadMessage.id);
+                      }}
+                      className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                      title="More actions"
+                    >
+                      <MoreHorizontal size={16} />
+                    </button>
                     
-                    {/* Toggle Button and Action Buttons */}
-                    <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
-                      <button 
-                        onClick={() => toggleMessageExpansion(threadMessage.id)}
-                        className="text-sm text-blue-600 hover:text-blue-800 font-medium transition-colors"
-                      >
-                        {isExpanded ? 'Show less' : 'Show more'}
-                      </button>
-                      
-                      {/* Message Action Buttons */}
-                      <div className="flex items-center space-x-3">
-                        <button 
+                    {isDropdownOpen && (
+                      <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-20">
+                        <button
                           onClick={(e) => {
                             e.stopPropagation();
                             handleReplyToMessage(threadMessage);
+                            setMessageActionDropdowns(new Set());
                           }}
-                          className="flex items-center px-3 py-1.5 text-sm text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                          title="Reply to this message"
+                          className="flex items-center w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
                         >
-                          <Reply size={14} className="mr-1.5" />
+                          <Reply size={14} className="mr-3" />
                           Reply
                         </button>
-                        
-                        <button 
+                        <button
                           onClick={(e) => {
                             e.stopPropagation();
                             handleReplyAllToMessage(threadMessage);
+                            setMessageActionDropdowns(new Set());
                           }}
-                          className="flex items-center px-3 py-1.5 text-sm text-gray-600 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                          title="Reply to all recipients"
+                          className="flex items-center w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
                         >
-                          <Users size={14} className="mr-1.5" />
+                          <Users size={14} className="mr-3" />
                           Reply All
                         </button>
-                        
-                        <button 
+                        <button
                           onClick={(e) => {
                             e.stopPropagation();
                             handleForwardMessage(threadMessage);
+                            setMessageActionDropdowns(new Set());
                           }}
-                          className="flex items-center px-3 py-1.5 text-sm text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                          title="Forward this message"
+                          className="flex items-center w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
                         >
-                          <Forward size={14} className="mr-1.5" />
+                          <Forward size={14} className="mr-3" />
                           Forward
                         </button>
-                      </div>
-                    </div>
-                    
-                    {/* Attachment indicator */}
-                    {threadMessage.attachments && threadMessage.attachments.filter(isRelevantAttachment).length > 0 && (
-                      <div className="flex items-center text-xs text-blue-600 mt-2">
-                        <Paperclip size={12} className="mr-1" />
-                        {threadMessage.attachments.filter(isRelevantAttachment).length} attachment{threadMessage.attachments.filter(isRelevantAttachment).length > 1 ? 's' : ''}
                       </div>
                     )}
                   </div>
                 </div>
+              </div>
+
+              {/* Message Content */}
+              <div className="p-4">
+                <div className="cursor-pointer" onClick={() => toggleMessageExpansion(threadMessage.id)}>
+                  {isExpanded ? (
+                    <div className="border border-gray-200 rounded-lg p-4 bg-gray-50 overflow-hidden">
+                      <div className="prose prose-sm max-w-none overflow-hidden">
+                        <div className="email-content-container max-w-full overflow-hidden">
+                          <IframeEmailRenderer 
+                            html={threadMessage.body} 
+                            attachments={threadMessage.attachments}
+                            className="w-full max-w-full overflow-hidden rounded-lg"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-gray-700 leading-relaxed hover:text-gray-900 transition-colors">
+                      <div className="line-clamp-3 break-words">
+                        {previewText}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                
+                {/* Toggle Button and Attachments */}
+                <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
+                  <button 
+                    onClick={() => toggleMessageExpansion(threadMessage.id)}
+                    className="text-sm text-blue-600 hover:text-blue-800 font-medium transition-colors"
+                  >
+                    {isExpanded ? 'Show less' : 'Show more'}
+                  </button>
+                  
+                  {/* Attachment indicator */}
+                  {threadMessage.attachments && threadMessage.attachments.filter(isRelevantAttachment).length > 0 && (
+                    <div className="flex items-center text-xs text-blue-600">
+                      <Paperclip size={12} className="mr-1" />
+                      {threadMessage.attachments.filter(isRelevantAttachment).length} attachment{threadMessage.attachments.filter(isRelevantAttachment).length > 1 ? 's' : ''}
+                    </div>
+                  )}
+                </div>
+
+                {/* Individual Message Attachments */}
+                {threadMessage.attachments && threadMessage.attachments.filter(isRelevantAttachment).length > 0 && (
+                  <div className="mt-4 pt-3 border-t border-gray-100">
+                    <h5 className="text-xs font-medium text-gray-700 mb-3 flex items-center">
+                      <Paperclip size={12} className="mr-1" />
+                      Attachments in this message ({threadMessage.attachments.filter(isRelevantAttachment).length})
+                    </h5>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                      {threadMessage.attachments.filter(isRelevantAttachment).map((attachment, attachmentIndex) => (
+                        <div key={`${threadMessage.id}-attachment-${attachmentIndex}`} className="bg-white border border-gray-200 rounded-lg p-3 hover:shadow-md transition-all duration-200 group">
+                          <div 
+                            className="flex justify-center mb-2 cursor-pointer"
+                            onClick={() => setPreviewFile({ attachment, emailId: threadMessage.id })}
+                            title="Click to preview"
+                          >
+                            <FileThumbnail
+                              attachment={attachment}
+                              emailId={threadMessage.id}
+                              userEmail={user?.email || ''}
+                              size="medium"
+                              showPreviewButton={true}
+                              onPreviewClick={() => setPreviewFile({ attachment, emailId: threadMessage.id })}
+                            />
+                          </div>
+                          <p className="text-xs font-medium text-gray-900 truncate mb-1" title={attachment.name}>
+                            {attachment.name}
+                          </p>
+                          <p className="text-xs text-gray-500 mb-2">{(attachment.size / 1000).toFixed(0)} KB</p>
+                          <div className="flex flex-col space-y-1">
+                            <button 
+                              onClick={() => setPreviewFile({ attachment, emailId: threadMessage.id })}
+                              className="w-full px-3 py-1.5 text-xs bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors flex items-center justify-center"
+                              title="Preview file"
+                            >
+                              <Eye size={12} className="mr-1" />
+                              Preview
+                            </button>
+                            <button 
+                              onClick={() => handleDownloadAttachment(attachment, threadMessage.id)}
+                              className="w-full px-3 py-1.5 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors flex items-center justify-center"
+                              disabled={downloadingAttachment === attachment.name}
+                              title="Download file"
+                            >
+                              <Download size={12} className="mr-1" />
+                              {downloadingAttachment === attachment.name ? 'Downloading...' : 'Download'}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -1329,13 +1556,17 @@ ${threadMessage.body}
             </h4>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
               {uniqueAttachments.map((attachment, index) => (
-                <div key={index} className="bg-white border border-blue-200 rounded-xl p-4 hover:shadow-md transition-all duration-200">
-                  <div className="flex justify-center mb-3">
+                <div key={index} className="bg-white border border-blue-200 rounded-xl p-4 hover:shadow-md transition-all duration-200 group">
+                  <div 
+                    className="flex justify-center mb-3 cursor-pointer"
+                    onClick={() => setPreviewFile({ attachment, emailId: attachment.emailId })}
+                    title="Click to preview"
+                  >
                     <FileThumbnail
                       attachment={attachment}
                       emailId={attachment.emailId}
                       userEmail={user?.email || ''}
-                      size="small"
+                      size="medium"
                       showPreviewButton={true}
                       onPreviewClick={() => setPreviewFile({ attachment, emailId: attachment.emailId })}
                     />
@@ -1350,16 +1581,19 @@ ${threadMessage.body}
                   <div className="flex flex-col space-y-2">
                     <button 
                       onClick={() => setPreviewFile({ attachment, emailId: attachment.emailId })}
-                      className="w-full px-3 py-1.5 text-xs bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+                      className="w-full px-3 py-1.5 text-xs bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors flex items-center justify-center"
                       title="Preview file"
                     >
+                      <Eye size={12} className="mr-1" />
                       Preview
                     </button>
                     <button 
                       onClick={() => handleDownloadAttachment(attachment, attachment.emailId)}
-                      className="w-full px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                      className="w-full px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center"
                       disabled={downloadingAttachment === attachment.name}
+                      title="Download file"
                     >
+                      <Download size={12} className="mr-1" />
                       {downloadingAttachment === attachment.name ? 'Downloading...' : 'Download'}
                     </button>
                   </div>

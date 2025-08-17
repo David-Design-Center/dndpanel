@@ -124,7 +124,125 @@ function extractInlineImages(payload: EmailPart): Array<{
   return inlineImages;
 }
 
-// Helper function to clean text encoding issues
+// --- Proper email decoding utilities following MIME standards ---
+
+// Base64URL → bytes
+function base64UrlToBytes(b64url: string): Uint8Array {
+  const pad = '='.repeat((4 - (b64url.length % 4)) % 4);
+  const b64 = (b64url.replace(/-/g, '+').replace(/_/g, '/')) + pad;
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+// Minimal quoted-printable → bytes
+function decodeQuotedPrintableToBytes(qp: string): Uint8Array {
+  const cleaned = qp.replace(/=\r?\n/g, '');
+  const out: number[] = [];
+  for (let i = 0; i < cleaned.length; i++) {
+    const ch = cleaned[i];
+    if (ch === '=' && i + 2 < cleaned.length && /[0-9A-Fa-f]{2}/.test(cleaned.slice(i + 1, i + 3))) {
+      out.push(parseInt(cleaned.slice(i + 1, i + 3), 16));
+      i += 2;
+    } else {
+      out.push(ch.charCodeAt(0));
+    }
+  }
+  return new Uint8Array(out);
+}
+
+// RFC 2047 (encoded-word) decoder for headers
+const ENC_WORD_RE = /=\?([^?]+)\?([bBqQ])\?([^?]+)\?=/g;
+
+function decodeRfc2047(headerValue: string): string {
+  if (!headerValue) return '';
+  return headerValue.replace(ENC_WORD_RE, (_, charsetRaw, encRaw, data) => {
+    const charset = String(charsetRaw).toLowerCase();
+    const enc = String(encRaw).toLowerCase();
+    try {
+      let bytes: Uint8Array;
+      if (enc === 'b') {
+        bytes = base64UrlToBytes(data.replace(/\s/g, '').replace(/\+/g, '-').replace(/\//g, '_'));
+      } else { // 'q' (quoted-printable variant for headers: '_' means space)
+        const qp = data.replace(/_/g, ' ');
+        bytes = decodeQuotedPrintableToBytes(qp);
+      }
+      return new TextDecoder(normalizeCharset(charset)).decode(bytes);
+    } catch {
+      return headerValue; // fallback: return original token if decode fails
+    }
+  });
+}
+
+function normalizeCharset(cs: string): string {
+  const m = cs.trim().toLowerCase();
+  if (m === 'utf8') return 'utf-8';
+  if (m.includes('1257')) return 'windows-1257';
+  if (m.includes('1252')) return 'windows-1252';
+  if (m.includes('iso-8859-13')) return 'iso-8859-13';
+  if (m.includes('iso-8859-1')) return 'iso-8859-1';
+  return m;
+}
+
+// Choose charset from headers
+function charsetFromHeaders(headers: Array<{name: string; value: string}>): string | undefined {
+  const h = headers.find(h => h.name.toLowerCase() === 'content-type')?.value ?? '';
+  const m = /charset="?([^;"\s]+)"?/i.exec(h);
+  return m ? normalizeCharset(m[1]) : undefined;
+}
+
+// Decode a single Gmail part into a string
+function decodeGmailPart(part: EmailPart): { text: string; mimeType: string } | null {
+  const mimeType = part.mimeType || 'text/plain';
+  const headers = (part.headers ?? []) as Array<{name: string; value: string}>;
+  const charset = charsetFromHeaders(headers) || 'utf-8';
+  const cte = headers.find(h => h.name.toLowerCase() === 'content-transfer-encoding')?.value?.toLowerCase();
+
+  if (part.body?.data) {
+    const rawBytes = base64UrlToBytes(part.body.data);
+    let bytes: Uint8Array = rawBytes;
+
+    if (cte === 'quoted-printable') {
+      const asAscii = new TextDecoder('iso-8859-1').decode(rawBytes);
+      bytes = decodeQuotedPrintableToBytes(asAscii);
+    }
+
+    const text = new TextDecoder(charset).decode(bytes);
+    return { text, mimeType };
+  }
+
+  if (part.parts && part.parts.length) {
+    const html = part.parts.find(p => (p.mimeType || '').toLowerCase() === 'text/html');
+    const plain = part.parts.find(p => (p.mimeType || '').toLowerCase() === 'text/plain');
+    return decodeGmailPart(html || plain || part.parts[0]);
+  }
+
+  return null;
+}
+
+// Helper to pick best body string from an entire Gmail message
+function decodeGmailMessageBody(message: GmailMessage): { html?: string; text?: string } {
+  const res: { html?: string; text?: string } = {};
+  const walk = (p?: EmailPart) => {
+    if (!p) return;
+    const decoded = decodeGmailPart(p);
+    if (decoded) {
+      if (decoded.mimeType.toLowerCase() === 'text/html' && !res.html) res.html = decoded.text;
+      if (decoded.mimeType.toLowerCase() === 'text/plain' && !res.text) res.text = decoded.text;
+    }
+    (p.parts || []).forEach(walk);
+  };
+  walk(message.payload);
+  return res;
+}
+
+// Get header value
+function getHeaderValue(headers: Array<{name: string; value: string}>, headerName: string): string {
+  return headers.find(h => h.name.toLowerCase() === headerName.toLowerCase())?.value || '';
+}
+
+// Helper function to clean text encoding issues (DEPRECATED - use proper decoding instead)
 function cleanTextEncoding(text: string): string {
   return text
     // Fix common UTF-8 encoding issues
@@ -141,6 +259,30 @@ function cleanTextEncoding(text: string): string {
     .replace(/Ã /g, 'à')
     .replace(/Ã¡/g, 'á')
     .replace(/Ã§/g, 'ç')
+    // Fix Estonian characters (double-encoded UTF-8)
+    .replace(/Ã„/g, 'Ä') // Capital A with diaeresis
+    .replace(/Ã¤/g, 'ä') // Small a with diaeresis
+    .replace(/Ã–/g, 'Ö') // Capital O with diaeresis
+    .replace(/Ã¶/g, 'ö') // Small o with diaeresis
+    .replace(/Ãœ/g, 'Ü') // Capital U with diaeresis
+    .replace(/Ðƒ¼/g, 'ü') // Small u with diaeresis
+    .replace(/Å /g, 'Š') // Capital S with caron
+    .replace(/Å¡/g, 'š') // Small s with caron
+    .replace(/Å½/g, 'Ž') // Capital Z with caron
+    .replace(/Å¾/g, 'ž') // Small z with caron
+    // Fix problematic Estonian character combinations
+    .replace(/Ðµ/g, 'õ') // Fix specific Estonian õ encoding issue
+    .replace(/ÐÐµ/g, 'Õ') // Fix capital Estonian Õ encoding issue
+    .replace(/Ð¸/g, 'ä') // Fix another Estonian ä variant
+    .replace(/Ð°/g, 'a') // Fix specific a encoding
+    .replace(/ð/g, '😊') // Fix emoji encoding (common smiley)
+    // Fix other Nordic/Baltic characters
+    .replace(/Ã…/g, 'Å') // Capital A with ring above
+    .replace(/Ã¥/g, 'å') // Small a with ring above
+    .replace(/Ã†/g, 'Æ') // Capital AE
+    .replace(/Ã¦/g, 'æ') // Small ae
+    .replace(/Ã˜/g, 'Ø') // Capital O with stroke
+    .replace(/Ã¸/g, 'ø') // Small o with stroke
     // Remove multiple consecutive spaces
     .replace(/\s+/g, ' ')
     .trim();
@@ -241,15 +383,25 @@ async function processInlineImages(
 async function processGmailMessage(message: GmailMessage, accessToken: string): Promise<ProcessedEmail> {
   const headers = parseHeaders(message.payload.headers || []);
   
-  // Extract basic email info
-  const subject = headers.subject || '(No Subject)';
-  const fromAddresses = parseEmailAddresses(headers.from || '');
-  const toAddresses = parseEmailAddresses(headers.to || '');
-  const ccAddresses = parseEmailAddresses(headers.cc || '');
+  // Properly decode headers using RFC 2047
+  const subject = decodeRfc2047(headers.subject || '(No Subject)');
+  const fromHeaderValue = decodeRfc2047(headers.from || '');
+  const toHeaderValue = decodeRfc2047(headers.to || '');
+  const ccHeaderValue = decodeRfc2047(headers.cc || '');
+  
+  const fromAddresses = parseEmailAddresses(fromHeaderValue);
+  const toAddresses = parseEmailAddresses(toHeaderValue);
+  const ccAddresses = parseEmailAddresses(ccHeaderValue);
   const date = new Date(parseInt(message.internalDate)).toISOString();
 
-  // Extract body
-  let body = extractEmailBody(message.payload);
+  // Extract body using proper MIME decoding
+  const bodyDecoded = decodeGmailMessageBody(message);
+  let body = bodyDecoded.html || bodyDecoded.text || '';
+  
+  // If no proper decoding worked, fall back to the old method
+  if (!body) {
+    body = extractEmailBody(message.payload);
+  }
   
   // Extract attachments (non-inline)
   const attachments: Array<{
@@ -261,8 +413,10 @@ async function processGmailMessage(message: GmailMessage, accessToken: string): 
 
   function extractAttachments(part: EmailPart) {
     if (part.body?.attachmentId && part.filename && !part.mimeType?.startsWith('image/')) {
+      // Decode filename using RFC 2047 if needed
+      const decodedFilename = decodeRfc2047(part.filename);
       attachments.push({
-        filename: part.filename,
+        filename: decodedFilename,
         mimeType: part.mimeType || 'application/octet-stream',
         size: part.body.size || 0,
         attachmentId: part.body.attachmentId
@@ -284,8 +438,8 @@ async function processGmailMessage(message: GmailMessage, accessToken: string): 
     body = await processInlineImages(message.id, body, inlineImages, accessToken);
   }
 
-  // Clean quoted content (basic server-side cleaning)
-  const cleanedBody = cleanTextEncoding(body)
+  // Clean quoted content (basic server-side cleaning) - no more encoding fixes
+  const cleanedBody = body
     .replace(/<div class="gmail_quote"[\s\S]*?<\/div>/gi, '')
     .replace(/<blockquote[\s\S]*?<\/blockquote>/gi, '')
     .replace(/On\s+[^<]*wrote:\s*<br[^>]*>/gi, '');
@@ -293,13 +447,13 @@ async function processGmailMessage(message: GmailMessage, accessToken: string): 
   return {
     id: message.id,
     threadId: message.threadId,
-    subject: cleanTextEncoding(subject),
+    subject: subject, // Already properly decoded
     from: fromAddresses[0] || { name: 'Unknown', email: 'unknown@example.com' },
     to: toAddresses,
     cc: ccAddresses.length > 0 ? ccAddresses : undefined,
     date,
     body: cleanedBody,
-    snippet: cleanTextEncoding(message.snippet),
+    snippet: decodeRfc2047(message.snippet), // Decode snippet too
     labels: message.labelIds || [],
     attachments,
     hasInlineImages

@@ -125,11 +125,11 @@ const FileThumbnail: React.FC<FileThumbnailProps> = ({
 
     if (thumbnailUrl && attachment.mimeType.startsWith('image/')) {
       return (
-        <div className={`${sizeClasses[size]} relative group`}>
+        <div className={`${sizeClasses[size]} relative group cursor-pointer`} onClick={onPreviewClick}>
           <img
             src={thumbnailUrl}
             alt={attachment.name}
-            className={`${sizeClasses[size]} object-cover rounded-lg shadow-sm`}
+            className={`${sizeClasses[size]} object-cover rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200`}
             onError={() => setThumbnailUrl(null)}
           />
           {showPreviewButton && canPreview(attachment.mimeType) && (
@@ -153,8 +153,8 @@ const FileThumbnail: React.FC<FileThumbnailProps> = ({
     }
 
     return (
-      <div className={`${sizeClasses[size]} relative group`}>
-        <div className={`${sizeClasses[size]} bg-gradient-to-br ${getBackgroundColor(attachment.mimeType)} rounded-lg flex items-center justify-center text-white shadow-sm`}>
+      <div className={`${sizeClasses[size]} relative group cursor-pointer`} onClick={onPreviewClick}>
+        <div className={`${sizeClasses[size]} bg-gradient-to-br ${getBackgroundColor(attachment.mimeType)} rounded-lg flex items-center justify-center text-white shadow-sm hover:shadow-md transition-all duration-200`}>
           {getFileIcon(attachment.mimeType)}
         </div>
         {showPreviewButton && canPreview(attachment.mimeType) && (

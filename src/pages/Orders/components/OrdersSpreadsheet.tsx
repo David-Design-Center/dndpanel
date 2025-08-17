@@ -8,7 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../../../components/ui/dropdown-menu";
-import { InvoicePreviewModal } from '../../../components/InvoicePreviewModal';
+import { InvoicePreviewModal } from '../../../components/invoice/InvoicePreviewModal';
 import { useProfile } from '../../../contexts/ProfileContext';
 import { deleteCustomerOrder } from '../../../services/backendApi';
 

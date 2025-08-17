@@ -30,7 +30,7 @@ function EmailViewer({ htmlContent, className = '' }: EmailViewerProps) {
             isolation: isolate;
             contain: layout style paint size;
             font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-            font-size: 14px;
+            font-size: ${className?.includes('small') ? '13px' : '14px'};
             line-height: 1.5;
             color: #374151;
             background: white;
@@ -40,7 +40,7 @@ function EmailViewer({ htmlContent, className = '' }: EmailViewerProps) {
           
           .email-body {
             font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-            font-size: 14px;
+            font-size: ${className?.includes('small') ? '13px' : '14px'};
             line-height: 1.5;
             color: #374151;
             word-wrap: break-word;
@@ -97,9 +97,9 @@ function EmailViewer({ htmlContent, className = '' }: EmailViewerProps) {
             line-height: 1.2;
           }
           
-          .email-body h1 { font-size: 1.5em; }
-          .email-body h2 { font-size: 1.3em; }
-          .email-body h3 { font-size: 1.1em; }
+          .email-body h1 { font-size: ${className?.includes('small') ? '1.3em' : '1.5em'}; }
+          .email-body h2 { font-size: ${className?.includes('small') ? '1.2em' : '1.3em'}; }
+          .email-body h3 { font-size: ${className?.includes('small') ? '1.05em' : '1.1em'}; }
           .email-body h4, .email-body h5, .email-body h6 { font-size: 1em; }
           
           /* Links */
@@ -229,12 +229,41 @@ function EmailViewer({ htmlContent, className = '' }: EmailViewerProps) {
         // Sanitize and set content
         const sanitizedHtml = sanitizeEmailHtml(htmlContent);
         contentContainer.innerHTML = sanitizedHtml;
+        
+        // Add click handler for links as additional safety
+        contentContainer.addEventListener('click', (event) => {
+          const target = event.target as HTMLElement;
+          if (target.tagName === 'A') {
+            const link = target as HTMLAnchorElement;
+            const href = link.getAttribute('href');
+            if (href && href.trim() !== '' && href !== '#') {
+              event.preventDefault();
+              window.open(href, '_blank', 'noopener,noreferrer');
+            }
+          }
+        });
       }
       
       shadowRootRef.current.appendChild(contentContainer);
     } else {
       // Fallback for browsers without Shadow DOM support
-      containerRef.current.innerHTML = htmlContent ? sanitizeEmailHtml(htmlContent) : '<p style="color: #6b7280; font-style: italic;">No content available</p>';
+      const sanitizedHtml = htmlContent ? sanitizeEmailHtml(htmlContent) : '<p style="color: #6b7280; font-style: italic;">No content available</p>';
+      containerRef.current.innerHTML = sanitizedHtml;
+      
+      // Add click handler for links in fallback mode
+      if (htmlContent) {
+        containerRef.current.addEventListener('click', (event) => {
+          const target = event.target as HTMLElement;
+          if (target.tagName === 'A') {
+            const link = target as HTMLAnchorElement;
+            const href = link.getAttribute('href');
+            if (href && href.trim() !== '' && href !== '#') {
+              event.preventDefault();
+              window.open(href, '_blank', 'noopener,noreferrer');
+            }
+          }
+        });
+      }
     }
   }, [htmlContent]);
 
@@ -270,6 +299,17 @@ function EmailViewer({ htmlContent, className = '' }: EmailViewerProps) {
         el.removeAttribute('border');
         el.removeAttribute('cellpadding');
         el.removeAttribute('cellspacing');
+      });
+      
+      // Process all links to open in new tabs
+      const links = tempDiv.querySelectorAll('a');
+      links.forEach(link => {
+        // Only add target="_blank" if href exists and is not empty
+        const href = link.getAttribute('href');
+        if (href && href.trim() !== '' && href !== '#') {
+          link.setAttribute('target', '_blank');
+          link.setAttribute('rel', 'noopener noreferrer');
+        }
       });
       
       // Clean up text encoding issues - comprehensive character mapping

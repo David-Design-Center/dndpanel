@@ -72,9 +72,12 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     }
 
     // Check cache first to prevent unnecessary API calls
-    const cacheKey = currentProfile.name;
+    // Use profile userEmail + ID for cache key to ensure separation between different profiles
+    const cacheKey = `${currentProfile.id}-${currentProfile.userEmail || 'no-email'}`;
+    console.log('🏷️ Labels cache key:', cacheKey);
     const cached = labelsCache.current[cacheKey];
     if (cached && (Date.now() - cached.timestamp) < CACHE_DURATION) {
+      console.log('📦 Using cached labels for profile:', currentProfile.name);
       setLabels(cached.labels);
       return;
     }
@@ -83,6 +86,7 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       setLoadingLabels(true);
       setError(null);
       
+      console.log('🔄 Fetching fresh Gmail labels for profile:', currentProfile.name, 'email:', currentProfile.userEmail);
       const gmailLabels = await fetchGmailLabels();
       
       // Debug: Log labels with counts (only those with counts to reduce noise)
@@ -97,7 +101,8 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       
       setLabels(gmailLabels);
       
-      // Cache the result
+      // Cache the result with the same key format
+      const cacheKey = `${currentProfile.id}-${currentProfile.userEmail || 'no-email'}`;
       labelsCache.current[cacheKey] = {
         labels: gmailLabels,
         timestamp: Date.now()
@@ -116,6 +121,7 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
   }, [isGmailSignedIn, isGmailApiReady, currentProfile?.id, isDataLoadingAllowed, authFlowCompleted]); // Removed location.pathname to prevent unnecessary refreshes on navigation
 
   const clearLabelsCache = () => {
+    console.log('🗑️ Clearing labels cache');
     labelsCache.current = {};
     setLabels([]);
     setError(null);
@@ -204,14 +210,34 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
   // Listen for profile switches and clear cache
   useEffect(() => {
     const handleClearCache = () => {
+      console.log('🗑️ LabelContext: Clearing labels cache for profile switch');
       clearLabelsCache();
+      
+      // Force immediate refresh after a short delay to allow profile switch to complete
+      setTimeout(() => {
+        if (currentProfile && isGmailSignedIn && isGmailApiReady) {
+          console.log('🔄 LabelContext: Force refreshing labels after profile switch');
+          refreshLabels();
+        }
+      }, 500);
+    };
+
+    const handleForceRefresh = () => {
+      console.log('🔄 LabelContext: Force refresh data event received');
+      if (currentProfile && isGmailSignedIn && isGmailApiReady) {
+        console.log('🔄 LabelContext: Force refreshing labels now');
+        refreshLabels();
+      }
     };
 
     window.addEventListener('clear-all-caches', handleClearCache as EventListener);
+    window.addEventListener('force-refresh-data', handleForceRefresh as EventListener);
+    
     return () => {
       window.removeEventListener('clear-all-caches', handleClearCache as EventListener);
+      window.removeEventListener('force-refresh-data', handleForceRefresh as EventListener);
     };
-  }, [clearLabelsCache]);
+  }, [clearLabelsCache, refreshLabels, currentProfile, isGmailSignedIn, isGmailApiReady]);
 
   const value = {
     labels,

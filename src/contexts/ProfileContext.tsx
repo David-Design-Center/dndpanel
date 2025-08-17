@@ -6,6 +6,7 @@ import { Profile } from '../types';
 import { devLog } from '../utils/logging';
 import { configureDomainWideAuth, configureTraditionalAuth } from '../services/domainWideGmailService';
 import { clearEmailCacheForProfileSwitch } from '../services/emailService';
+import { clearCurrentAccessToken } from '../integrations/gapiService';
 
 interface ProfileContextType {
   profiles: Profile[];
@@ -77,7 +78,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
       
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, name, passcode, is_admin')
+        .select('id, name, passcode, is_admin, userEmail')
         .order('name');
       
       if (error) {
@@ -127,7 +128,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
       // Fetch profile associated with this email
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, name, is_admin')
+        .select('id, name, is_admin, userEmail')
         .eq('userEmail', user.email)
         .single();
 
@@ -186,7 +187,12 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
       // Clear emailService cache specifically for profile switch
       clearEmailCacheForProfileSwitch(profileToSelect.id);
       
+      // CRITICAL: Clear GAPI client token to force fresh token for new profile
+      console.log('🔑 Clearing GAPI client token for profile switch');
+      clearCurrentAccessToken();
+      
       // Clear all caches to prevent data leakage between profiles
+      console.log('🔄 Dispatching clear-all-caches event for profile switch');
       window.dispatchEvent(new CustomEvent('clear-all-caches', {
         detail: { newProfile: profileToSelect.name, oldProfile: currentProfile?.name }
       }));
@@ -195,10 +201,18 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
       sessionStorage.setItem('currentProfileId', id);
       setError(null);
       
-      // Configure domain-wide auth using the authenticated user's email
-      if (user?.email) {
-        configureDomainWideAuth(user.email);
+      // Configure authentication method based on profile email
+      if (profileToSelect.userEmail) {
+        const isDomainUser = profileToSelect.userEmail.endsWith('@dnddesigncenter.com');
+        
+        if (isDomainUser) {
+          configureDomainWideAuth(profileToSelect.userEmail);
+        } else {
+          // For external users, use traditional OAuth
+          configureTraditionalAuth();
+        }
       } else {
+        console.warn('Profile has no userEmail, using traditional auth');
         configureTraditionalAuth();
       }
       
@@ -213,11 +227,20 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
       }
       
       try {
+        // Wait for Gmail initialization to complete
         await initGmail(profileToSelect);
         
         // CRITICAL: Mark auth flow as completed after successful profile selection
         // This allows all data contexts to start fetching
         setAuthFlowCompleted(true);
+        
+        // Force refresh all data contexts after Gmail is ready
+        setTimeout(() => {
+          console.log('🔄 Force refreshing all data after profile switch');
+          window.dispatchEvent(new CustomEvent('force-refresh-data', {
+            detail: { newProfile: profileToSelect.name }
+          }));
+        }, 1000);
         
       } catch (gmailError) {
         console.log('❌ selectProfile: Error initializing Gmail for profile:', gmailError);

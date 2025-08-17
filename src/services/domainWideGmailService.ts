@@ -5,7 +5,7 @@
  * with fallback to traditional OAuth for compatibility
  */
 
-import { fetchGmailAccessToken, makeGmailApiRequest, fetchGmailMessages as fetchMessagesDomainWide } from '@/lib/gmail';
+import { makeGmailApiRequest, fetchGmailMessages as fetchMessagesDomainWide } from '@/lib/gmail';
 import { 
   fetchGmailMessages as fetchMessagesTraditional,
   fetchGmailMessageById as fetchMessageByIdTraditional,
@@ -15,7 +15,6 @@ import {
   markGmailMessageAsRead as markAsReadTraditional,
   markGmailMessageAsUnread as markAsUnreadTraditional,
   markGmailMessageAsStarred as markAsStarredTraditional,
-  markGmailMessageAsUnstarred as markAsUnstarredTraditional,
   markGmailMessageAsTrash as markAsTrashTraditional,
   applyGmailLabels as applyLabelsTraditional,
   isGmailSignedIn,
@@ -408,11 +407,14 @@ function convertGmailMessageToEmail(messageData: any): Email {
 
   return {
     id: messageData.id,
-    from: { name: fromName, email: fromEmail },
+    from: { 
+      name: fromName, // Server-side decoding should handle this
+      email: fromEmail 
+    },
     to: [{ name: 'Me', email: toHeader }],
-    subject: subject,
-    body: body,
-    preview: messageData.snippet || '',
+    subject: subject, // Server-side decoding should handle this
+    body: body, // Server-side decoding should handle this
+    preview: messageData.snippet || '', // Server-side decoding should handle this
     isRead: !messageData.labelIds?.includes('UNREAD'),
     isImportant: messageData.labelIds?.includes('IMPORTANT'),
     date: new Date(dateHeader).toISOString(),

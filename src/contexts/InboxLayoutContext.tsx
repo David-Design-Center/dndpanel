@@ -5,8 +5,6 @@ import { useEmailList } from './EmailListContext';
 interface InboxLayoutContextType {
   selectedEmailId: string | null;
   setSelectedEmailId: (id: string | null) => void;
-  isEmailPanelOpen: boolean;
-  setIsEmailPanelOpen: (open: boolean) => void;
   selectEmail: (id: string) => void;
   clearSelection: () => void;
   
@@ -35,7 +33,6 @@ const InboxLayoutContext = createContext<InboxLayoutContextType | undefined>(und
 // Internal provider that has access to all specialized contexts
 function InboxLayoutProviderInternal({ children }: { children: ReactNode }) {
   const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
-  const [isEmailPanelOpen, setIsEmailPanelOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   
   // Get context hooks
@@ -44,12 +41,10 @@ function InboxLayoutProviderInternal({ children }: { children: ReactNode }) {
 
   const selectEmail = useCallback((id: string) => {
     setSelectedEmailId(id);
-    setIsEmailPanelOpen(true);
   }, []);
 
   const clearSelection = useCallback(() => {
     setSelectedEmailId(null);
-    setIsEmailPanelOpen(false);
   }, []);
 
   const toggleSidebar = useCallback(() => {
@@ -114,8 +109,6 @@ function InboxLayoutProviderInternal({ children }: { children: ReactNode }) {
       value={{
         selectedEmailId,
         setSelectedEmailId,
-        isEmailPanelOpen,
-        setIsEmailPanelOpen,
         selectEmail,
         clearSelection,
         

@@ -409,7 +409,7 @@ export interface PaginatedEmailServiceResponse {
 // Service functions
 export const getEmails = async (
   forceRefresh = false, 
-  query = 'in:inbox', 
+  query = 'in:inbox category:primary', 
   maxResults = 10, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
@@ -485,11 +485,11 @@ export const getEmails = async (
         }
       });
       
-      // Check for auto-reply on new unread emails (only for inbox queries)
-      if (query.includes('in:inbox') && !pageToken) {
+      // Check for auto-reply on new unread emails (only for primary inbox queries)
+      if (query.includes('in:inbox') && query.includes('category:primary') && !pageToken) {
         const unreadEmails = gmailResponse.emails.filter(email => !email.isRead);
         
-        console.log(`Processing ${unreadEmails.length} unread emails for auto-reply`);
+        console.log(`Processing ${unreadEmails.length} unread primary emails for auto-reply`);
         
         for (const email of unreadEmails) {
           try {
@@ -519,8 +519,57 @@ export const getEmails = async (
 
 // Specialized query functions
 export const getUnreadEmails = async (forceRefresh = false): Promise<Email[]> => {
-  const response = await getEmails(forceRefresh, 'is:unread');
+  const response = await getEmails(forceRefresh, 'in:inbox category:primary is:unread');
   return response.emails;
+};
+
+export const getPrimaryEmails = async (
+  forceRefresh = false, 
+  maxResults = 10, 
+  pageToken?: string
+): Promise<PaginatedEmailServiceResponse> => {
+  return getEmails(forceRefresh, 'in:inbox category:primary', maxResults, pageToken);
+};
+
+export const getPromotionsEmails = async (
+  forceRefresh = false, 
+  maxResults = 10, 
+  pageToken?: string
+): Promise<PaginatedEmailServiceResponse> => {
+  return getEmails(forceRefresh, 'in:inbox category:promotions', maxResults, pageToken);
+};
+
+export const getSocialEmails = async (
+  forceRefresh = false, 
+  maxResults = 10, 
+  pageToken?: string
+): Promise<PaginatedEmailServiceResponse> => {
+  return getEmails(forceRefresh, 'in:inbox category:social', maxResults, pageToken);
+};
+
+export const getUpdatesEmails = async (
+  forceRefresh = false, 
+  maxResults = 10, 
+  pageToken?: string
+): Promise<PaginatedEmailServiceResponse> => {
+  return getEmails(forceRefresh, 'in:inbox category:updates', maxResults, pageToken);
+};
+
+export const getForumsEmails = async (
+  forceRefresh = false, 
+  maxResults = 10, 
+  pageToken?: string
+): Promise<PaginatedEmailServiceResponse> => {
+  return getEmails(forceRefresh, 'in:inbox category:forums', maxResults, pageToken);
+};
+
+export const getAllInboxEmails = async (
+  forceRefresh = false, 
+  maxResults = 10, 
+  pageToken?: string
+): Promise<PaginatedEmailServiceResponse> => {
+  // This returns ALL inbox emails including all categories (like your original behavior)
+  return getEmails(forceRefresh, 'in:inbox', maxResults, pageToken);
 };
 
 export const getSentEmails = async (
@@ -740,6 +789,70 @@ export const getAttachmentDownloadUrl = async (
     console.error('Error getting attachment download URL:', error);
     throw error;
   }
+};
+
+export const sendReply = async (
+  originalEmail: Email,
+  replyContent: string,
+  replyToAll: boolean = false
+): Promise<{success: boolean; threadId?: string}> => {
+  try {
+    // Get current user's profile
+    const userProfile = await getUserProfile();
+    if (!userProfile) {
+      console.error('Unable to get user profile for reply');
+      return { success: false };
+    }
+
+    // Create reply subject with "Re: " prefix if it doesn't already have it
+    const subject = originalEmail.subject.startsWith('Re: ') 
+      ? originalEmail.subject 
+      : `Re: ${originalEmail.subject}`;
+
+    // Determine recipients
+    const toRecipients = [originalEmail.from];
+    let ccRecipients: string = '';
+    
+    if (replyToAll && originalEmail.to && originalEmail.to.length > 0) {
+      // For reply all, add original TO recipients to CC (excluding the current user)
+      const additionalCc = originalEmail.to
+        .filter(recipient => recipient.email !== userProfile.email && recipient.email !== originalEmail.from.email)
+        .map(recipient => recipient.email);
+      
+      if (additionalCc.length > 0) {
+        ccRecipients = additionalCc.join(',');
+      }
+    }
+
+    // Create the reply email object
+    const replyEmail: Omit<Email, 'id' | 'date' | 'isRead' | 'preview'> = {
+      from: { 
+        email: userProfile.email, // Use actual current user's email
+        name: userProfile.name // Use actual current user's name
+      },
+      to: toRecipients,
+      subject: subject,
+      body: replyContent,
+      threadId: originalEmail.threadId,
+      isImportant: false,
+      labelIds: [],
+      attachments: [] // Replies typically don't include original attachments
+    };
+
+    // Send the reply using the existing sendEmail function
+    return await sendEmail(replyEmail, undefined, originalEmail.threadId, ccRecipients);
+    
+  } catch (error) {
+    console.error('Error sending reply:', error);
+    return { success: false };
+  }
+};
+
+export const sendReplyAll = async (
+  originalEmail: Email,
+  replyContent: string
+): Promise<{success: boolean; threadId?: string}> => {
+  return await sendReply(originalEmail, replyContent, true);
 };
 
 export const sendEmail = async (

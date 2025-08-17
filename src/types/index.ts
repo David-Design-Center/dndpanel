@@ -63,6 +63,7 @@ export interface Profile {
   name: string;
   passcode?: string;
   avatar?: string;
+  userEmail?: string;
   gmail_access_token?: string;
   gmail_refresh_token?: string;
   gmail_token_expiry?: string;

@@ -4,7 +4,7 @@ import { Plus, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { createClient } from '@supabase/supabase-js';
-import { InvoiceCards } from '../components/InvoiceCards';
+import { InvoiceCards } from '@/components/invoice/InvoiceCards';
 import { useProfile } from '../contexts/ProfileContext';
 import { deleteInvoice } from '../services/backendApi';
 import { searchInvoicesForList } from '../utils/searchUtils';

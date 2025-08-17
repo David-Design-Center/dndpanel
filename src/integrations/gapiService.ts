@@ -1,5 +1,6 @@
 import { Email, GmailLabel } from '../types';
 import { format } from 'date-fns';
+import { decodeRfc2047 } from '../utils/emailDecoding';
 
 // Type definitions for GIS (Google Identity Services)
 declare global {
@@ -279,8 +280,44 @@ export const signInToGmail = async (): Promise<{ access_token: string; expires_i
 };
 
 /**
- * Sign out from Gmail using GIS
+ * Sign in to Gmail using OAuth popup (for external users)
+ * This triggers the account selection screen
  */
+export const signInToGmailWithOAuth = async (): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    if (!tokenClient) {
+      reject(new Error('Token client not initialized. Call initGapiClient() first.'));
+      return;
+    }
+
+    // Update token client callback for this specific request
+    tokenClient.callback = (response: any) => {
+      if (response.error) {
+        console.error('OAuth sign-in error:', response.error);
+        reject(new Error(response.error));
+        return;
+      }
+      
+      currentAccessToken = response.access_token;
+      tokenExpiryTime = Date.now() + (response.expires_in * 1000);
+      
+      // Set the token for gapi client
+      if (window.gapi?.client) {
+        window.gapi.client.setToken({
+          access_token: response.access_token
+        });
+      }
+      
+      console.log('OAuth Gmail sign-in successful');
+      resolve();
+    };
+
+    // Trigger the OAuth flow
+    tokenClient.requestAccessToken({
+      prompt: 'select_account' // Force account selection
+    });
+  });
+};
 export const signOutFromGmail = async (): Promise<void> => {
   try {
     if (currentAccessToken) {
@@ -297,10 +334,37 @@ export const signOutFromGmail = async (): Promise<void> => {
       window.gapi.client.setToken({});
     }
     
+    // Clear Google account session by redirecting to Google logout
+    // This will force account selection on next login
+    const googleLogoutUrl = 'https://accounts.google.com/logout';
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = googleLogoutUrl;
+    document.body.appendChild(iframe);
+    
+    // Remove iframe after a short delay
+    setTimeout(() => {
+      document.body.removeChild(iframe);
+    }, 1000);
+    
     console.log('Gmail sign-out completed');
   } catch (error) {
     console.error('Error signing out from Gmail:', error);
     throw error;
+  }
+};
+
+/**
+ * Clear the current access token and force re-authentication
+ */
+export const clearCurrentAccessToken = (): void => {
+  console.log('🔑 Clearing current access token from gapiService');
+  currentAccessToken = null;
+  tokenExpiryTime = 0;
+  
+  // Clear the token from gapi client
+  if (window.gapi?.client) {
+    window.gapi.client.setToken({});
   }
 };
 
@@ -346,39 +410,10 @@ const decodeHtmlEntities = (text: string): string => {
 };
 
 /**
- * Decode RFC 2047 encoded header strings
+ * Decode RFC 2047 encoded header strings (proper MIME implementation)
  */
 const decodeHeader = (value: string): string => {
-  if (!value) return '';
-  return value.replace(/=\?([^?]+)\?([BQ])\?([^?]+)\?=/gi,
-    (_, charset, enc, text) => {
-      try {
-        if (enc.toUpperCase() === 'B') {
-          const binary = atob(text);
-          const bytes = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i++) {
-            bytes[i] = binary.charCodeAt(i);
-          }
-          return new TextDecoder(charset || 'utf-8').decode(bytes);
-        } else if (enc.toUpperCase() === 'Q') {
-          const decoded = text
-            .replace(/_/g, ' ')
-            .replace(/=([0-9A-F]{2})/gi, (_: any, hex: string) => String.fromCharCode(parseInt(hex, 16)));
-          try {
-            return new TextDecoder(charset || 'utf-8').decode(
-              new Uint8Array(decoded.split('').map((c: string) => c.charCodeAt(0)))
-            );
-          } catch (e) {
-            return decoded;
-          }
-        }
-        return text;
-      } catch (e) {
-        console.error('Error decoding header part:', e, { charset, enc, text });
-        return text;
-      }
-    }
-  );
+  return decodeRfc2047(value);
 };
 
 /**

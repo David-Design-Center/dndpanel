@@ -2,14 +2,9 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Download, Edit3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { createClient } from '@supabase/supabase-js';
-import InvoicePrintView, { Invoice } from '../components/InvoicePrintView';
-import { fetchInvoiceByOrderId } from '../services/backendApi';
-
-// Initialize Supabase client
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseKey);
+import { supabase } from '@/lib/supabase';
+import InvoicePrintView, { Invoice } from '@/components/invoice/InvoicePrintView';
+import { fetchInvoiceByOrderId } from '@/services/backendApi';
 
 function InvoiceView() {
   const { invoiceId } = useParams<{ invoiceId: string }>();
@@ -67,9 +62,9 @@ function InvoiceView() {
               price: Number(item.unit_price) || 0
             })),
             subtotal: Number(invoiceData.subtotal) || 0,
+            discount: Number(invoiceData.discount_amount) || 0,
             tax: Number(invoiceData.tax_amount) || 0,
             total: Number(invoiceData.total_amount) || 0,
-            deposit: Number(invoiceData.deposit_amount) || 0,
             balance: Number(invoiceData.balance_due) || 0,
             payments: invoiceData.payments_history || []
           };
@@ -101,9 +96,9 @@ function InvoiceView() {
                 price: Number(item.unit_price) || 0
               })),
               subtotal: Number(supabaseInvoice.subtotal) || 0,
+              discount: Number(supabaseInvoice.discount_amount) || 0,
               tax: Number(supabaseInvoice.tax_amount) || 0,
               total: Number(supabaseInvoice.total_amount) || 0,
-              deposit: Number(supabaseInvoice.deposit_amount) || 0,
               balance: Number(supabaseInvoice.balance_due) || 0,
               payments: supabaseInvoice.payments_history || []
             };

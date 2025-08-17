@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import SignatureManager from '../components/common/SignatureManager';
 import OutOfOfficeManager from '../components/common/OutOfOfficeManager';
-import SettingsFilters from '../components/SettingsFilters';
+import SettingsFilters from '../components/email labels/SettingsFilters';
 import { useAuth } from '../contexts/AuthContext';
 import { useProfile } from '../contexts/ProfileContext';
 import { useFilterCreation } from '../contexts/FilterCreationContext';
@@ -20,6 +20,9 @@ function Settings() {
   const { filterCreation } = useFilterCreation();
   const [activeSection, setActiveSection] = useState<'signature' | 'outofoffice' | 'filters' | null>(null);
   const location = useLocation();
+
+  // Check if current profile has domain email
+  const isDomainUser = currentProfile?.userEmail?.endsWith('@dnddesigncenter.com') || false;
 
   // Check if we should auto-open filters section from context menu or filter creation context
   useEffect(() => {
@@ -53,7 +56,14 @@ function Settings() {
       await signInGmail(currentProfile);
     } catch (error) {
       console.error('Failed to sign in to Gmail:', error);
-      alert('Failed to connect to Gmail. Please check console for details.');
+      
+      // Check if it's an external user error
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      if (errorMessage.includes('External Gmail accounts')) {
+        alert('External Gmail accounts require additional setup. Please check the Gmail Connection section for more information.');
+      } else {
+        alert('Failed to connect to Gmail. Please check console for details.');
+      }
     }
   };
 
@@ -118,9 +128,13 @@ function Settings() {
           
           <p className="text-xs text-gray-600">
             {isGmailSignedIn 
-              ? `Gmail account is connected for ${currentProfile?.name}. You can view and send emails directly from this app.` 
+              ? `Gmail account is connected for ${currentProfile?.name} (${currentProfile?.userEmail || 'no email'}). You can view and send emails directly from this app.` 
               : currentProfile 
-                ? `Connect ${currentProfile.name}'s Gmail account to view and send emails directly from this app.`
+                ? isDomainUser
+                  ? `Connect ${currentProfile.name}'s Gmail account (${currentProfile.userEmail}) to view and send emails directly from this app.`
+                  : currentProfile.userEmail
+                    ? `External Gmail account (${currentProfile.userEmail}) requires OAuth authentication. Click Connect to authenticate via Google's secure popup.`
+                    : `Profile ${currentProfile.name} has no email configured. Please contact your administrator.`
                 : 'Please select a profile first, then connect to Gmail.'}
           </p>
         </div>

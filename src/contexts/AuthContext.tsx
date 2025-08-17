@@ -1,7 +1,13 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { User, Session } from '../types';
 import { supabase } from '../lib/supabase';
-import { initGapiClient, isGmailSignedIn as checkGmailSignedIn, signOutFromGmail, setAccessToken } from '../integrations/gapiService';
+import { 
+  initGapiClient, 
+  isGmailSignedIn as checkGmailSignedIn, 
+  signOutFromGmail, 
+  setAccessToken, 
+  signInToGmailWithOAuth 
+} from '../integrations/gapiService';
 import { fetchGmailAccessToken } from '../lib/gmail';
 import { authCoordinator } from '../utils/authCoordinator';
 
@@ -12,6 +18,8 @@ interface AuthContextType {
   userProfileId: string | null;
   signIn: (username: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string) => Promise<{ error: Error | null }>;
+  resetPassword: (email: string) => Promise<{ error: Error | null }>;
+  updatePassword: (password: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   initializeAuth: () => Promise<void>;
   loading: boolean;
@@ -81,24 +89,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Ensure gapi client is initialized before setting token
       await initGapiClient();
       
-      // Use the new domain-wide delegation approach
-      const accessToken = await fetchGmailAccessToken(userEmail);
+      // Check if user is from dnddesigncenter domain
+      const isDomainUser = userEmail.endsWith('@dnddesigncenter.com');
       
-      if (accessToken) {
-        // Set the new access token in the gapi client (expires in 1 hour by default)
-        setAccessToken(accessToken, 3600);
+      if (isDomainUser) {
+        // Use the domain-wide delegation approach for domain users
+        const accessToken = await fetchGmailAccessToken(userEmail);
         
-        setIsGmailApiReady(true);
-        return true;
+        if (accessToken) {
+          // Set the new access token in the gapi client (expires in 1 hour by default)
+          setAccessToken(accessToken, 3600);
+          
+          setIsGmailApiReady(true);
+          return true;
+        } else {
+          console.error('❌ No access token received');
+          return false;
+        }
       } else {
-        console.error('❌ No access token received');
-        return false;
+        // For external users, check if they already have a valid OAuth token
+        const isSignedIn = checkGmailSignedIn();
+        if (isSignedIn) {
+          setIsGmailApiReady(true);
+          return true;
+        } else {
+          console.log('� External user needs to re-authenticate via OAuth');
+          setIsGmailApiReady(false);
+          return false;
+        }
       }
 
-      setIsGmailApiReady(false);
-      return false;
     } catch (error) {
-      console.error('❌ Error fetching Gmail token via domain-wide delegation:', error);
+      console.error('❌ Error fetching Gmail token:', error);
       setIsGmailApiReady(false);
       return false;
     }
@@ -119,19 +141,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       console.log('Checking Gmail tokens for profile:', profile.name);
-      console.log('User email:', user?.email);
+      console.log('Profile userEmail:', profile.userEmail);
+      console.log('Profile object:', profile);
       
-      if (!user?.email) {
-        console.log('❌ No user email found, cannot initialize Gmail');
+      if (!profile.userEmail) {
+        console.log('❌ No userEmail found for profile, cannot initialize Gmail');
         setIsGmailSignedIn(false);
         setIsGmailApiReady(false);
         return;
       }
 
       // With domain-wide delegation, we always fetch a fresh token
-      // No need to check expiry or stored tokens
+      // Use the profile's email instead of the authenticated user's email
       try {
-        const refreshed = await refreshGmailToken(user.email);
+        const refreshed = await refreshGmailToken(profile.userEmail);
         if (refreshed) {
           // CRITICAL: Set Gmail as signed in when token refresh succeeds
           setIsGmailSignedIn(true);
@@ -157,7 +180,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setIsGmailInitializing(false);
     }
-  }, [refreshGmailToken, user]); // Add user to dependency array
+  }, [refreshGmailToken]); // Remove user from dependency array
 
   const signInGmail = useCallback(async (profile: any) => {
     try {
@@ -165,18 +188,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw new Error('No profile provided');
       }
 
-      if (!user?.email) {
-        throw new Error('No user email found');
+      if (!profile.userEmail) {
+        throw new Error('No userEmail found for profile');
       }
 
-      // Use domain-wide delegation to get access token directly
-      const refreshed = await refreshGmailToken(user.email);
+      const isDomainUser = profile.userEmail.endsWith('@dnddesigncenter.com');
       
-      if (refreshed) {
+      if (isDomainUser) {
+        // Use domain-wide delegation for domain users
+        const refreshed = await refreshGmailToken(profile.userEmail);
+        
+        if (refreshed) {
+          setIsGmailSignedIn(true);
+          setIsGmailApiReady(true);
+        } else {
+          throw new Error('Failed to get Gmail access token via domain-wide delegation');
+        }
+      } else {
+        // For external users, use OAuth popup
+        console.log('🌐 External user detected - using OAuth flow');
+        
+        await signInToGmailWithOAuth();
         setIsGmailSignedIn(true);
         setIsGmailApiReady(true);
-      } else {
-        throw new Error('Failed to get Gmail access token via domain-wide delegation');
       }
       
     } catch (error) {
@@ -184,7 +218,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setIsGmailApiReady(false);
       throw error;
     }
-  }, [refreshGmailToken, user]); // Add user to dependency array
+  }, [refreshGmailToken]); // Remove user from dependency array // Add user to dependency array
 
   const signOutGmail = useCallback(async (profile: any) => {
     console.log('🔓 Signing out of Gmail for profile:', profile?.name || 'unknown');
@@ -251,6 +285,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { error } = await supabase.auth.signUp({ email, password });
     setLoading(false);
     return { error };
+  };
+
+  const resetPassword = async (email: string) => {
+    setLoading(true);
+    try {
+      // Use production URL in production, development URL in development
+      const baseUrl = import.meta.env.PROD 
+        ? 'https://order.dnddesigncenter.com' 
+        : window.location.origin;
+      
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${baseUrl}/auth/reset`
+      });
+      setLoading(false);
+      return { error };
+    } catch (error) {
+      setLoading(false);
+      return { error: error as Error };
+    }
+  };
+
+  const updatePassword = async (password: string) => {
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password });
+      setLoading(false);
+      return { error };
+    } catch (error) {
+      setLoading(false);
+      return { error: error as Error };
+    }
   };
 
   const signIn = async (username: string, password: string) => {
@@ -351,25 +416,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     setLoading(true);
-    await supabase.auth.signOut();
-    setUser(null);
-    setSession(null);
-    setIsAdmin(false);
-    setUserProfileId(null);
-    setIsGmailSignedIn(false);
-    setIsGmailApiReady(false);
-    setLoading(false);
+    
+    try {
+      // Sign out from Gmail first if connected
+      if (isGmailSignedIn) {
+        await signOutFromGmail();
+      }
+      
+      // Sign out from Supabase
+      await supabase.auth.signOut();
+      
+      // Clear all local state
+      setUser(null);
+      setSession(null);
+      setIsAdmin(false);
+      setUserProfileId(null);
+      setIsGmailSignedIn(false);
+      setIsGmailApiReady(false);
+      
+      // Clear storage
+      sessionStorage.clear();
+      localStorage.clear();
+      
+      // Reset auth coordinator
+      authCoordinator.reset();
+      
+      // Dispatch event to clear all caches
+      window.dispatchEvent(new CustomEvent('clear-all-caches', {
+        detail: { reason: 'logout' }
+      }));
+      
+    } catch (error) {
+      console.error('Error during sign out:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const wrappedRefreshGmailToken = useCallback(async (profile: any): Promise<boolean> => {
-    if (!user?.email) {
-      console.log('❌ No email available for user');
+    if (!profile?.userEmail) {
+      console.log('❌ No userEmail available for profile');
       return false;
     }
 
-    console.log('🔄 Refreshing Gmail token for profile:', profile.name);
-    return await refreshGmailToken(user.email);
-  }, [refreshGmailToken, user?.email]);
+    console.log('🔄 Refreshing Gmail token for profile:', profile.name, 'with email:', profile.userEmail);
+    return await refreshGmailToken(profile.userEmail);
+  }, [refreshGmailToken]);
 
   const value = {
     user,
@@ -378,6 +470,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     userProfileId,
     signIn,
     signUp,
+    resetPassword,
+    updatePassword,
     signOut,
     initializeAuth,
     loading,

@@ -59,11 +59,17 @@ export class OptimizedEmailService {  /**
   private convertToEmailType(processed: ProcessedEmail): Email {
     return {
       id: processed.id,
-      from: processed.from,
-      to: processed.to,
-      subject: processed.subject,
-      body: processed.body,
-      preview: processed.snippet,
+      from: {
+        name: processed.from.name, // Server-side decoding should handle this
+        email: processed.from.email
+      },
+      to: processed.to.map(recipient => ({
+        name: recipient.name, // Server-side decoding should handle this
+        email: recipient.email
+      })),
+      subject: processed.subject, // Server-side decoding should handle this
+      body: processed.body, // Server-side decoding should handle this
+      preview: processed.snippet, // Server-side decoding should handle this
       isRead: !processed.labels.includes('UNREAD'),
       isImportant: processed.labels.includes('IMPORTANT'),
       date: processed.date,
