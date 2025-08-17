@@ -49,7 +49,7 @@ function cn(...classes: (string | undefined | boolean)[]): string {
   return classes.filter(Boolean).join(' ');
 }
 
-// UnderlineTab component
+// UnderlineTab component - compact design
 function UnderlineTab({
   active, onClick, children, badge, disabled,
 }: {
@@ -66,7 +66,7 @@ function UnderlineTab({
       role="tab"
       aria-selected={!!active}
       className={cn(
-        "relative shrink-0 h-8 px-2 text-sm font-medium transition-colors",
+        "relative shrink-0 h-7 px-2 text-xs font-medium transition-colors",
         "text-gray-500 hover:text-gray-900",
         active && "text-gray-900",
         disabled && "opacity-50 cursor-not-allowed"
@@ -75,7 +75,7 @@ function UnderlineTab({
       <span className="inline-flex items-center gap-1">
         {children}
         {badge ? (
-          <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-50 text-red-700 text-xs px-1 font-medium">
+          <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-50 text-red-700 text-xs px-1 font-medium">
             {badge >= 99 ? '99+' : badge}
           </span>
         ) : null}
@@ -83,7 +83,7 @@ function UnderlineTab({
       {/* underline */}
       <span
         className={cn(
-          "pointer-events-none absolute left-1 right-1 -bottom-2 h-0.5 rounded transition-colors",
+          "pointer-events-none absolute left-1 right-1 -bottom-1 h-0.5 rounded transition-colors",
           active ? "bg-blue-600" : "bg-transparent"
         )}
       />
@@ -91,7 +91,7 @@ function UnderlineTab({
   );
 }
 
-// ToggleChip component for filters
+// ToggleChip component for filters - compact design
 function ToggleChip({
   active, onClick, children, disabled,
 }: { 
@@ -105,8 +105,8 @@ function ToggleChip({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "shrink-0 h-8 px-3 text-sm rounded-md transition-colors",
-        active ? "bg-gray-100 text-gray-900" : "hover:bg-gray-50 text-gray-600",
+        "shrink-0 h-6 px-2 text-xs font-medium rounded transition-colors",
+        active ? "bg-blue-100 text-blue-700 border border-blue-200" : "hover:bg-gray-50 text-gray-500 border border-transparent",
         disabled && "opacity-50 cursor-not-allowed"
       )}
     >
@@ -122,9 +122,9 @@ function ToolbarRow1({ state, setState, counts, onRefresh, isRefreshing }: Omit<
     setState({ system: s, category: s === 'INBOX' ? (state.category ?? 'PRIMARY') : null });
 
   return (
-    <div className="sticky top-0 z-30 h-12 bg-white/80 backdrop-blur border-b border-gray-200">
-      <div className="flex items-center gap-3 px-4 md:px-5 overflow-x-auto md:overflow-visible snap-x snap-mandatory">
-        <div className="flex items-center gap-3 min-w-max snap-start">
+    <div className="sticky top-0 z-30 h-10 bg-white/80 backdrop-blur border-b border-gray-200">
+      <div className="flex items-center gap-2 px-3 md:px-4 overflow-x-auto md:overflow-visible snap-x snap-mandatory">
+        <div className="flex items-center gap-2 min-w-max snap-start">
           <UnderlineTab 
             active={sys==='INBOX'} 
             onClick={()=>setSys('INBOX')} 
@@ -180,12 +180,12 @@ function ToolbarRow1({ state, setState, counts, onRefresh, isRefreshing }: Omit<
         
         <div className="ml-auto shrink-0">
           <button
-            className="h-8 w-8 grid place-items-center rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="h-6 w-6 grid place-items-center rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={onRefresh}
             disabled={isRefreshing}
             title="Refresh"
           >
-            <RotateCcw className={`h-4 w-4 text-gray-500 hover:text-gray-700 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <RotateCcw className={`h-3 w-3 text-gray-500 hover:text-gray-700 ${isRefreshing ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>
@@ -201,12 +201,12 @@ function ToolbarRow2({ state, setState, counts, onEmptyTrash, isRefreshing, isEm
   const f = state.filters;
 
   return (
-    <div className="sticky top-12 z-20 h-10 bg-white/80 backdrop-blur border-b border-gray-200">
-      <div className="flex items-center justify-between gap-3 px-4 md:px-5">
+    <div className="sticky top-10 z-20 h-8 bg-white/80 backdrop-blur border-b border-gray-200">
+      <div className="flex items-center justify-between gap-2 px-3 md:px-4">
         {/* Left: Categories when in Inbox, or Delete All when in Trash */}
-        <div className="flex items-center gap-3 overflow-x-auto md:overflow-visible snap-x snap-mandatory">
+        <div className="flex items-center gap-2 overflow-x-auto md:overflow-visible snap-x snap-mandatory">
           {showCategories && (
-            <div className="flex items-center gap-3 min-w-max snap-start">
+            <div className="flex items-center gap-2 min-w-max snap-start">
               <UnderlineTab 
                 active={c==='PRIMARY'} 
                 onClick={()=>setState({ category:'PRIMARY' })}
@@ -232,17 +232,17 @@ function ToolbarRow2({ state, setState, counts, onEmptyTrash, isRefreshing, isEm
             <button
               onClick={onEmptyTrash}
               disabled={isRefreshing || isEmptyingTrash}
-              className="h-8 px-3 mt-1 rounded-md border border-red-300 text-sm font-medium text-red-600 hover:bg-red-50 hover:text-red-700 transition-colors flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="h-6 px-2 rounded border border-red-300 text-xs font-medium text-red-600 hover:bg-red-50 hover:text-red-700 transition-colors flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
               title="Empty trash (permanently delete all)"
             >
-              <Trash2 size={14} className={isEmptyingTrash ? 'animate-pulse' : ''} />
-              <span className="hidden sm:inline">Delete all</span>
+              <Trash2 size={10} className={isEmptyingTrash ? 'animate-pulse' : ''} />
+              <span className="hidden lg:inline">Delete all</span>
             </button>
           )}
         </div>
 
         {/* Right: Filters */}
-        <div className="flex items-center gap-2 overflow-x-auto md:overflow-visible">
+        <div className="flex items-center gap-1 overflow-x-auto md:overflow-visible">
           <ToggleChip 
             active={!!f.unread} 
             onClick={()=>setState({ filters:{ ...f, unread: !f.unread } })}
