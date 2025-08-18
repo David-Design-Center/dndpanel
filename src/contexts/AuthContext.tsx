@@ -309,10 +309,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const updatePassword = async (password: string) => {
     setLoading(true);
     try {
+      // SECURITY: Verify that we have a valid recovery session before updating password
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError) {
+        console.error('Error checking session:', sessionError);
+        setLoading(false);
+        return { error: new Error('Unable to verify reset session. Please try again.') };
+      }
+
+      if (!session) {
+        console.error('No active session found for password update');
+        setLoading(false);
+        return { error: new Error('No valid reset session found. Please click the reset link in your email again.') };
+      }
+
+      // Additional check: ensure this is a recovery session by checking the URL hash
+      const hasRecoveryTokens = window.location.hash.includes('access_token') && 
+                               window.location.hash.includes('type=recovery');
+      
+      if (!hasRecoveryTokens && session.user?.user_metadata?.email_confirmed_at === undefined) {
+        console.error('Invalid session type for password reset');
+        setLoading(false);
+        return { error: new Error('Invalid reset session. Please use the link from your email.') };
+      }
+
+      console.log('✅ Valid recovery session found, updating password for user:', session.user?.email);
+      
       const { error } = await supabase.auth.updateUser({ password });
       setLoading(false);
-      return { error };
+      
+      if (error) {
+        console.error('Password update error:', error);
+        return { error };
+      }
+      
+      console.log('✅ Password updated successfully');
+      return { error: null };
     } catch (error) {
+      console.error('Unexpected error during password update:', error);
       setLoading(false);
       return { error: error as Error };
     }

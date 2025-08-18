@@ -8,6 +8,8 @@ import Loading from './components/common/Loading';
 import { initSecurityMeasures } from './utils/security';
 import { SECURITY_CONFIG } from './config/security';
 import { GooeyFilter } from './components/ui/liquid-toggle';
+import { hasPasswordResetTokens, isPasswordResetFlow } from './utils/authFlowUtils';
+import { logUnauthorizedAccess } from './utils/securityLogging';
 
 // Lazy load non-critical components only
 const Auth = lazy(() => import('./pages/Auth'));
@@ -31,9 +33,29 @@ import Layout from './components/layout/Layout';
 import Inbox from './pages/Inbox';
 import Unread from './pages/Unread';
 
+// Protected route component for password reset - requires valid recovery tokens
+const PasswordResetRoute = ({ children }: { children: React.ReactNode }) => {
+  // Check if there are valid recovery tokens in the URL
+  if (!hasPasswordResetTokens()) {
+    console.warn('⚠️ Unauthorized access attempt to password reset page without valid tokens');
+    logUnauthorizedAccess('/auth/reset');
+    return <Navigate to="/auth" replace />;
+  }
+  
+  return <>{children}</>;
+};
+
 // Protected route component
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { isDataLoadingAllowed, isAuthenticated, isUserAuthorized } = useSecurity();
+  
+  // Check if this is a password reset flow by looking for reset tokens in URL
+  const isResetFlow = isPasswordResetFlow();
+  
+  // Allow access to reset password flow ONLY if there are valid tokens
+  if (isResetFlow && hasPasswordResetTokens()) {
+    return <Navigate to="/auth/reset" replace />;
+  }
   
   // SECURITY: Block access if data loading is not allowed (authentication required)
   if (!isDataLoadingAllowed) {
@@ -51,6 +73,18 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
 
 function App() {
   useEffect(() => {
+    // Check for password reset tokens in URL and redirect to reset page
+    const checkForPasswordReset = () => {
+      if (hasPasswordResetTokens()) {
+        // If we're not already on the reset page, redirect there
+        if (window.location.pathname !== '/auth/reset') {
+          window.history.replaceState(null, '', '/auth/reset' + window.location.hash);
+        }
+      }
+    };
+    
+    checkForPasswordReset();
+    
     // Check for browser tab discarding (when browser unloads tab due to memory pressure)
     const checkForTabDiscard = () => {
       if ((document as any).wasDiscarded) {
@@ -94,9 +128,11 @@ function App() {
         } />
         
         <Route path="/auth/reset" element={
-          <Suspense fallback={<Loading />}>
-            <ResetPassword />
-          </Suspense>
+          <PasswordResetRoute>
+            <Suspense fallback={<Loading />}>
+              <ResetPassword />
+            </Suspense>
+          </PasswordResetRoute>
         } />
         
         <Route path="/auth/forgot" element={

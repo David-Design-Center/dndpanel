@@ -40,3 +40,20 @@ export const isStaffMemberEmail = (userEmail: string): boolean => {
 export const isAdminEmail = (userEmail: string): boolean => {
   return userEmail.toLowerCase() === 'david@dnddesigncenter.com';
 };
+
+/**
+ * Check if the current URL contains password reset tokens
+ * @returns true if recovery tokens are detected in the URL hash
+ */
+export const hasPasswordResetTokens = (): boolean => {
+  const hash = window.location.hash;
+  return hash.includes('access_token') && hash.includes('type=recovery');
+};
+
+/**
+ * Check if the current flow is a password reset flow
+ * @returns true if this appears to be a password reset flow
+ */
+export const isPasswordResetFlow = (): boolean => {
+  return hasPasswordResetTokens() || window.location.pathname === '/auth/reset';
+};

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { useNavigate } from 'react-router-dom';
+import { hasPasswordResetTokens } from '@/utils/authFlowUtils';
+import { logPasswordResetAttempt } from '@/utils/securityLogging';
 
 export default function ResetPassword() {
   const [ready, setReady] = useState(false);
@@ -10,17 +12,61 @@ export default function ResetPassword() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [hasValidSession, setHasValidSession] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
   const { updatePassword } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Ensure the hash is processed and a session is established for the recovery link
-    // supabase-js v2 parses the hash on first auth call; this guarantees it happens.
-    supabase.auth.getSession().finally(() => setReady(true));
+    // Function to check for password recovery session
+    const checkForRecoverySession = async () => {
+      try {
+        // First, ensure the hash is processed
+        const { data: session } = await supabase.auth.getSession();
+        
+        // Check if we have a recovery session or the URL contains recovery tokens
+        const hasRecoveryTokens = hasPasswordResetTokens();
+        
+        if (session?.session || hasRecoveryTokens) {
+          setReady(true);
+          setHasValidSession(true);
+          // Store the user email for display
+          if (session?.session?.user?.email) {
+            setUserEmail(session.session.user.email);
+          }
+        } else {
+          // If no recovery session, wait a bit longer and try again
+          setTimeout(async () => {
+            const { data: retrySession } = await supabase.auth.getSession();
+            if (retrySession?.session) {
+              setReady(true);
+              setHasValidSession(true);
+              if (retrySession.session.user?.email) {
+                setUserEmail(retrySession.session.user.email);
+              }
+            } else {
+              console.warn('No recovery session found. User might need to click the reset link again.');
+              setReady(true); // Allow user to see the form anyway
+              setHasValidSession(false);
+            }
+          }, 1000);
+        }
+      } catch (error) {
+        console.error('Error checking recovery session:', error);
+        setReady(true); // Allow user to proceed anyway
+        setHasValidSession(false);
+      }
+    };
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+    checkForRecoverySession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'PASSWORD_RECOVERY') {
         setReady(true);
+        setHasValidSession(true);
+        if (session?.user?.email) {
+          setUserEmail(session.user.email);
+        }
       }
     });
     
@@ -31,6 +77,13 @@ export default function ResetPassword() {
     e.preventDefault();
     setError(null);
     setMessage(null);
+
+    // SECURITY: Block submission if no valid session
+    if (!hasValidSession) {
+      setError('No valid reset session. Please request a new password reset link.');
+      return;
+    }
+
     setIsLoading(true);
 
     if (password.length < 8) {
@@ -48,8 +101,10 @@ export default function ResetPassword() {
     try {
       const { error } = await updatePassword(password);
       if (error) {
+        logPasswordResetAttempt(false, userEmail || undefined, error.message);
         setError(error.message);
       } else {
+        logPasswordResetAttempt(true, userEmail || undefined);
         setMessage('Password updated successfully! Redirecting to login...');
         // Redirect to auth page after successful password update
         setTimeout(() => {
@@ -57,6 +112,7 @@ export default function ResetPassword() {
         }, 2000);
       }
     } catch (error) {
+      logPasswordResetAttempt(false, userEmail || undefined, String(error));
       setError('An unexpected error occurred. Please try again.');
     } finally {
       setIsLoading(false);
@@ -79,6 +135,18 @@ export default function ResetPassword() {
       >
         <h1 className="text-xl font-semibold text-center mb-6">Set a new password</h1>
         
+        {userEmail && hasValidSession && (
+          <div className="text-sm text-green-600 bg-green-50 p-3 rounded-lg border border-green-200 mb-4">
+            ✅ Resetting password for: <strong>{userEmail}</strong>
+          </div>
+        )}
+        
+        {!hasValidSession && (
+          <div className="text-sm text-red-600 bg-red-50 p-3 rounded-lg border border-red-200">
+            ❌ Invalid or expired reset session. Please request a new password reset link.
+          </div>
+        )}
+        
         <div>
           <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">
             New Password
@@ -86,12 +154,13 @@ export default function ResetPassword() {
           <input
             id="password"
             type="password"
-            className="w-full rounded-lg border border-gray-300 p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full rounded-lg border border-gray-300 p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
             placeholder="Enter new password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
             autoFocus
+            disabled={!hasValidSession}
           />
         </div>
         
@@ -102,11 +171,12 @@ export default function ResetPassword() {
           <input
             id="confirmPassword"
             type="password"
-            className="w-full rounded-lg border border-gray-300 p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full rounded-lg border border-gray-300 p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
             placeholder="Confirm new password"
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
             required
+            disabled={!hasValidSession}
           />
         </div>
         
@@ -124,19 +194,26 @@ export default function ResetPassword() {
         
         <button 
           type="submit" 
-          disabled={isLoading}
+          disabled={isLoading || !hasValidSession}
           className="w-full rounded-lg bg-black text-white py-3 px-4 font-medium hover:bg-gray-800 focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          {isLoading ? 'Updating...' : 'Update Password'}
+          {isLoading ? 'Updating...' : hasValidSession ? 'Update Password' : 'Invalid Session'}
         </button>
         
-        <div className="text-center">
+        <div className="text-center space-y-2">
           <button
             type="button"
             onClick={() => navigate('/auth')}
-            className="text-sm text-gray-600 hover:text-gray-800"
+            className="text-sm text-gray-600 hover:text-gray-800 block w-full"
           >
             Back to login
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/auth/forgot')}
+            className="text-sm text-blue-600 hover:text-blue-800 block w-full"
+          >
+            Request a new reset link
           </button>
         </div>
       </form>
