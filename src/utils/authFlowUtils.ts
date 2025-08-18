@@ -43,11 +43,20 @@ export const isAdminEmail = (userEmail: string): boolean => {
 
 /**
  * Check if the current URL contains password reset tokens
- * @returns true if recovery tokens are detected in the URL hash
+ * @returns true if recovery tokens are detected in the URL hash or query params
  */
 export const hasPasswordResetTokens = (): boolean => {
   const hash = window.location.hash;
-  return hash.includes('access_token') && hash.includes('type=recovery');
+  const searchParams = new URLSearchParams(window.location.search);
+  
+  // Check hash format (standard Supabase format)
+  const hasHashTokens = hash.includes('access_token') && hash.includes('type=recovery');
+  
+  // Check query params format (direct Supabase redirect format)
+  const hasQueryTokens = searchParams.has('access_token') && searchParams.has('type') && 
+                        searchParams.get('type') === 'recovery';
+  
+  return hasHashTokens || hasQueryTokens;
 };
 
 /**

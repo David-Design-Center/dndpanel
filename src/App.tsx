@@ -35,8 +35,13 @@ import Unread from './pages/Unread';
 
 // Protected route component for password reset - requires valid recovery tokens
 const PasswordResetRoute = ({ children }: { children: React.ReactNode }) => {
-  // Check if there are valid recovery tokens in the URL
-  if (!hasPasswordResetTokens()) {
+  // Check if there are valid recovery tokens in the URL (hash or query params)
+  const searchParams = new URLSearchParams(window.location.search);
+  const hasHashTokens = hasPasswordResetTokens();
+  const hasQueryTokens = searchParams.has('access_token') && searchParams.has('type') && 
+                       searchParams.get('type') === 'recovery';
+  
+  if (!hasHashTokens && !hasQueryTokens) {
     console.warn('⚠️ Unauthorized access attempt to password reset page without valid tokens');
     logUnauthorizedAccess('/auth/reset');
     return <Navigate to="/auth" replace />;
@@ -75,10 +80,19 @@ function App() {
   useEffect(() => {
     // Check for password reset tokens in URL and redirect to reset page
     const checkForPasswordReset = () => {
-      if (hasPasswordResetTokens()) {
+      const searchParams = new URLSearchParams(window.location.search);
+      
+      // Check both hash (standard) and query params (in case of direct Supabase redirect)
+      const hasHashTokens = hasPasswordResetTokens();
+      const hasQueryTokens = searchParams.has('access_token') && searchParams.has('type') && 
+                           searchParams.get('type') === 'recovery';
+      
+      if (hasHashTokens || hasQueryTokens) {
         // If we're not already on the reset page, redirect there
         if (window.location.pathname !== '/auth/reset') {
-          window.history.replaceState(null, '', '/auth/reset' + window.location.hash);
+          const fullHash = hasHashTokens ? window.location.hash : 
+                          `#access_token=${searchParams.get('access_token')}&type=recovery&expires_in=${searchParams.get('expires_in')}`;
+          window.history.replaceState(null, '', '/auth/reset' + fullHash);
         }
       }
     };

@@ -27,6 +27,13 @@ export default function ResetPassword() {
         // Check if we have a recovery session or the URL contains recovery tokens
         const hasRecoveryTokens = hasPasswordResetTokens();
         
+        console.log('🔐 Checking for recovery tokens:', {
+          hasRecoveryTokens,
+          hash: window.location.hash,
+          search: window.location.search,
+          pathname: window.location.pathname
+        });
+        
         if (session?.session || hasRecoveryTokens) {
           setReady(true);
           setHasValidSession(true);
