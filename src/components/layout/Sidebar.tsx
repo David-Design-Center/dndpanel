@@ -1,4 +1,4 @@
-import { Inbox, MailPlus, ChevronRight, Clipboard, FileText, Settings, BarChart3, Package, Calendar } from 'lucide-react';
+import { Inbox, MailPlus, ChevronRight, Clipboard, FileText, Settings, BarChart3, Package, Calendar, Users } from 'lucide-react';
 import { useLocation, Link } from 'react-router-dom';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useProfile } from '../../contexts/ProfileContext';
@@ -239,6 +239,24 @@ function Sidebar({ onCompose }: SidebarProps) {
                 <Tooltip delayDuration={300}>
                   <TooltipTrigger asChild>
                     <Link
+                      to="/contacts"
+                      className={`flex items-center justify-center p-2 text-sm font-medium transition-all duration-200 rounded-xl ${
+                        location.pathname === '/contacts'
+                          ? 'text-gray-800 bg-white shadow-lg'
+                          : 'text-gray-600 hover:bg-white hover:shadow-md'
+                      }`}
+                    >
+                      <Users size={16} className="text-teal-500" />
+                    </Link>
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="bg-gray-800 text-white border-gray-700">
+                    <p>Contacts</p>
+                  </TooltipContent>
+                </Tooltip>
+                
+                <Tooltip delayDuration={300}>
+                  <TooltipTrigger asChild>
+                    <Link
                       to="/settings"
                       className={`flex items-center justify-center p-2 text-sm font-medium transition-all duration-200 rounded-xl ${
                         location.pathname === '/settings'
@@ -303,6 +321,18 @@ function Sidebar({ onCompose }: SidebarProps) {
                 >
                   <span className="mr-3 flex-shrink-0"><Package size={20} className="text-red-500" /></span>
                   <span className="truncate">Shipments</span>
+                </Link>
+                
+                <Link
+                  to="/contacts"
+                  className={`flex items-center px-4 py-3 text-sm font-medium transition-all duration-200 rounded-xl min-w-0 overflow-hidden ${
+                    location.pathname === '/contacts'
+                      ? 'text-gray-800 bg-white shadow-lg'
+                      : 'text-gray-600 hover:bg-white hover:shadow-md'
+                  }`}
+                >
+                  <span className="mr-3 flex-shrink-0"><Users size={20} className="text-teal-500" /></span>
+                  <span className="truncate">Contacts</span>
                 </Link>
                 
                 <Link

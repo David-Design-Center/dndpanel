@@ -25,6 +25,7 @@ const InvoiceView = lazy(() => import('./pages/InvoiceView'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Shipments = lazy(() => import('./pages/Shipments'));
 const Calendar = lazy(() => import('./pages/Calendar'));
+const Contacts = lazy(() => import('./pages/Contacts'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 
@@ -244,6 +245,11 @@ function App() {
             <Route path="shipments" element={
               <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
                 <Shipments />
+              </Suspense>
+            } />
+            <Route path="contacts" element={
+              <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
+                <Contacts />
               </Suspense>
             } />
             <Route path="calendar" element={
