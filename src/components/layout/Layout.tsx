@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
+import FoldersColumn from '../email labels/FoldersColumn';
 import { useAuth } from '../../contexts/AuthContext';
 import { useProfile } from '../../contexts/ProfileContext';
 import { useEmailPreloader } from '../../contexts/EmailPreloaderContext';
+import { useFoldersColumn } from '../../contexts/FoldersColumnContext';
 import ProfileSelectionScreen from '../profile/ProfileSelectionScreen';
 import { InboxLayoutProvider } from '../../contexts/InboxLayoutContext';
 import { FoldersColumnProvider } from '../../contexts/FoldersColumnContext';
@@ -61,16 +63,104 @@ function Layout() {
     return <ProfileSelectionScreen />;
   }
 
-  const handleCompose = () => {
-    navigate('/compose');
-  };
-
   // Check if we're on an email-related route that should use 3-column layout
   const isEmailRoute = location.pathname.startsWith('/inbox') || 
                       location.pathname.startsWith('/unread');
 
   return (
     <FoldersColumnProvider>
+      <LayoutContent 
+        loading={loading}
+        isAdmin={isAdmin}
+        userProfileId={userProfileId}
+        currentProfile={currentProfile}
+        profileLoading={profileLoading}
+        selectProfile={selectProfile}
+        isPreloading={isPreloading}
+        isGhostPreloadComplete={isGhostPreloadComplete}
+        navigate={navigate}
+        showSuccess={showSuccess}
+        setShowSuccess={setShowSuccess}
+        hasAutoSelected={hasAutoSelected}
+        setHasAutoSelected={setHasAutoSelected}
+        autoSelectionFailed={autoSelectionFailed}
+        setAutoSelectionFailed={setAutoSelectionFailed}
+        isEmailRoute={isEmailRoute}
+      />
+    </FoldersColumnProvider>
+  );
+}
+
+// Component that uses the FoldersColumn context
+// Component that uses the FoldersColumn context
+function LayoutContent({ 
+  loading, 
+  isAdmin, 
+  userProfileId, 
+  currentProfile, 
+  profileLoading, 
+  selectProfile, 
+  isPreloading, 
+  isGhostPreloadComplete, 
+  navigate, 
+  showSuccess, 
+  setShowSuccess, 
+  hasAutoSelected, 
+  setHasAutoSelected, 
+  autoSelectionFailed, 
+  setAutoSelectionFailed, 
+  isEmailRoute 
+}: any) {
+  const { isFoldersColumnExpanded, toggleFoldersColumn } = useFoldersColumn();
+
+  // Auto-select profile for non-admin users (only once)
+  useEffect(() => {
+    if (!loading && !profileLoading && !isAdmin && userProfileId && !currentProfile && !hasAutoSelected && !autoSelectionFailed) {
+      // For staff members, automatically select their profile
+      console.log('🚀 Auto-selecting profile for staff user:', userProfileId);
+      setHasAutoSelected(true);
+      selectProfile(userProfileId);
+    } else if (!loading && !profileLoading && !isAdmin && !userProfileId && !autoSelectionFailed) {
+      console.log('❌ No profile ID found for staff user');
+      setAutoSelectionFailed(true);
+    }
+  }, [loading, profileLoading, isAdmin, userProfileId, currentProfile, hasAutoSelected, autoSelectionFailed, selectProfile, setHasAutoSelected, setAutoSelectionFailed]);
+
+  // Handle profile switch success feedback
+  useEffect(() => {
+    if (currentProfile && !loading) {
+      setShowSuccess(true);
+      const timer = setTimeout(() => setShowSuccess(false), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [currentProfile, loading, setShowSuccess]);
+
+  const handleCompose = () => {
+    navigate('/compose');
+  };
+
+  if (loading || profileLoading) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-gray-50">
+        <div className="text-lg font-medium text-gray-600 flex items-center space-x-3">
+          <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+          <span>Loading...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentProfile) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-gray-50">
+        <div className="text-lg font-medium text-gray-600">
+          Please select a profile to continue
+        </div>
+      </div>
+    );
+  }
+
+  return (
       <PanelSizesProvider>
         <EmailListProvider>
           <InboxLayoutProvider>
@@ -88,7 +178,19 @@ function Layout() {
                 </div>
               )}
               
-              <Sidebar onCompose={handleCompose} />
+              <Sidebar />
+              
+              {/* Folders Column - only for email routes */}
+              {isEmailRoute && (
+                <div className={`${isFoldersColumnExpanded ? 'w-64' : 'w-12'} border-r border-gray-200 transition-all duration-300 flex-shrink-0`}>
+                  <FoldersColumn 
+                    isExpanded={isFoldersColumnExpanded} 
+                    onToggle={toggleFoldersColumn}
+                    onCompose={handleCompose}
+                  />
+                </div>
+              )}
+              
               <div className="flex flex-col flex-1 overflow-hidden">
                 {isEmailRoute ? (
                   <main className="flex-1 overflow-hidden">
@@ -108,7 +210,6 @@ function Layout() {
           </InboxLayoutProvider>
         </EmailListProvider>
       </PanelSizesProvider>
-    </FoldersColumnProvider>
   );
 }
 

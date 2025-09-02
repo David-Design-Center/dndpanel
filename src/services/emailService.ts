@@ -1,5 +1,6 @@
 import { Email } from '../types';
 import { supabase } from '../lib/supabase';
+import { format } from 'date-fns';
 import { 
   getAttachmentDownloadUrl as getGmailAttachmentDownloadUrl
 } from '../lib/gmail';
@@ -18,7 +19,8 @@ import {
   getGmailUserProfile,
   saveGmailDraft,
   deleteGmailDraft,
-  emptyGmailTrash
+  emptyGmailTrash,
+  isGmailSignedIn
 } from '../integrations/gapiService';
 import { queueGmailRequest } from '../utils/requestQueue';
 import { authCoordinator } from '../utils/authCoordinator';
@@ -413,6 +415,22 @@ export const getEmails = async (
   maxResults = 10, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
+  // ✅ OPTIMIZATION: Block legacy q-based inbox queries during first paint
+  const isLegacyInboxQuery = (q?: string) =>
+    q?.includes('in:inbox') && q.includes('category:primary');
+  
+  // Check if we're in first paint phase and this is a legacy query
+  const isFirstPaint = window.location.pathname === '/inbox' && !pageToken && Date.now() - (window as any).__appStartTime < 10000;
+  
+  if (isFirstPaint && isLegacyInboxQuery(query)) {
+    console.debug('🛑 Skipping legacy inbox query on first paint:', query);
+    return {
+      emails: [],
+      nextPageToken: undefined,
+      resultSizeEstimate: 0
+    };
+  }
+
   // Ensure authentication before proceeding
   try {
     const isAuthenticated = await authCoordinator.ensureAuthenticated();
@@ -485,20 +503,23 @@ export const getEmails = async (
         }
       });
       
+      // ✅ OPTIMIZATION: Legacy auto-reply processing disabled
+      // Auto-reply now handled by optimizedInitialLoad.processAutoReplyOptimized() 
+      // using cached data from Step 1 (no duplicate API calls)
+      // 
       // Check for auto-reply on new unread emails (only for primary inbox queries)
-      if (query.includes('in:inbox') && query.includes('category:primary') && !pageToken) {
-        const unreadEmails = gmailResponse.emails.filter(email => !email.isRead);
-        
-        console.log(`Processing ${unreadEmails.length} unread primary emails for auto-reply`);
-        
-        for (const email of unreadEmails) {
-          try {
-            await checkAndSendAutoReply(email);
-          } catch (error) {
-            console.error('Auto-reply check failed for email:', email.id, error);
-          }
-        }
-      }
+      // if (query.includes('in:inbox') && query.includes('category:primary') && !pageToken) {
+      //   const unreadEmails = gmailResponse.emails.filter(email => !email.isRead);
+      //   console.log(`Processing ${unreadEmails.length} unread primary emails for auto-reply`);
+      //   
+      //   for (const email of unreadEmails) {
+      //     try {
+      //       await checkAndSendAutoReply(email);
+      //     } catch (error) {
+      //       console.error('Auto-reply check failed for email:', email.id, error);
+      //     }
+      //   }
+      // }
     }
     
     return {
@@ -568,8 +589,8 @@ export const getAllInboxEmails = async (
   maxResults = 10, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
-  // This returns ALL inbox emails including all categories (like your original behavior)
-  return getEmails(forceRefresh, 'in:inbox', maxResults, pageToken);
+  // Use labelIds for inbox emails for better performance
+  return getEmailsByLabelIds(['INBOX'], forceRefresh, maxResults, pageToken);
 };
 
 export const getSentEmails = async (
@@ -577,12 +598,92 @@ export const getSentEmails = async (
   maxResults = 20, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
-  return getEmails(forceRefresh, 'in:sent', maxResults, pageToken);
+  // Use labelIds for sent emails
+  return getEmailsByLabelIds(['SENT'], forceRefresh, maxResults, pageToken);
 };
 
 export const getDraftEmails = async (forceRefresh = false): Promise<Email[]> => {
-  const response = await getEmails(forceRefresh, 'in:draft');
-  return response.emails;
+  // Use users.drafts.list for proper draft handling
+  try {
+    if (!isGmailSignedIn()) {
+      throw new Error('Not signed in to Gmail');
+    }
+
+    const response = await window.gapi.client.gmail.users.drafts.list({
+      userId: 'me'
+    });
+
+    if (!response.result.drafts || response.result.drafts.length === 0) {
+      return [];
+    }
+
+    const drafts: Email[] = [];
+    
+    // Fetch draft details using users.drafts.get
+    for (const draft of response.result.drafts) {
+      if (!draft.id) continue;
+
+      try {
+        const draftMsg = await window.gapi.client.gmail.users.drafts.get({
+          userId: 'me',
+          id: draft.id
+        });
+
+        if (!draftMsg.result || !draftMsg.result.message) continue;
+        const message = draftMsg.result.message;
+        const payload = message.payload;
+
+        const headers = payload?.headers || [];
+        const subject = headers.find((h: any) => h.name.toLowerCase() === 'subject')?.value || 'No Subject';
+        const fromHeader = headers.find((h: any) => h.name.toLowerCase() === 'from')?.value || '';
+        const toHeader = headers.find((h: any) => h.name.toLowerCase() === 'to')?.value || '';
+        const dateHeader = headers.find((h: any) => h.name.toLowerCase() === 'date')?.value || new Date().toISOString();
+        
+        let fromName = fromHeader;
+        let fromEmail = fromHeader;
+        const fromMatch = fromHeader.match(/(.*)<(.*)>/);
+        if (fromMatch && fromMatch.length === 3) {
+          fromName = fromMatch[1].trim();
+          fromEmail = fromMatch[2].trim();
+        }
+
+        let toName = toHeader;
+        let toEmail = toHeader;
+        const toMatch = toHeader.match(/(.*)<(.*)>/);
+        if (toMatch && toMatch.length === 3) {
+          toName = toMatch[1].trim();
+          toEmail = toMatch[2].trim();
+        }
+
+        let preview = message.snippet || '';
+        let body = preview;
+
+        drafts.push({
+          id: message.id || draft.id,
+          from: { name: fromName, email: fromEmail },
+          to: [{ name: toName, email: toEmail }],
+          subject: subject,
+          body: body,
+          preview: preview,
+          isRead: true, // Drafts are always "read"
+          isImportant: message.labelIds?.includes('IMPORTANT'),
+          date: format(new Date(dateHeader), "yyyy-MM-dd'T'HH:mm:ss"),
+          labelIds: message.labelIds || [],
+          attachments: undefined,
+          threadId: message.threadId
+        } as Email);
+
+        await new Promise(resolve => setTimeout(resolve, 50));
+      } catch (messageError) {
+        console.warn(`Failed to fetch draft ${draft.id}:`, messageError);
+      }
+    }
+    
+    return drafts;
+  } catch (error) {
+    console.error('Error fetching drafts:', error);
+    return [];
+  }
 };
 
 export const getTrashEmails = async (
@@ -590,7 +691,8 @@ export const getTrashEmails = async (
   maxResults = 20, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
-  return getEmails(forceRefresh, 'in:trash', maxResults, pageToken);
+  // Use labelIds for trash emails
+  return getEmailsByLabelIds(['TRASH'], forceRefresh, maxResults, pageToken);
 };
 
 export const getImportantEmails = async (
@@ -598,7 +700,154 @@ export const getImportantEmails = async (
   maxResults = 20, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
-  return getEmails(forceRefresh, 'is:important', maxResults, pageToken);
+  // Use labelIds for better performance
+  return getEmailsByLabelIds(['IMPORTANT'], forceRefresh, maxResults, pageToken);
+};
+
+export const getStarredEmails = async (
+  forceRefresh = false, 
+  maxResults = 20, 
+  pageToken?: string
+): Promise<PaginatedEmailServiceResponse> => {
+  // Use labelIds for starred emails
+  return getEmailsByLabelIds(['STARRED'], forceRefresh, maxResults, pageToken);
+};
+
+export const getSpamEmails = async (
+  forceRefresh = false, 
+  maxResults = 20, 
+  pageToken?: string
+): Promise<PaginatedEmailServiceResponse> => {
+  // Use labelIds for spam emails
+  return getEmailsByLabelIds(['SPAM'], forceRefresh, maxResults, pageToken);
+};
+
+export const getArchiveEmails = async (
+  forceRefresh = false, 
+  maxResults = 20, 
+  pageToken?: string
+): Promise<PaginatedEmailServiceResponse> => {
+  // Archive: everything that's not in Inbox, Spam, Trash
+  return getEmails(forceRefresh, '-in:inbox -in:spam -in:trash', maxResults, pageToken);
+};
+
+export const getAllMailEmails = async (
+  forceRefresh = false, 
+  maxResults = 20, 
+  pageToken?: string
+): Promise<PaginatedEmailServiceResponse> => {
+  // All Mail: Gmail's "archive + inbox", excluding Spam/Trash
+  return getEmails(forceRefresh, '-in:spam -in:trash', maxResults, pageToken);
+};
+
+// Helper function to fetch emails by labelIds (more efficient than search queries)
+const getEmailsByLabelIds = async (
+  labelIds: string[], 
+  forceRefresh = false, 
+  maxResults = 20, 
+  pageToken?: string
+): Promise<PaginatedEmailServiceResponse> => {
+  try {
+    if (!isGmailSignedIn()) {
+      throw new Error('Not signed in to Gmail');
+    }
+
+    const requestParams: any = {
+      userId: 'me',
+      maxResults: maxResults,
+      labelIds: labelIds
+    };
+
+    if (pageToken) {
+      requestParams.pageToken = pageToken;
+    }
+
+    const response = await window.gapi.client.gmail.users.messages.list(requestParams);
+
+    if (!response.result.messages || response.result.messages.length === 0) {
+      return {
+        emails: [],
+        nextPageToken: undefined,
+        resultSizeEstimate: response.result.resultSizeEstimate || 0
+      };
+    }
+
+    const emails: Email[] = [];
+    
+    // Fetch emails sequentially to avoid rate limits
+    for (const message of response.result.messages) {
+      if (!message.id) continue;
+
+      try {
+        const msg = await window.gapi.client.gmail.users.messages.get({
+          userId: 'me',
+          id: message.id,
+          format: 'metadata',
+          metadataHeaders: ['Subject', 'From', 'To', 'Date']
+        });
+
+        if (!msg.result || !msg.result.payload) continue;
+        const payload = msg.result.payload;
+
+        const headers = payload.headers || [];
+        const subject = headers.find((h: any) => h.name.toLowerCase() === 'subject')?.value || 'No Subject';
+        const fromHeader = headers.find((h: any) => h.name.toLowerCase() === 'from')?.value || '';
+        const toHeader = headers.find((h: any) => h.name.toLowerCase() === 'to')?.value || '';
+        const dateHeader = headers.find((h: any) => h.name.toLowerCase() === 'date')?.value || new Date().toISOString();
+        
+        let fromName = fromHeader;
+        let fromEmail = fromHeader;
+        const fromMatch = fromHeader.match(/(.*)<(.*)>/);
+        if (fromMatch && fromMatch.length === 3) {
+          fromName = fromMatch[1].trim();
+          fromEmail = fromMatch[2].trim();
+        }
+
+        let toName = toHeader;
+        let toEmail = toHeader;
+        const toMatch = toHeader.match(/(.*)<(.*)>/);
+        if (toMatch && toMatch.length === 3) {
+          toName = toMatch[1].trim();
+          toEmail = toMatch[2].trim();
+        }
+
+        let preview = msg.result.snippet || '';
+        let body = preview;
+
+        emails.push({
+          id: message.id,
+          from: { name: fromName, email: fromEmail },
+          to: [{ name: toName, email: toEmail }],
+          subject: subject,
+          body: body,
+          preview: preview,
+          isRead: !msg.result.labelIds?.includes('UNREAD'),
+          isImportant: msg.result.labelIds?.includes('IMPORTANT'),
+          date: format(new Date(dateHeader), "yyyy-MM-dd'T'HH:mm:ss"),
+          labelIds: msg.result.labelIds || [],
+          attachments: undefined,
+          threadId: msg.result.threadId
+        } as Email);
+
+        await new Promise(resolve => setTimeout(resolve, 25));
+      } catch (messageError) {
+        console.warn(`Failed to fetch message ${message.id}:`, messageError);
+      }
+    }
+
+    return {
+      emails,
+      nextPageToken: response.result.nextPageToken,
+      resultSizeEstimate: response.result.resultSizeEstimate || emails.length
+    };
+  } catch (error) {
+    console.error('Error fetching emails by labelIds:', error);
+    return {
+      emails: [],
+      nextPageToken: undefined,
+      resultSizeEstimate: 0
+    };
+  }
 };
 
 export const getLabelEmails = async (
@@ -1131,4 +1380,53 @@ export const emptyTrash = async (): Promise<void> => {
     console.error('❌ Error emptying trash:', error);
     throw error;
   }
+};
+
+// Helper function to get category emails for different folder contexts
+export interface CategoryFilterOptions {
+  unread?: boolean;
+  starred?: boolean;
+  attachments?: boolean;
+  from?: string;
+  dateRange?: { start?: string; end?: string };
+  searchText?: string;
+}
+
+export const getCategoryEmailsForFolder = async (
+  category: 'primary' | 'updates' | 'promotions' | 'social',
+  folderType: 'all' | 'archive' | 'spam' | 'trash' = 'all',
+  forceRefresh = false,
+  maxResults = 10,
+  pageToken?: string,
+  filters?: CategoryFilterOptions
+): Promise<PaginatedEmailServiceResponse> => {
+  let queryParts: string[] = [];
+
+  // Base query for folder and category
+  switch (folderType) {
+    case 'all':
+      queryParts.push(`in:inbox category:${category}`);
+      break;
+    case 'archive':
+      queryParts.push(`-in:inbox -in:spam -in:trash category:${category}`);
+      break;
+    case 'spam':
+      queryParts.push(`in:spam category:${category}`);
+      break;
+    case 'trash':
+      queryParts.push(`in:trash category:${category}`);
+      break;
+  }
+
+  // Add special chips/filters
+  if (filters) {
+    if (filters.unread) queryParts.push('is:unread');
+    if (filters.starred) queryParts.push('is:starred');
+    if (filters.attachments) queryParts.push('has:attachment');
+    if (filters.from) queryParts.push(`from:${filters.from}`);
+    if (filters.searchText) queryParts.push(filters.searchText);
+  }
+
+  const query = queryParts.join(' ');
+  return getEmails(forceRefresh, query, maxResults, pageToken);
 };

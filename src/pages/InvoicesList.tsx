@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search } from 'lucide-react';
+import { Plus, Search, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { createClient } from '@supabase/supabase-js';
 import { InvoiceCards } from '@/components/invoice/InvoiceCards';
 import { useProfile } from '../contexts/ProfileContext';
+import { useAuth } from '../contexts/AuthContext';
 import { deleteInvoice } from '../services/backendApi';
 import { searchInvoicesForList } from '../utils/searchUtils';
 
@@ -30,6 +31,7 @@ interface Invoice {
 function InvoicesList() {
   const navigate = useNavigate();
   const { currentProfile } = useProfile();
+  const { isGmailSignedIn } = useAuth();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [filteredInvoices, setFilteredInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
@@ -274,6 +276,31 @@ function InvoicesList() {
   const handleCreateOrder = () => {
     navigate('/invoice-generator');
   };
+
+  // Check Gmail authentication
+  if (!isGmailSignedIn) {
+    return (
+      <div className="fade-in pb-6">
+        <div className="text-center py-16">
+          <div className="max-w-md mx-auto">
+            <div className="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <AlertCircle className="w-8 h-8 text-yellow-600" />
+            </div>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">Gmail Connection Required</h3>
+            <p className="text-gray-600 mb-6">
+              Please connect to Gmail to access Invoices. This page requires Gmail integration to manage your invoices and billing.
+            </p>
+            <button
+              onClick={() => navigate('/inbox')}
+              className="btn btn-primary"
+            >
+              Go to Inbox to Connect Gmail
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

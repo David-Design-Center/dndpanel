@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Download, Edit3 } from 'lucide-react';
+import { ArrowLeft, Download, Edit3, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 import InvoicePrintView, { Invoice } from '@/components/invoice/InvoicePrintView';
 import { fetchInvoiceByOrderId } from '@/services/backendApi';
 
@@ -10,6 +11,7 @@ function InvoiceView() {
   const { invoiceId } = useParams<{ invoiceId: string }>();
   const navigate = useNavigate();
   const invoiceRef = useRef<HTMLDivElement>(null);
+  const { isGmailSignedIn } = useAuth();
   
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [loading, setLoading] = useState(true);
@@ -144,6 +146,31 @@ function InvoiceView() {
   const handleBack = () => {
     navigate('/invoices');
   };
+
+  // Check Gmail authentication
+  if (!isGmailSignedIn) {
+    return (
+      <div className="fade-in pb-6">
+        <div className="text-center py-16">
+          <div className="max-w-md mx-auto">
+            <div className="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <AlertCircle className="w-8 h-8 text-yellow-600" />
+            </div>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">Gmail Connection Required</h3>
+            <p className="text-gray-600 mb-6">
+              Please connect to Gmail to view invoices. This page requires Gmail integration to access and display invoice details.
+            </p>
+            <button
+              onClick={() => navigate('/inbox')}
+              className="btn btn-primary"
+            >
+              Go to Inbox to Connect Gmail
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

@@ -1,11 +1,7 @@
-import { PriceRequest, OrderStatus, CustomerOrder, Shipment, GeneralDocument, SupabaseInvoice, SupabaseInvoiceLineItem } from '../types';
-import { createClient } from '@supabase/supabase-js';
+import { PriceRequest, OrderStatus, CustomerOrder, Shipment, GeneralDocument, ShipmentDocument, SupabaseInvoice, SupabaseInvoiceLineItem } from '../types';
+import { supabase } from '../lib/supabase'; // Use the centralized Supabase client
 import { getUnreadEmails, markEmailAsRead } from './emailService';
-
-// Initialize Supabase client
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseKey);
+import { emitLabelUpdateEvent } from '../utils/labelUpdateEvents';
 
 // Cache for price requests
 const priceRequestsCache: {
@@ -352,7 +348,7 @@ export const generateNextOrderNumber = async (): Promise<string> => {
     
     // Query all customer orders to find existing order numbers
     const { data, error } = await supabase
-      .from('orders')
+      .from('invoices')
       .select('order_number')
       .eq('type', 'Customer Order')
       .not('order_number', 'is', null);
@@ -471,14 +467,24 @@ const convertRowToShipment = (row: any): Shipment => {
   return {
     id: row.id,
     ref: row.ref || '',
+    status: row.status || row.shipping_status || '', // Support both old and new field names
+    pod: row.pod || '',
     consignee: row.consignee || '',
-    shipper: row.shipper || '',
+    vendor: row.vendor || row.shipper || '', // Support both old and new field names
+    po: row.po || '',
+    pkg: row.pkg || 0,
+    kg: row.kg || 0,
+    vol: row.vol || 0,
+    pickup_date: row.pickup_date || row.etd || null, // Use null instead of empty string for dates
+    note: row.note || row.description_of_goods || '', // Support both old and new field names
+    // Keep legacy fields for backward compatibility
+    shipper: row.shipper || row.vendor || '',
     vessel_carrier: row.vessel_carrier || '',
-    etd: row.etd || '',
-    eta: row.eta || '',
+    etd: row.etd || row.pickup_date || null, // Use null instead of empty string for dates
+    eta: row.eta || null, // Use null instead of empty string for dates
     container_n: row.container_n || '',
-    description_of_goods: row.description_of_goods || '',
-    shipping_status: row.shipping_status || ''
+    description_of_goods: row.description_of_goods || row.note || '',
+    shipping_status: row.shipping_status || row.status || ''
   };
 };
 
@@ -492,6 +498,24 @@ const convertRowToGeneralDocument = (row: any): GeneralDocument => {
     id: row.id,
     file_name: row.file_name || '',
     document_url: row.document_url || '',
+    uploaded_at: row.uploaded_at || ''
+  };
+};
+
+/**
+ * Convert Supabase row to ShipmentDocument object
+ * @param row The database row
+ * @returns A properly formatted ShipmentDocument object
+ */
+const convertRowToShipmentDocument = (row: any): ShipmentDocument => {
+  return {
+    id: row.id,
+    file_name: row.file_name || '',
+    drive_file_id: row.drive_file_id || '',
+    drive_file_url: row.drive_file_url || '',
+    file_size: row.file_size,
+    file_type: row.file_type,
+    uploaded_by: row.uploaded_by,
     uploaded_at: row.uploaded_at || ''
   };
 };
@@ -520,6 +544,94 @@ const convertPriceRequestToRow = (request: Omit<PriceRequest, 'id' | 'date'>) =>
     deposit_amount: request.depositAmount || null,
     payments_history: request.paymentsHistory || null
   };
+};
+
+/**
+ * Auto-assign contact to invoice based on customer name/email matching
+ * @param invoice The invoice to assign a contact to
+ */
+const assignContactToInvoice = async (invoice: SupabaseInvoice): Promise<void> => {
+  try {
+    if (!invoice.customer_name && !invoice.customer_email) {
+      console.log('No customer name or email to match against contacts');
+      return;
+    }
+
+    let contactId: string | null = null;
+
+    // First, try to find existing contact by email (most reliable)
+    if (invoice.customer_email) {
+      const { data: emailContact, error: emailError } = await supabase
+        .from('contacts')
+        .select('id')
+        .eq('email', invoice.customer_email)
+        .single();
+
+      if (!emailError && emailContact) {
+        contactId = emailContact.id;
+        console.log(`Found existing contact by email: ${invoice.customer_email} -> ${contactId}`);
+      }
+    }
+
+    // If no email match, try to find by exact name match
+    if (!contactId && invoice.customer_name) {
+      const { data: nameContact, error: nameError } = await supabase
+        .from('contacts')
+        .select('id')
+        .eq('full_name', invoice.customer_name)
+        .single();
+
+      if (!nameError && nameContact) {
+        contactId = nameContact.id;
+        console.log(`Found existing contact by name: ${invoice.customer_name} -> ${contactId}`);
+      }
+    }
+
+    // If no existing contact found, create a new one
+    if (!contactId && invoice.customer_name) {
+      console.log(`Creating new contact for: ${invoice.customer_name}`);
+      
+      const { data: newContact, error: createError } = await supabase
+        .from('contacts')
+        .insert({
+          full_name: invoice.customer_name,
+          email: invoice.customer_email || '',
+          phone_1: invoice.customer_tel1 || '',
+          phone_2: invoice.customer_tel2 || '',
+          address: invoice.customer_address || '',
+          city: invoice.customer_city || '',
+          state: invoice.customer_state || '',
+          zip_code: invoice.customer_zip || ''
+        })
+        .select('id')
+        .single();
+
+      if (!createError && newContact) {
+        contactId = newContact.id;
+        console.log(`Created new contact: ${invoice.customer_name} -> ${contactId}`);
+      } else {
+        console.error('Error creating new contact:', createError);
+      }
+    }
+
+    // Link the invoice to the contact
+    if (contactId) {
+      const { error: updateError } = await supabase
+        .from('invoices')
+        .update({ contact_id: contactId })
+        .eq('id', invoice.id);
+
+      if (updateError) {
+        console.error('Error linking invoice to contact:', updateError);
+      } else {
+        console.log(`Successfully linked invoice ${invoice.id} to contact ${contactId}`);
+      }
+    }
+
+  } catch (error) {
+    console.error('Error in assignContactToInvoice:', error);
+    // Don't throw error - this is a non-critical operation
+  }
 };
 
 /**
@@ -650,15 +762,19 @@ export const saveInvoiceToSupabase = async (
     
     console.log('Successfully saved invoice and line items to Supabase');
     
+    // Auto-assign contact based on customer name/email
+    await assignContactToInvoice(result);
+    
     // Clear any cache for this invoice
     if (result.id) {
       // If this invoice is associated with an order, clear that cache too
       // This requires an additional query to check for order association
       try {
         const { data: orderData } = await supabase
-          .from('orders')
+          .from('invoices')
           .select('id')
-          .eq('order_number', result.po_number)
+          .eq('po_number', result.po_number)
+          .eq('type', 'Customer Order')
           .maybeSingle();
         
         if (orderData?.id) {
@@ -751,9 +867,10 @@ export const fetchInvoiceByOrderId = async (orderId: string): Promise<{
     
     // First, get the order details to find the order_number
     const { data: orderData, error: orderError } = await supabase
-      .from('orders')
-      .select('order_number')
+      .from('invoices')
+      .select('po_number')
       .eq('id', orderId)
+      .eq('type', 'Customer Order')
       .single();
     
     if (orderError) {
@@ -761,8 +878,8 @@ export const fetchInvoiceByOrderId = async (orderId: string): Promise<{
       return null;
     }
     
-    if (!orderData || !orderData.order_number) {
-      console.log('No order found with ID or missing order number:', orderId);
+    if (!orderData || !orderData.po_number) {
+      console.log('No order found with ID or missing PO number:', orderId);
       return null;
     }
     
@@ -770,7 +887,7 @@ export const fetchInvoiceByOrderId = async (orderId: string): Promise<{
     const { data: invoiceData, error: invoiceError } = await supabase
       .from('invoices')
       .select('*')
-      .eq('po_number', orderData.order_number)
+      .eq('po_number', orderData.po_number)
       .order('created_at', { ascending: false })
       .maybeSingle(); // Use maybeSingle to get null instead of error if not found
     
@@ -780,7 +897,7 @@ export const fetchInvoiceByOrderId = async (orderId: string): Promise<{
     }
     
     if (!invoiceData) {
-      console.log('No invoice found with PO number:', orderData.order_number);
+      console.log('No invoice found with PO number:', orderData.po_number);
       // Update the cache with a null result
       invoiceByOrderIdCache[orderId] = {
         data: null,
@@ -1252,6 +1369,128 @@ export const fetchShipments = async (forceRefresh: boolean = false): Promise<Shi
 };
 
 /**
+ * Create a new shipment in Supabase
+ * @param shipmentData The shipment data to create
+ * @returns The created shipment
+ */
+export const createShipment = async (shipmentData: {
+  ref: string;
+  status: string;
+  pod: string;
+  consignee: string;
+  vendor: string;
+  po: string;
+  pkg: number;
+  kg: number;
+  vol: number;
+  pickup_date: string | null;
+  note: string;
+}): Promise<Shipment> => {
+  try {
+    console.log('Creating new shipment:', shipmentData);
+    
+    const { data, error } = await supabase
+      .from('shipments')
+      .insert([{
+        ref: shipmentData.ref,
+        status: shipmentData.status,
+        pod: shipmentData.pod,
+        consignee: shipmentData.consignee,
+        vendor: shipmentData.vendor,
+        po: shipmentData.po,
+        pkg: shipmentData.pkg,
+        kg: shipmentData.kg,
+        vol: shipmentData.vol,
+        pickup_date: shipmentData.pickup_date,
+        note: shipmentData.note,
+        documents: [] // Initialize empty documents array
+        // Let created_at and updated_at be set automatically by the database
+      }])
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error creating shipment:', error);
+      throw error;
+    }
+
+    if (!data) {
+      throw new Error('No data returned from shipment creation');
+    }
+
+    console.log('Successfully created shipment:', data);
+    
+    // Convert database row to Shipment object
+    const newShipment = convertRowToShipment(data);
+    
+    // Invalidate cache to force refresh on next fetch
+    shipmentsCache.timestamp = 0;
+    
+    return newShipment;
+  } catch (error) {
+    console.error('Error creating shipment:', error);
+    throw error;
+  }
+};
+
+/**
+ * Import multiple shipments from CSV data
+ * @param shipments Array of shipment data to import
+ * @returns Promise that resolves when import is complete
+ */
+export const importShipments = async (shipments: {
+  ref: string;
+  status: string;
+  pod: string;
+  consignee: string;
+  vendor: string;
+  po: string;
+  pkg: number;
+  kg: number;
+  vol: number;
+  pickup_date: string | null;
+  note: string;
+}[]): Promise<void> => {
+  try {
+    console.log('Importing shipments:', shipments.length);
+    
+    const shipmentsToInsert = shipments.map(shipment => ({
+      ref: shipment.ref,
+      status: shipment.status,
+      pod: shipment.pod,
+      consignee: shipment.consignee,
+      vendor: shipment.vendor,
+      po: shipment.po,
+      pkg: shipment.pkg,
+      kg: shipment.kg,
+      vol: shipment.vol,
+      pickup_date: shipment.pickup_date,
+      note: shipment.note,
+      documents: []
+      // Let created_at and updated_at be set automatically by the database
+    }));
+
+    const { error } = await supabase
+      .from('shipments')
+      .insert(shipmentsToInsert);
+
+    if (error) {
+      console.error('Error importing shipments:', error);
+      throw error;
+    }
+
+    console.log('Successfully imported shipments');
+    
+    // Invalidate cache to force refresh on next fetch
+    shipmentsCache.timestamp = 0;
+    
+  } catch (error) {
+    console.error('Error importing shipments:', error);
+    throw error;
+  }
+};
+
+/**
  * Fetch general documents from Supabase
  * @param forceRefresh If true, bypass the cache and fetch fresh data
  * @returns An array of GeneralDocument objects
@@ -1320,6 +1559,43 @@ export const fetchGeneralDocuments = async (forceRefresh: boolean = false): Prom
 };
 
 /**
+ * Fetch shipment documents for a specific shipment from Supabase
+ * @param shipmentId The ID of the shipment
+ * @returns An array of ShipmentDocument objects
+ */
+export const fetchShipmentDocuments = async (shipmentId: number): Promise<ShipmentDocument[]> => {
+  try {
+    console.log(`Fetching documents for shipment ${shipmentId} from Supabase`);
+    
+    const { data, error } = await supabase
+      .from('shipment_documents')
+      .select('*')
+      .eq('shipment_id', shipmentId)
+      .order('uploaded_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching shipment documents from Supabase:', error);
+      throw error;
+    }
+
+    if (!data) {
+      console.log('No shipment documents data returned from Supabase');
+      return [];
+    }
+
+    // Convert database rows to ShipmentDocument objects
+    const documents = data.map(convertRowToShipmentDocument);
+    
+    console.log(`Successfully fetched ${documents.length} documents for shipment ${shipmentId}`);
+    
+    return documents;
+  } catch (error) {
+    console.error('Error fetching shipment documents from Supabase:', error);
+    return [];
+  }
+};
+
+/**
  * Check and update price request statuses based on unread emails
  * This function will:
  * 1. Fetch all unread emails from Gmail
@@ -1355,7 +1631,7 @@ export const checkAndUpdatePriceRequestStatuses = async (): Promise<void> => {
     for (const priceRequest of activePriceRequests) {
       let requestUpdated = false;
       const updatedTeams = [...priceRequest.teams];
-      const emailsToMarkAsRead: string[] = [];
+      const emailsToMarkAsRead: { id: string; email: any }[] = [];
       
       // Check each team in the price request
       for (let i = 0; i < updatedTeams.length; i++) {
@@ -1382,9 +1658,9 @@ export const checkAndUpdatePriceRequestStatuses = async (): Promise<void> => {
           
           requestUpdated = true;
           
-          // Collect email IDs to mark as read
+          // Collect email IDs and objects to mark as read
           matchingEmails.forEach(email => {
-            emailsToMarkAsRead.push(email.id);
+            emailsToMarkAsRead.push({ id: email.id, email });
           });
         }
       }
@@ -1404,12 +1680,22 @@ export const checkAndUpdatePriceRequestStatuses = async (): Promise<void> => {
           updatesFound = true;
           
           // Mark corresponding emails as read
-          for (const emailId of emailsToMarkAsRead) {
+          for (const emailItem of emailsToMarkAsRead) {
             try {
-              await markEmailAsRead(emailId);
-              console.log(`Marked email ${emailId} as read`);
+              await markEmailAsRead(emailItem.id);
+              console.log(`Marked email ${emailItem.id} as read`);
+              
+              // Emit event for folder unread counter updates
+              if (emailItem.email?.labelIds && emailItem.email.labelIds.length > 0) {
+                emitLabelUpdateEvent({
+                  labelIds: emailItem.email.labelIds,
+                  action: 'mark-read',
+                  threadId: emailItem.email.threadId,
+                  messageId: emailItem.email.id
+                });
+              }
             } catch (error) {
-              console.error(`Error marking email ${emailId} as read:`, error);
+              console.error(`Error marking email ${emailItem.id} as read:`, error);
               // Continue processing other emails even if one fails
             }
           }
@@ -1459,7 +1745,7 @@ export const fetchPriceRequests = async (forceRefresh: boolean = false): Promise
       console.log('Fetching price requests from Supabase');
       
       const { data, error } = await supabase
-        .from('orders')
+        .from('invoices')
         .select('*')
         .eq('type', 'Price Request')
         .order('created_at', { ascending: false });
@@ -1580,7 +1866,7 @@ export const fetchCustomerOrders = async (forceRefresh: boolean = false, profile
       console.log('Fetching customer orders from Supabase');
       
       let query = supabase
-        .from('orders')
+        .from('invoices')
         .select('*')
         .eq('type', 'Customer Order');
 
@@ -1654,7 +1940,7 @@ export const updateOrderPaymentStatus = async (
     console.log('Updating payment status in Supabase:', id, newStatus);
     
     const { data, error } = await supabase
-      .from('orders')
+      .from('invoices')
       .update({ payment_status: newStatus })
       .eq('id', id)
       .select()
@@ -1705,7 +1991,7 @@ export const createPriceRequest = async (
     const rowData = convertPriceRequestToRow(request);
     
     const { data, error } = await supabase
-      .from('orders')
+      .from('invoices')
       .insert([rowData])
       .select()
       .single();
@@ -1767,7 +2053,7 @@ export const updatePriceRequest = async (
     if (updates.paymentsHistory !== undefined) rowUpdates.payments_history = updates.paymentsHistory;
     
     const { data, error } = await supabase
-      .from('orders')
+      .from('invoices')
       .update(rowUpdates)
       .eq('id', id)
       .select()
@@ -1808,7 +2094,7 @@ export const deletePriceRequest = async (id: string): Promise<boolean> => {
     console.log('Deleting price request from Supabase:', id);
     
     const { error } = await supabase
-      .from('orders')
+      .from('invoices')
       .delete()
       .eq('id', id);
 
@@ -1852,7 +2138,7 @@ export const saveCustomerOrderToSupabase = async (orderData: {
     console.log('Saving customer order to Supabase:', orderData);
     
     const { data, error } = await supabase
-      .from('orders')
+      .from('invoices')
       .insert({
         project_name: `Order ${orderData.order_number}`,
         type: 'Customer Order',
@@ -1922,7 +2208,7 @@ export const deleteCustomerOrder = async (id: string): Promise<boolean> => {
     console.log('Deleting customer order from Supabase:', id);
     
     const { error } = await supabase
-      .from('orders')
+      .from('invoices')
       .delete()
       .eq('id', id);
 

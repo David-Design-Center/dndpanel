@@ -37,7 +37,7 @@ interface AttachmentItem {
 
 function Compose() {
   const { currentProfile } = useProfile();
-  const { searchContacts } = useContacts();
+  const { searchContacts, shouldLoadContacts, setShouldLoadContacts } = useContacts();
   const [to, setTo] = useState('');
   const [ccRecipients, setCcRecipients] = useState<string[]>([]); // Start empty, will be set in useEffect
   const [showCc, setShowCc] = useState(true); // Show CC by default since we have hardcoded recipient
@@ -86,6 +86,11 @@ function Compose() {
       setCcRecipients(['david.v@dnddesigncenter.com']);
     }
   }, [currentProfile?.name]);
+
+  // Expert optimization: Trigger contact loading when user opens Compose (user intent)
+  useEffect(() => {
+    setShouldLoadContacts(true);
+  }, [setShouldLoadContacts]);
 
   // Handle Price Request insertion
   // Handle opening the price request panel

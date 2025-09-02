@@ -113,13 +113,13 @@ function ProfileSelector() {
             <div className="flex space-x-2">
               <button
                 type="submit"
-                className="px-3 py-1 bg-primary-500 text-white text-sm rounded-md hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-opacity-50"
+                className="px-1 py-1 bg-primary-500 text-white text-sm rounded-md hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-opacity-50"
               >
                 Submit
               </button>
               <button
                 type="button"
-                className="px-3 py-1 bg-gray-200 text-gray-700 text-sm rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-opacity-50"
+                className="px-1 py-1 bg-gray-200 text-gray-700 text-sm rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-opacity-50"
                 onClick={() => {
                   setShowPasscodeInput(false);
                   setPasscode('');

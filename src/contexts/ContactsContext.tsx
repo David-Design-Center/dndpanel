@@ -11,6 +11,8 @@ interface ContactsContextType {
   contacts: Contact[];
   isLoading: boolean;
   error: string | null;
+  shouldLoadContacts: boolean;
+  setShouldLoadContacts: (should: boolean) => void;
   searchContacts: (query: string, limit?: number) => Contact[];
   loadContacts: () => Promise<void>;
   refreshContacts: () => Promise<void>;
@@ -35,6 +37,9 @@ export const ContactsProvider: React.FC<ContactsProviderProps> = ({ children }) 
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // Expert optimization: Only load contacts when user intent requires it
+  const [shouldLoadContacts, setShouldLoadContacts] = useState(false);
   
   const { user, isGmailSignedIn } = useAuth();
   const { currentProfile, authFlowCompleted } = useProfile();
@@ -93,13 +98,14 @@ export const ContactsProvider: React.FC<ContactsProviderProps> = ({ children }) 
   }, []);
 
   // Load contacts whenever user, profile, and Gmail sign-in are available
+  // Expert optimization: Only load when shouldLoadContacts is true (user intent)
   useEffect(() => {
-    // Only load if we don't have contacts yet, not already loading, no error, and all required conditions are met
-    if (!contactService.isContactsLoaded() && !isLoading && !error && user && currentProfile && isGmailSignedIn) {
-      devLog.info('ContactsContext: Triggering initial contact load');
+    // Only load if we should load contacts, don't have contacts yet, not already loading, no error, and all required conditions are met
+    if (shouldLoadContacts && !contactService.isContactsLoaded() && !isLoading && !error && user && currentProfile && isGmailSignedIn) {
+      devLog.info('ContactsContext: Triggering deferred contact load based on user intent');
       loadContacts();
     }
-  }, [user, currentProfile, isGmailSignedIn, isLoading, error, loadContacts]);
+  }, [user, currentProfile, isGmailSignedIn, isLoading, error, loadContacts, shouldLoadContacts]);
 
   // Listen for profile switches and clear cache
   useEffect(() => {
@@ -117,6 +123,8 @@ export const ContactsProvider: React.FC<ContactsProviderProps> = ({ children }) 
     contacts,
     isLoading,
     error,
+    shouldLoadContacts,
+    setShouldLoadContacts,
     searchContacts,
     loadContacts,
     refreshContacts,

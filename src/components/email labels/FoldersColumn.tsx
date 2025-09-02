@@ -1,9 +1,42 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Folder, Tag, Plus, Search, X, ChevronLeft, MoreVertical, Trash2, Filter } from 'lucide-react';
+import { 
+  Folder, 
+  Tag, 
+  Plus, 
+  Search, 
+  X, 
+  ChevronLeft,
+  ChevronRight, 
+  MoreVertical, 
+  Trash2, 
+  Filter,
+  Inbox,
+  SendHorizontal,
+  Trash,
+  MailX,
+  SquarePen,
+  Star,
+  MailPlus
+} from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { 
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
 import { 
   DropdownMenu,
   DropdownMenuContent,
@@ -13,8 +46,10 @@ import {
 import { useToast } from '@/components/ui/use-toast';
 import { TreeView, TreeNode } from '@/components/ui/tree-view';
 import { useLabel } from '../../contexts/LabelContext';
+import { useFoldersColumn } from '../../contexts/FoldersColumnContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { GmailLabel } from '../../types';
-import FoldersWithUnread from './FoldersWithUnread';
+// Remove unused import
 
 interface NestedLabel {
   id: string;
@@ -30,15 +65,22 @@ interface NestedLabel {
 interface FoldersColumnProps {
   isExpanded: boolean;
   onToggle: () => void;
+  onCompose: () => void;
 }
 
-function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
-  const { labels, loadingLabels, deleteLabel } = useLabel();
+function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) {
+  const { labels, loadingLabels, deleteLabel, addLabel, isAddingLabel, systemCounts } = useLabel();
+  const { onSystemFolderFilter } = useFoldersColumn();
+  const { isGmailSignedIn } = useAuth();
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
-  const [isCreatingLabel, setIsCreatingLabel] = useState(false);
   const [newLabelName, setNewLabelName] = useState('');
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [parentLabel, setParentLabel] = useState('');
+  const [nestUnder, setNestUnder] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  // Highlight selected system folder (visual state only)
+  const [selectedSystemFolder, setSelectedSystemFolder] = useState<string | null>(null);
   const navigate = useNavigate();
 
   // Build hierarchical tree structure from flat labels
@@ -130,7 +172,7 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
       // At the leaf: assign the actual label data
       if (node && node !== root) {
         node.labelObj = label;
-        node.messagesUnread = label.messagesUnread || 0;
+        node.messagesUnread = systemCounts[label.id] || label.messagesUnread || 0; // Use system counts from labels
         node.id = label.id;
       }
     }
@@ -181,7 +223,63 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
     const treeWithCounts = calculateTotalUnreadCounts(convertMapToArray(root.children));
     
     return treeWithCounts;
-  }, [labels]);
+  }, [labels, systemCounts]); // Use systemCounts from labels
+
+  // System folders configuration
+  const systemFolders = useMemo(() => {
+    console.log('useMemo systemFolders - systemCounts:', systemCounts);
+    const systemFolderConfig = [
+      { name: 'Inbox', icon: Inbox, folderType: 'inbox' },
+      { name: 'Sent', icon: SendHorizontal, folderType: 'sent' },
+      { name: 'Drafts', icon: SquarePen, folderType: 'drafts' },
+      { name: 'Trash', icon: Trash, folderType: 'trash' },
+      { name: 'Spam', icon: MailX, folderType: 'spam' },
+      { name: 'Starred', icon: Star, folderType: 'starred' }
+    ];
+
+    // Get unread counts for system folders from the scanned counts
+    return systemFolderConfig.map(folder => {
+      const matchingLabel = labels.find(label => 
+        label.name.toLowerCase() === folder.name.toLowerCase() ||
+        (folder.name === 'Inbox' && label.name.toLowerCase() === 'inbox') ||
+        (folder.name === 'Sent' && label.name.toLowerCase() === 'sent') ||
+        (folder.name === 'Drafts' && (label.name.toLowerCase() === 'drafts' || label.name.toLowerCase() === 'draft')) ||
+        (folder.name === 'Trash' && label.name.toLowerCase() === 'trash') ||
+        (folder.name === 'Spam' && label.name.toLowerCase() === 'spam') ||
+        (folder.name === 'Starred' && label.name.toLowerCase() === 'starred')
+      );
+
+      // Use scanned unread counts for dynamic updates
+      let unreadCount = 0;
+      
+      // Map folder names to Gmail system label IDs used in scanning
+      const systemLabelIdMap: Record<string, string> = {
+        'Inbox': 'INBOX',
+        'Sent': 'SENT', 
+        'Drafts': 'DRAFT',
+        'Trash': 'TRASH',
+        'Spam': 'SPAM',
+        'Starred': 'STARRED'
+      };
+      
+      const systemLabelId = systemLabelIdMap[folder.name];
+      if (systemLabelId) {
+        unreadCount = systemCounts[systemLabelId] || 0;
+      }
+      
+      // Debug logging
+      if (folder.name === 'Inbox') {
+        console.log('Inbox unread count:', unreadCount, 'systemCounts:', systemCounts);
+      }
+
+      return {
+        ...folder,
+        unreadCount,
+        totalCount: matchingLabel?.messagesTotal || 0,
+        color: selectedSystemFolder === folder.folderType ? '#424242' : '#8f8f8fff'
+      };
+    });
+  }, [labels, systemCounts, selectedSystemFolder]); // Use systemCounts from labels
 
   // Auto-expand all folders when labelTree changes
   useEffect(() => {
@@ -248,7 +346,7 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
             </span>
             
             <div className="flex items-center space-x-1 ml-2">
-              {/* Unread count badge */}
+              {/* Unread count badge - use scanned unread counts */}
               {(node.messagesUnread || 0) > 0 && (
                 <div className="bg-blue-100 text-blue-700 text-xs px-1.5 py-0.5 rounded-full min-w-[18px] text-center flex-shrink-0">
                   {(node.messagesUnread || 0) > 99 ? '99+' : (node.messagesUnread || 0)}
@@ -262,34 +360,32 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
                 </div>
               )}
 
-              {/* Three dots menu for leaf nodes */}
-              {node.isLeaf && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <MoreVertical size={10} className="text-gray-400" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-48">
-                    <DropdownMenuItem onClick={() => handleOpenFilters(node)}>
-                      <Filter size={14} className="mr-2" />
-                      Filters
-                    </DropdownMenuItem>
-                    <DropdownMenuItem 
-                      onClick={() => handleDeleteLabel(node)}
-                      className="text-red-600 focus:text-red-600"
-                    >
-                      <Trash2 size={14} className="mr-2" />
-                      Delete Label
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
+              {/* Three dots menu for all labels (both parent and child) */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <MoreVertical size={10} className="text-gray-400" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem onClick={() => handleOpenFilters(node)}>
+                    <Filter size={14} className="mr-2" />
+                    Filters
+                  </DropdownMenuItem>
+                  <DropdownMenuItem 
+                    onClick={() => handleDeleteLabel(node)}
+                    className="text-red-600 focus:text-red-600"
+                  >
+                    <Trash2 size={14} className="mr-2" />
+                    Delete Label
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
         );
@@ -305,70 +401,111 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
     });
   };
 
-  const treeNodes = useMemo(() => convertToTreeNodes(filteredTree), [filteredTree]);
+  // Reorder filteredTree first so nodes with unread float to top, then convert
+  const reorderedFilteredTree = useMemo(() => {
+    const unread: NestedLabel[] = [];
+    const read: NestedLabel[] = [];
+    for (const n of filteredTree) {
+      if ((n.messagesUnread || 0) > 0) unread.push(n); else read.push(n);
+    }
+    unread.sort((a, b) => {
+      const aCount = a.messagesUnread || 0;
+      const bCount = b.messagesUnread || 0;
+      if (bCount !== aCount) return bCount - aCount; // higher unread first
+      return a.displayName.toLowerCase().localeCompare(b.displayName.toLowerCase());
+    });
+    read.sort((a, b) => a.displayName.toLowerCase().localeCompare(b.displayName.toLowerCase()));
+    return [...unread, ...read];
+  }, [filteredTree]);
+
+  const treeNodes = useMemo(() => convertToTreeNodes(reorderedFilteredTree), [reorderedFilteredTree]);
 
   const handleNodeClick = (node: TreeNode) => {
     const nestedLabel = node.data as NestedLabel;
     handleLabelClick(nestedLabel);
   };
 
-  const handleNodeExpand = (nodeId: string, expanded: boolean) => {
-    const newExpanded = new Set(expandedFolders);
-    if (expanded) {
-      newExpanded.add(nodeId);
-    } else {
-      newExpanded.delete(nodeId);
-    }
-    setExpandedFolders(newExpanded);
-  };
+  const handleNodeExpand = useCallback((nodeId: string, expanded: boolean) => {
+    setExpandedFolders(prev => {
+      const newExpanded = new Set(prev);
+      if (expanded) {
+        newExpanded.add(nodeId);
+      } else {
+        newExpanded.delete(nodeId);
+      }
+      return newExpanded;
+    });
+  }, []);
+
+  // Memoize the defaultExpandedIds to prevent unnecessary re-renders
+  const defaultExpandedIds = useMemo(() => Array.from(expandedFolders), [expandedFolders]);
 
   const handleLabelClick = (label: NestedLabel) => {
-    // Only navigate if it's a leaf node (actual label, not folder)
-    if (label.isLeaf) {
-      navigate(`/inbox?labelName=${encodeURIComponent(label.name)}`);
-    }
+    // Navigate for both leaf nodes and parent folders
+    // For parent folders, we'll show all messages in that folder and its subfolders
+    navigate(`/inbox?labelName=${encodeURIComponent(label.name)}`);
   };
-
-  const handleLabelClickById = useCallback((labelId: string) => {
-    // Find the label by ID and get its name
-    const label = labels.find(l => l.id === labelId);
-    if (label) {
-      navigate(`/inbox?labelName=${encodeURIComponent(label.name)}`);
-    }
-  }, [labels, navigate]);
 
   const handleCreateLabel = async () => {
     if (!newLabelName.trim()) return;
     
-    if (window.confirm(`Create new label "${newLabelName}"?`)) {
-      try {
-        toast({
-          title: "Label Created",
-          description: `Successfully created label "${newLabelName}"`,
-        });
-        setNewLabelName('');
-        setIsCreatingLabel(false);
-      } catch (error) {
-        console.error('Failed to create label:', error);
-        toast({
-          title: "Error",
-          description: "Failed to create label. Please try again.",
-          variant: "destructive",
-        });
-      }
+    try {
+      // Create the label name with nested structure if needed
+      const labelName = nestUnder && parentLabel ? `${parentLabel}/${newLabelName}` : newLabelName;
+      
+      // Call the addLabel method from LabelContext
+      await addLabel(labelName);
+      
+      toast({
+        title: "Label Created",
+        description: `Successfully created label "${newLabelName}"`,
+      });
+      
+      // Reset form
+      setNewLabelName('');
+      setParentLabel('');
+      setNestUnder(false);
+      setShowCreateDialog(false);
+    } catch (error) {
+      console.error('Failed to create label:', error);
+      toast({
+        title: "Error",
+        description: "Failed to create label. Please try again.",
+        variant: "destructive",
+      });
     }
   };
 
+  const handleOpenCreateDialog = () => {
+    setShowCreateDialog(true);
+    setNewLabelName('');
+    setParentLabel('');
+    setNestUnder(false);
+  };
+
   const handleDeleteLabel = async (label: NestedLabel) => {
-    if (!label.isLeaf) return;
+    // Determine confirmation message based on label type
+    let confirmationMessage;
+    if (!label.isLeaf) {
+      // Parent label with potential children
+      const childCount = label.children?.length || 0;
+      if (childCount > 0) {
+        confirmationMessage = `Are you sure you want to delete the parent label "${label.displayName}" and all ${childCount} of its sub-labels? This action cannot be undone and will remove the labels from all associated emails.`;
+      } else {
+        confirmationMessage = `Are you sure you want to delete the parent label "${label.displayName}"? This action cannot be undone and will remove the label from all associated emails.`;
+      }
+    } else {
+      // Child/leaf label
+      confirmationMessage = `Are you sure you want to delete the label "${label.displayName}"? This action cannot be undone and will remove the label from all associated emails.`;
+    }
     
-    if (window.confirm(`Are you sure you want to delete the label "${label.displayName}"? This action cannot be undone.`)) {
+    if (window.confirm(confirmationMessage)) {
       try {
         await deleteLabel(label.id);
         
         toast({
           title: "Label Deleted",
-          description: `Successfully deleted label "${label.displayName}"`,
+          description: `Successfully deleted label "${label.displayName}"${!label.isLeaf && label.children?.length ? ' and its sub-labels' : ''}`,
         });
       } catch (error) {
         console.error('Failed to delete label:', error);
@@ -381,31 +518,67 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
     }
   };
 
+  const handleCompose = () => {
+    if (!isGmailSignedIn) {
+      toast({
+        title: "Please sign in to Gmail first",
+        description: "You need to sign in to your Gmail account to compose emails",
+        variant: "destructive",
+      });
+      return;
+    }
+    onCompose();
+  };
+
+  const handleSystemFolderClick = (folderType: string) => {
+    // Set the selected folder for color state
+    setSelectedSystemFolder(folderType);
+    
+    // Trigger email filtering instead of navigation
+    if (onSystemFolderFilter) {
+      onSystemFolderFilter(folderType);
+    }
+  };
+
   const handleOpenFilters = (label: NestedLabel) => {
     if (!label.isLeaf) return;
     navigate(`/settings?tab=filters&label=${encodeURIComponent(label.name)}`);
   };
 
   return (
-    <div className="h-full bg-muted/30 border-r-2 border-gray-400 overflow-hidden">
+    <div className={`h-full bg-muted/30 border-r-1 border-gray-400 overflow-hidden relative ${!isGmailSignedIn ? 'blur-sm' : ''}`}>
+      {/* Overlay for non-authenticated state */}
+      {!isGmailSignedIn && (
+        <div className="absolute inset-0 bg-white/20 z-10 flex items-center justify-center">
+          <div className="bg-white/90 backdrop-blur-sm rounded-lg p-4 shadow-lg border">
+            <p className="text-sm text-gray-700 font-medium">
+              Sign in to Gmail to access folders
+            </p>
+          </div>
+        </div>
+      )}
       <div className="h-full relative">
         {/* Collapsed State Content */}
         <AnimatePresence>
           {!isExpanded && (
             <motion.div 
-              className="absolute inset-0 flex flex-col items-center justify-center overflow-hidden px-1"
+              className="absolute inset-0 flex flex-col"
               initial={{ opacity: 0, scale: 0.8 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.8 }}
               transition={{ duration: 0.3, ease: "easeInOut" }}
             >
-              <button
-                onClick={onToggle}
-                className="p-1 hover:bg-gray-200 rounded transition-all duration-200 flex items-center justify-center group"
-                title="Expand Folders"
-              >
-                <Folder size={14} className="text-gray-600 group-hover:text-gray-800 transition-colors duration-200" />
-              </button>
+              <div className="flex justify-center" style={{ paddingTop: '0.6rem', paddingBottom: '0.77rem' }}>
+                <button
+                  onClick={onToggle}
+                  className="p-1 hover:bg-gray-200 rounded transition-all duration-200 flex items-center justify-center group"
+                  title="Expand Folders"
+                >
+                  <ChevronRight size={16} className="text-gray-600 group-hover:text-gray-800 transition-colors duration-200" />
+                </button>
+              </div>
+              {/* Thin separator line like main sidebar */}
+              <div className="border-b border-gray-200"></div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -423,9 +596,7 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
               {/* Header with Toggle Button */}
               <div className="flex items-center justify-between p-3 border-b border-gray-200 bg-gray-50 min-w-0">
                 <div className="flex items-center space-x-2 min-w-0 flex-1 overflow-hidden">
-                  <Folder size={16} className="text-gray-600 flex-shrink-0" />
-                  <span className="text-sm font-semibold text-gray-800 truncate">Folders</span>
-                </div>
+              </div>
                 <button
                   onClick={onToggle}
                   className="p-1 hover:bg-gray-200 rounded transition-all duration-200 flex items-center justify-center group flex-shrink-0"
@@ -435,92 +606,151 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
                 </button>
               </div>
 
-              {/* Create New Label Section */}
+              {/* Write Email Button */}
               <div className="p-3 border-b border-gray-200 bg-white">
-                {!isCreatingLabel ? (
-                  <Button
-                    onClick={() => setIsCreatingLabel(true)}
-                    size="sm"
-                    variant="outline"
-                    className="w-full flex items-center justify-center text-xs h-8 border-gray-300"
-                  >
-                    <Plus size={14} className="mr-2" />
-                    New Folder
-                  </Button>
-                ) : (
-                  <div className="space-y-2">
-                    <Input
-                      placeholder="Enter label name..."
-                      value={newLabelName}
-                      onChange={(e) => setNewLabelName(e.target.value)}
-                      className="text-xs h-8"
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          handleCreateLabel();
-                        } else if (e.key === 'Escape') {
-                          setIsCreatingLabel(false);
-                          setNewLabelName('');
-                        }
-                      }}
-                      autoFocus
-                    />
-                    <div className="flex gap-1">
-                      <Button 
-                        size="sm" 
-                        onClick={handleCreateLabel}
-                        disabled={!newLabelName.trim()}
-                        className="flex-1 h-7 text-xs"
-                      >
-                        Create
-                      </Button>
-                      <Button 
-                        size="sm" 
-                        variant="outline"
-                        onClick={() => {
-                          setIsCreatingLabel(false);
-                          setNewLabelName('');
-                        }}
-                        className="flex-1 h-7 text-xs"
-                      >
-                        Cancel
-                      </Button>
+                <button
+                  onClick={handleCompose}
+                  disabled={!isGmailSignedIn}
+                  className={`w-full flex items-center justify-center space-x-2 px-3 py-2.5 rounded-full font-medium text-sm transition-colors ${
+                    isGmailSignedIn 
+                      ? 'bg-gray-800 text-white hover:bg-gray-900' 
+                      : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  }`}
+                >
+                  <MailPlus size={16} />
+                  <span>Write Email</span>
+                </button>
+              </div>
+
+                            {/* Folders List */}
+              <div className="flex-1 overflow-y-auto custom-scrollbar">
+                <div className="space-y-4">
+                  {/* Categories Section */}
+                  <div className="p-2">
+
+                    <div className="space-y-1">
+                      {systemFolders.map((folder) => {
+                        const IconComponent = folder.icon;
+                        return (
+                          <button
+                            key={folder.name}
+                            onClick={() => handleSystemFolderClick(folder.folderType)}
+                            className="w-full flex items-center justify-between px-2 py-1.5 text-sm hover:bg-gray-100 rounded-md transition-colors group"
+                          >
+                            <div className="flex items-center space-x-2 min-w-0 flex-1">
+                              <IconComponent
+                                size={18}
+                                className={`flex-shrink-0 transition-transform duration-200 group-hover:-rotate-12`}
+                                style={{ color: folder.color }}
+                              />
+                              <span className="text-gray-700 truncate">{folder.name}</span>
+                            </div>
+                            
+                            {/* Count badge - always show for Inbox, only non-zero for others */}
+                            {(folder.name === 'Inbox' || folder.unreadCount > 0) && (
+                              <div className="bg-gray-100 text-gray-600 text-xs px-1.5 py-0.5 rounded-full min-w-[18px] text-center flex-shrink-0 ml-2 font-medium">
+                                {folder.unreadCount > 99 ? '99+' : folder.unreadCount}
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
-                )}
-              </div>
-                
-              {/* Search Section */}
-              <div className="p-3 border-b border-gray-200 bg-white">
+
+              {/* Combined Search & Create Section */}
+              <div className="p-3 pb-0 border-t border-gray-200 bg-white">
                 <div className="relative">
                   <Search size={14} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
                   <Input
                     placeholder="Search folders..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-8 pr-8 text-xs h-8 border-gray-200"
+                    className="pl-8 pr-12 text-xs h-8 border-gray-200"
                   />
-                  {searchTerm && (
+                  {searchTerm ? (
                     <button
                       onClick={() => setSearchTerm('')}
-                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      className="absolute right-9 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      title="Clear search"
                     >
                       <X size={14} />
                     </button>
-                  )}
+                  ) : null}
+                  
+                  {/* Create Label Dialog */}
+                  <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+                    <DialogTrigger asChild>
+                      <button
+                        onClick={handleOpenCreateDialog}
+                        className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded p-0.5 transition-colors"
+                        title="Create new folder"
+                      >
+                        <Plus size={14} />
+                      </button>
+                    </DialogTrigger>
+                    <DialogContent className="sm:max-w-[425px]">
+                      <DialogHeader>
+                        <DialogTitle>New label</DialogTitle>
+                      </DialogHeader>
+                      <div className="space-y-4 py-4">
+                        <div className="space-y-2">
+                          <label className="text-sm text-gray-600">Please enter a new label name:</label>
+                          <Input
+                            placeholder="Enter label name"
+                            value={newLabelName}
+                            onChange={(e) => setNewLabelName(e.target.value)}
+                            className="w-full"
+                            autoFocus
+                          />
+                        </div>
+                        
+                        <div className="flex items-center space-x-2">
+                          <Checkbox 
+                            id="nest-under"
+                            checked={nestUnder}
+                            onCheckedChange={(checked) => setNestUnder(checked as boolean)}
+                          />
+                          <label htmlFor="nest-under" className="text-sm text-gray-600">
+                            Nest label under:
+                          </label>
+                        </div>
+                        
+                        {nestUnder && (
+                          <Select value={parentLabel} onValueChange={setParentLabel}>
+                            <SelectTrigger className="w-full">
+                              <SelectValue placeholder="Choose parent label..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {filteredTree.map((label) => (
+                                <SelectItem key={label.id} value={label.name}>
+                                  {label.displayName}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
+                      </div>
+                      
+                      <div className="flex justify-end space-x-2">
+                        <Button 
+                          variant="outline" 
+                          onClick={() => setShowCreateDialog(false)}
+                          disabled={isAddingLabel}
+                        >
+                          Cancel
+                        </Button>
+                        <Button 
+                          onClick={handleCreateLabel}
+                          disabled={!newLabelName.trim() || isAddingLabel}
+                        >
+                          {isAddingLabel ? 'Creating...' : 'Create'}
+                        </Button>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
                 </div>
               </div>
-
-              {/* Folders List */}
-              <div className="flex-1 overflow-y-auto custom-scrollbar">
-                <div className="space-y-4">
-                  {/* Folders with Unread Section */}
-                  <div className="p-2">
-                    <FoldersWithUnread 
-                      onOpenLabel={handleLabelClickById}
-                      maxUnreadToScan={1000}
-                      topN={12}
-                    />
-                  </div>
 
                   {/* Regular Folders Tree */}
                   {loadingLabels ? (
@@ -529,21 +759,19 @@ function FoldersColumn({ isExpanded, onToggle }: FoldersColumnProps) {
                       <p className="text-xs text-gray-500">Loading folders...</p>
                     </div>
                   ) : filteredTree.length > 0 ? (
-                    <div className="p-2 pt-0">
-                      <div className="mb-2">
-                        <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">All Folders</h4>
-                      </div>
+                    <div className="p-1 pt-0">
+                      
                       <TreeView
                         data={treeNodes}
                         onNodeClick={handleNodeClick}
                         onNodeExpand={handleNodeExpand}
-                        defaultExpandedIds={Array.from(expandedFolders)}
-                        showLines={true}
+                        expandedIds={defaultExpandedIds}
+                        showLines={false}
                         showIcons={true}
                         selectable={false}
                         animateExpand={true}
-                        indent={8}
-                        className="space-y-0"
+                        indent={12}
+                        className="space-y-0 [&_.tree-line]:border-gray-200 [&_.tree-chevron]:text-gray-400 [&_.tree-chevron]:scale-75"
                       />
                     </div>
                   ) : (

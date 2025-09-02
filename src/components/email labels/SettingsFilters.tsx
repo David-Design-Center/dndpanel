@@ -540,14 +540,12 @@ function SettingsFilters() {
     }
   }, [selectedFilters, loadFilters]);
 
-  if (!isGmailSignedIn || !currentProfile) {
+  if (!isGmailSignedIn) {
     return (
-      <div className="bg-white p-6 rounded-lg shadow-sm">
-        <div className="flex items-center p-4 bg-yellow-50 border border-yellow-200 rounded-md">
-          <AlertCircle className="w-5 h-5 text-yellow-500 mr-2" />
-          <span className="text-yellow-700">
-            Please connect to Gmail to manage your email filters.
-          </span>
+      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-center gap-3">
+        <AlertCircle className="h-5 w-5 text-yellow-600 flex-shrink-0" />
+        <div className="text-sm text-yellow-800">
+          Please connect to Gmail to manage your email signature.
         </div>
       </div>
     );

@@ -10,6 +10,7 @@ import { SECURITY_CONFIG } from './config/security';
 import { GooeyFilter } from './components/ui/liquid-toggle';
 import { hasPasswordResetTokens, isPasswordResetFlow } from './utils/authFlowUtils';
 import { logUnauthorizedAccess } from './utils/securityLogging';
+import { Toaster } from './components/ui/sonner';
 
 // Lazy load non-critical components only
 const Auth = lazy(() => import('./pages/Auth'));
@@ -135,6 +136,12 @@ function App() {
   return (
     <>
       <GooeyFilter />
+      <Toaster 
+        position="bottom-right" 
+        richColors
+        expand={true}
+        closeButton
+      />
       <Routes>
         <Route path="/auth" element={
           <Suspense fallback={<Loading />}>

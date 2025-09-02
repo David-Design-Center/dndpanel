@@ -12,6 +12,7 @@ interface InvoiceContact {
   customer_email?: string;
   po_number?: string;
   created_at: string;
+  created_by?: string;
 }
 
 interface Contact {
@@ -50,7 +51,8 @@ export const fetchOrdersContacts = async (): Promise<Contact[]> => {
         customer_tel2,
         customer_email,
         po_number,
-        created_at
+        created_at,
+        created_by
       `)
       .not('customer_name', 'is', null)
       .not('customer_name', 'eq', '');
@@ -80,16 +82,17 @@ export const fetchOrdersContacts = async (): Promise<Contact[]> => {
           existingContact.orderNumbers.push(invoice.po_number);
         }
         
-        // For invoices, we'll use a generic "System" contributor since created_by isn't available
-        // In the future, you could add a created_by field to the invoices table
-        const contributorName = "System User";
-        const initials = getInitials(contributorName);
-        
-        if (!existingContact.contributors.some(c => c.name === contributorName)) {
-          existingContact.contributors.push({
-            name: contributorName,
-            initials: initials
-          });
+        // Only add contributors if there's a valid created_by field
+        if (invoice.created_by && invoice.created_by.trim() !== '' && invoice.created_by !== 'Unknown Staff') {
+          const contributorName = invoice.created_by;
+          const initials = getInitials(contributorName);
+          
+          if (!existingContact.contributors.some(c => c.name === contributorName)) {
+            existingContact.contributors.push({
+              name: contributorName,
+              initials: initials
+            });
+          }
         }
       } else {
         // Create new contact
@@ -103,12 +106,18 @@ export const fetchOrdersContacts = async (): Promise<Contact[]> => {
           tel1: invoice.customer_tel1 || '',
           tel2: invoice.customer_tel2 || '',
           email: invoice.customer_email || '',
-          contributors: [{
-            name: "System User",
-            initials: getInitials("System User")
-          }],
+          contributors: [], // Start with empty contributors - will be added if valid created_by exists
           orderNumbers: invoice.po_number ? [invoice.po_number] : []
         };
+        
+        // Only add contributor if there's a valid created_by field
+        if (invoice.created_by && invoice.created_by.trim() !== '' && invoice.created_by !== 'Unknown Staff') {
+          const contributorName = invoice.created_by;
+          newContact.contributors.push({
+            name: contributorName,
+            initials: getInitials(contributorName)
+          });
+        }
         
         contactsMap.set(contactKey, newContact);
       }

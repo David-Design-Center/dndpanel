@@ -1,9 +1,11 @@
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, isToday, isThisYear } from 'date-fns';
 import { Email } from '@/types';
 import { Paperclip, Mail, MailOpen, Star, Trash2, Tag, Filter, ChevronRight, Search, Settings, X, Plus } from 'lucide-react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { markAsRead, markAsUnread, markAsImportant, markAsUnimportant, deleteDraft, deleteEmail, applyLabelsToEmail } from '@/services/emailService';
+import { toast } from 'sonner';
+import { emitLabelUpdateEvent } from '@/utils/labelUpdateEvents';
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
@@ -19,17 +21,17 @@ interface EmailListItemProps {
   onEmailUpdate?: (email: Email) => void;
   onEmailDelete?: (emailId: string) => void;
   isDraft?: boolean;
-  currentTab?: 'all' | 'unread' | 'sent' | 'drafts' | 'trash' | 'important';
+  currentTab?: 'all' | 'unread' | 'sent' | 'drafts' | 'trash' | 'important' | 'starred' | 'spam' | 'archive' | 'allmail';
   onCreateFilter?: (email: Email) => void;
+  isSelected?: boolean;
+  onToggleSelect?: (emailId: string) => void;
 }
 
-function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEmailDelete, isDraft = false, currentTab, onCreateFilter }: EmailListItemProps) {
+function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEmailDelete, isDraft = false, currentTab, onCreateFilter, isSelected = false, onToggleSelect }: EmailListItemProps) {
   const navigate = useNavigate();
   const { startFilterCreation } = useFilterCreation();
   const [isToggling, setIsToggling] = useState(false);
   const [isTogglingImportance, setIsTogglingImportance] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [isDeletingEmail, setIsDeletingEmail] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; show: boolean }>({ x: 0, y: 0, show: false });
   const [showLabelSubmenu, setShowLabelSubmenu] = useState(false);
   const [showFilterSubmenu, setShowFilterSubmenu] = useState(false);
@@ -42,7 +44,17 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
   const labelSearchRef = useRef<HTMLInputElement>(null);
   const filterModalRef = useRef<HTMLDivElement>(null);
   const { labels } = useLabel();
-  const formattedDate = format(parseISO(email.date), 'dd/MM/yy');
+  // Gmail-style date/time display
+  const formattedDate = (() => {
+    try {
+      const d = parseISO(email.date);
+      if (isToday(d)) return format(d, 'h:mm a');
+      if (isThisYear(d)) return format(d, 'MMM d');
+      return format(d, 'MMM d, yyyy');
+    } catch {
+      return email.date;
+    }
+  })();
   
   // Filter labels based on search query
   const filteredLabels = labels.filter(label => 
@@ -89,34 +101,55 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
     transition
   };
 
-  const handleToggleReadStatus = async (e: React.MouseEvent) => {
+  const handleToggleReadStatus = (e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent email click
     setIsToggling(true);
     
     const newReadStatus = !email.isRead;
     
+    console.log(`🔄 Toggling read status for email ${email.id}: ${email.isRead} → ${newReadStatus}`);
+    
     // Optimistic UI update - immediately update the UI
     const updatedEmail = { ...email, isRead: newReadStatus };
     onEmailUpdate?.(updatedEmail);
     
-    try {
-      if (email.isRead) {
-        await markAsUnread(email.id);
-      } else {
-        await markAsRead(email.id);
-      }
-      
-      console.log(`✅ Successfully toggled read status for email ${email.id} to ${newReadStatus ? 'read' : 'unread'}`);
-      
-    } catch (error) {
-      console.error('Error toggling read status:', error);
-      
-      // Revert the optimistic update on error
-      const revertedEmail = { ...email, isRead: email.isRead };
-      onEmailUpdate?.(revertedEmail);
-    } finally {
-      setIsToggling(false);
+    // Emit immediate event for folder unread counter updates
+    if (email.labelIds && email.labelIds.length > 0) {
+      emitLabelUpdateEvent({
+        labelIds: email.labelIds,
+        action: newReadStatus ? 'mark-read' : 'mark-unread',
+        threadId: email.threadId,
+        messageId: email.id
+      });
     }
+
+    // Call API in background - don't await to avoid blocking UI
+    const apiCall = email.isRead ? markAsUnread(email.id) : markAsRead(email.id);
+    
+    apiCall
+      .then(() => {
+        console.log(`✅ Successfully toggled read status for email ${email.id} to ${newReadStatus ? 'read' : 'unread'}`);
+      })
+      .catch((error) => {
+        console.error('Error toggling read status:', error);
+        
+        // Revert the optimistic update on error
+        const revertedEmail = { ...email, isRead: email.isRead };
+        onEmailUpdate?.(revertedEmail);
+        
+        // Emit revert event
+        if (email.labelIds && email.labelIds.length > 0) {
+          emitLabelUpdateEvent({
+            labelIds: email.labelIds,
+            action: email.isRead ? 'mark-read' : 'mark-unread',
+            threadId: email.threadId,
+            messageId: email.id
+          });
+        }
+      })
+      .finally(() => {
+        setIsToggling(false);
+      });
   };
 
   const handleToggleImportance = async (e: React.MouseEvent) => {
@@ -150,45 +183,90 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
     }
   };
 
+  // Handle email click - mark as read if unread, then call parent onClick
+  const handleEmailClick = () => {
+    // Mark as read optimistically if email is unread
+    if (!email.isRead && onEmailUpdate) {
+      console.log(`📧 Clicking email ${email.id}: marking as read`);
+      
+      const updatedEmail = { ...email, isRead: true };
+      
+      // Update UI immediately (optimistic update)
+      onEmailUpdate(updatedEmail);
+      
+      // Emit event for folder unread counter updates immediately
+      if (email.labelIds && email.labelIds.length > 0) {
+        emitLabelUpdateEvent({
+          labelIds: email.labelIds,
+          action: 'mark-read',
+          threadId: email.threadId,
+          messageId: email.id
+        });
+      }
+      
+      // Call API in background - don't await it to avoid blocking UI
+      markAsRead(email.id)
+        .then(() => {
+          console.log(`✅ Successfully marked email ${email.id} as read`);
+        })
+        .catch((error) => {
+          console.error('Failed to mark email as read:', error);
+          // Revert the optimistic update on error
+          onEmailUpdate(email);
+          
+          // Emit revert event
+          if (email.labelIds && email.labelIds.length > 0) {
+            emitLabelUpdateEvent({
+              labelIds: email.labelIds,
+              action: 'mark-unread',
+              threadId: email.threadId,
+              messageId: email.id
+            });
+          }
+        });
+    }
+    
+    // Call parent onClick handler for navigation
+    onClick(email.id);
+  };
+
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent email click
     
-    if (!confirm('Are you sure you want to delete this draft?')) {
-      return;
-    }
+    // Optimistic UI update - remove from UI immediately
+    onEmailDelete?.(email.id);
     
-    setIsDeleting(true);
+    // Show success toast immediately
+    toast.success('Draft deleted successfully!');
     
+    // Run API call in background without blocking UI
     try {
       await deleteDraft(email.id);
-      onEmailDelete?.(email.id);
       console.log(`✅ Successfully deleted draft ${email.id}`);
     } catch (error) {
       console.error('Error deleting draft:', error);
-      alert('Failed to delete draft. Please try again.');
-    } finally {
-      setIsDeleting(false);
+      // Show error and potentially restore the email in UI
+      toast.error('Failed to delete draft. Please try again.');
     }
   };
 
   const handleDeleteEmail = async (e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent email click
     
-    if (!confirm('Are you sure you want to delete this email?')) {
-      return;
-    }
+    // Optimistic UI update - remove from UI immediately
+    onEmailDelete?.(email.id);
     
-    setIsDeletingEmail(true);
+    // Show success toast immediately
+    toast.success('Email deleted successfully!');
     
+    // Run API call in background without blocking UI
     try {
       await deleteEmail(email.id);
-      onEmailDelete?.(email.id);
       console.log(`✅ Successfully deleted email ${email.id}`);
     } catch (error) {
       console.error('Error deleting email:', error);
-      alert('Failed to delete email. Please try again.');
-    } finally {
-      setIsDeletingEmail(false);
+      // Show error and potentially restore the email in UI
+      toast.error('Failed to delete email. Please try again.');
     }
   };
 
@@ -389,139 +467,113 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
 
   return (
     <>
-      <div 
+      <div
         ref={setNodeRef}
         style={style}
         {...attributes}
         {...listeners}
-        onClick={() => onClick(email.id)}
+        onClick={handleEmailClick}
         onContextMenu={handleContextMenu}
-        className={`group px-4 py-3 border-t border-b border-gray-200 cursor-pointer transition-colors ${
-          !email.isRead 
-            ? 'bg-blue-50 border-l-4 border-l-blue-600 hover:bg-blue-100/60' 
-            : 'bg-white hover:bg-gray-50'
-        } ${isDragging ? 'opacity-50 z-10' : ''} min-w-0`}
+        className={`group flex items-center px-4 py-2 border-b border-gray-200 cursor-pointer select-none transition-colors ${
+          !email.isRead ? 'bg-blue-50 hover:bg-blue-100/60' : 'bg-white hover:bg-gray-50'
+        } ${isDragging ? 'opacity-50 z-10' : ''} ${isSelected ? 'bg-blue-100' : ''}`}
         data-dragging={isDragging}
       >
-      <div className="flex items-start justify-between min-w-0">
-        <div className="flex-1 min-w-0 mr-6 overflow-hidden">
-          {/* Sender/Recipient Name */}
-          <div className="flex items-center mb-1 min-w-0">
-            <span className={`text-sm ${!email.isRead ? 'font-extrabold text-gray-900' : 'font-medium text-gray-800'} truncate flex-1 min-w-0`}>
-              {currentTab === 'sent' 
-                ? formatRecipients(email.to || [], 35)
-                : (cleanEncodingIssues(email.from.name) || cleanEmailAddress(email.from.email))
-              }
+        {/* Selection Checkbox */}
+        {onToggleSelect && (
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={(e) => {
+              e.stopPropagation();
+              onToggleSelect(email.id);
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className="mr-3 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          />
+        )}
+
+        {/* Star (always visible like Gmail) */}
+        <button
+          onClick={handleToggleImportance}
+          disabled={isTogglingImportance}
+          className={`mr-3 p-1 rounded transition-colors ${isTogglingImportance ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-200'}`}
+          title={email.isImportant ? 'Unstar' : 'Star'}
+        >
+          {email.isImportant ? (
+            <Star size={16} className="text-yellow-500 fill-yellow-500" />
+          ) : (
+            <Star size={16} className="text-gray-400 group-hover:text-yellow-400" />
+          )}
+        </button>
+
+        {/* Content */}
+        <div className="flex-1 min-w-0 flex items-center gap-4">
+          {/* Sender */}
+          <span className={`text-sm truncate w-48 flex-shrink-0 ${!email.isRead ? 'font-bold text-gray-900' : 'text-gray-800'}`}>
+            {currentTab === 'sent'
+              ? formatRecipients(email.to || [], 35)
+              : (cleanEncodingIssues(email.from?.name) || cleanEmailAddress(email.from?.email) || 'Unknown Sender')}
+          </span>
+
+          {/* Subject + preview */}
+          <div className="flex-1 min-w-0 text-sm truncate">
+            <span className={`${!email.isRead ? 'font-bold text-gray-900' : 'text-gray-800'}`}>
+              {cleanEmailSubject(email.subject || 'No Subject')}
             </span>
-            {!email.isRead && (
-              <span className="w-2.5 h-2.5 bg-blue-700 rounded-full flex-shrink-0 ml-2 shadow-md animate-pulse"></span>
+            <span className={`ml-1 ${!email.isRead ? 'text-gray-700' : 'text-gray-500'}`}>
+              {email.preview}
+            </span>
+            {/* First user label (optional) */}
+            {visibleLabels.length > 0 && (
+              <span className="ml-2 px-1.5 py-0.5 bg-gray-100 text-gray-600 border border-gray-200 rounded text-[10px] font-medium uppercase tracking-wide">
+                {visibleLabels[0].name}
+              </span>
             )}
           </div>
-          
-          {/* Subject */}
-          <h3 className={`text-xs ${!email.isRead ? 'font-extrabold text-gray-900' : 'font-normal text-gray-600'} truncate mb-1 leading-relaxed`}>
-            {cleanEmailSubject(email.subject || 'No Subject')}
-          </h3>
-          
-          {/* Preview */}
-          <p className={`text-xs ${!email.isRead ? 'text-gray-700 font-medium' : 'text-gray-500'} truncate leading-relaxed`}>
-            {email.preview}
-          </p>
 
-          {/* Labels */}
-          {visibleLabels.length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-1">
-              {visibleLabels.map((label) => (
-                <span
-                  key={label.id}
-                  className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-700 rounded border border-gray-300"
-                  title={label.name}
-                >
-                  {label.name}
-                </span>
-              ))}
-            </div>
+          {/* Attachment icon */}
+          {email.attachments && email.attachments.length > 0 && (
+            <Paperclip size={14} className="text-gray-400 flex-shrink-0" />
           )}
         </div>
-        
-        {/* Right side - Date and Actions */}
-        <div className="flex flex-col items-end space-y-1 flex-shrink-0 ml-4">
-          <span className="text-xs text-gray-500 whitespace-nowrap">{formattedDate}</span>
-          
-          <div className="flex items-center space-x-1">
-            {/* Attachment indicator */}
-            {email.attachments && email.attachments.length > 0 && (
-              <Paperclip size={14} className="text-gray-400" />
-            )}
-            
-            {/* Action buttons */}
-            <div className="flex items-center space-x-1 transition-opacity">
-              <button
-                onClick={handleToggleReadStatus}
-                disabled={isToggling}
-                className={`p-1 rounded hover:bg-gray-200 transition-colors ${
-                  isToggling ? 'opacity-50 cursor-not-allowed' : ''
-                }`}
-                title={email.isRead ? 'Mark as unread' : 'Mark as read'}
-              >
-                {email.isRead ? (
-                  <MailOpen size={14} className="text-gray-500" />
-                ) : (
-                  <Mail size={14} className="text-blue-600" />
-                )}
-              </button>
-              
-              <button
-                onClick={handleToggleImportance}
-                disabled={isTogglingImportance}
-                className={`p-1 rounded hover:bg-gray-200 transition-colors ${
-                  isTogglingImportance ? 'opacity-50 cursor-not-allowed' : ''
-                }`}
-                title={email.isImportant ? 'Mark as unimportant' : 'Mark as important'}
-              >
-                {email.isImportant ? (
-                  <Star size={14} className="text-yellow-500 fill-yellow-500" />
-                ) : (
-                  <Star size={14} className="text-gray-500 hover:text-yellow-400" />
-                )}
-              </button>
-              
-              {/* Delete email button for all users */}
-              <button
-                onClick={handleDeleteEmail}
-                disabled={isDeletingEmail}
-                className={`p-1 rounded hover:bg-red-100 transition-colors ${
-                  isDeletingEmail ? 'opacity-50 cursor-not-allowed' : ''
-                }`}
-                title="Delete email"
-              >
-                {isDeletingEmail ? (
-                  <div className="w-3.5 h-3.5 border border-red-500 border-t-transparent rounded-full animate-spin"></div>
-                ) : (
-                  <Trash2 size={14} className="text-gray-500 hover:text-gray-700" />
-                )}
-              </button>
-              
-              {isDraft && (
-                <button
-                  onClick={handleDelete}
-                  disabled={isDeleting}
-                  className={`p-1 rounded hover:bg-red-100 transition-colors ${
-                    isDeleting ? 'opacity-50 cursor-not-allowed' : ''
-                  }`}
-                  title="Delete draft"
-                >
-                  {isDeleting ? (
-                    <div className="w-3.5 h-3.5 border border-red-500 border-t-transparent rounded-full animate-spin"></div>
-                  ) : (
-                    <Trash2 size={14} className="text-red-500 hover:text-red-700" />
-                  )}
-                </button>
+
+        {/* Right side actions */}
+        <div className="flex items-center gap-2 ml-4">
+          <span className="text-xs text-gray-500 whitespace-nowrap w-16 text-right">
+            {formattedDate}
+          </span>
+          <div className="hidden group-hover:flex items-center gap-1">
+            <button
+              onClick={handleToggleReadStatus}
+              disabled={isToggling}
+              className={`p-1 rounded hover:bg-gray-200 transition-colors ${isToggling ? 'opacity-50 cursor-not-allowed' : ''}`}
+              title={email.isRead ? 'Mark as unread' : 'Mark as read'}
+            >
+              {email.isRead ? (
+                <MailOpen size={14} className="text-gray-500" />
+              ) : (
+                <Mail size={14} className="text-blue-600" />
               )}
-            </div>
+            </button>
+            <button
+              onClick={handleDeleteEmail}
+              className="p-1 rounded hover:bg-red-100 transition-colors"
+              title="Delete email"
+            >
+              <Trash2 size={14} className="text-gray-500 hover:text-gray-700" />
+            </button>
+            {isDraft && (
+              <button
+                onClick={handleDelete}
+                className="p-1 rounded hover:bg-red-100 transition-colors"
+                title="Delete draft"
+              >
+                <Trash2 size={14} className="text-red-500 hover:text-red-700" />
+              </button>
+            )}
           </div>
         </div>
-      </div>
       </div>
 
       {/* Context Menu - Rendered in Portal */}

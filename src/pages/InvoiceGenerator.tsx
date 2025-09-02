@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, AlertCircle } from 'lucide-react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { createClient } from '@supabase/supabase-js';
 import CollapsibleSection from '../components/common/CollapsibleSection';
@@ -21,6 +21,8 @@ import { getNextPoNumber } from '../services/poNumberService';
 import { useItems } from '../hooks/useItems';
 import { SupabaseInvoice, SupabaseInvoiceLineItem } from '../types';
 import { BrandProvider } from '../contexts/BrandContext';
+import { useProfile } from '../contexts/ProfileContext';
+import { useAuth } from '../contexts/AuthContext';
 
 // Initialize Supabase client
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
@@ -38,6 +40,8 @@ function InvoiceGenerator({ orderId: propOrderId, onClose, isModal = false }: In
   const location = useLocation();
   const { orderId: paramOrderId } = useParams<{ orderId: string }>();
   const invoiceDocumentRef = useRef<HTMLDivElement>(null);
+  const { currentProfile } = useProfile();
+  const { isGmailSignedIn } = useAuth();
   useItems(); // Initialize items loading
   
   // Use orderId from props if provided (modal mode), otherwise from params (route mode)
@@ -505,7 +509,8 @@ function InvoiceGenerator({ orderId: propOrderId, onClose, isModal = false }: In
         }));
       
       // Save to Supabase - this will create a new record when in edit mode
-      const savedInvoice = await saveInvoiceToSupabase(supabaseInvoice, supabaseLineItems);
+      const createdBy = currentProfile?.name || 'Unknown Staff';
+      const savedInvoice = await saveInvoiceToSupabase(supabaseInvoice, supabaseLineItems, createdBy);
       
       if (!savedInvoice) {
         throw new Error('Failed to save invoice to database');
@@ -581,6 +586,37 @@ function InvoiceGenerator({ orderId: propOrderId, onClose, isModal = false }: In
   };
 
   // Handle send to customer with email composition
+  
+  // Check Gmail authentication
+  if (!isGmailSignedIn) {
+    if (isModal && onClose) {
+      // In modal mode, call onClose to close the modal and show the error in parent
+      onClose();
+      return null;
+    }
+    
+    return (
+      <div className="fade-in pb-6">
+        <div className="text-center py-16">
+          <div className="max-w-md mx-auto">
+            <div className="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <AlertCircle className="w-8 h-8 text-yellow-600" />
+            </div>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">Gmail Connection Required</h3>
+            <p className="text-gray-600 mb-6">
+              Please connect to Gmail to access Invoice Generator. This page requires Gmail integration to create and manage invoices.
+            </p>
+            <button
+              onClick={() => navigate('/inbox')}
+              className="btn btn-primary"
+            >
+              Go to Inbox to Connect Gmail
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
   
   return (
     <BrandProvider>

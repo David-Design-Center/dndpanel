@@ -1,23 +1,115 @@
 import { useState, useEffect } from 'react';
-import { Package, RefreshCw, Truck, Calendar, Box, Info, ExternalLink, FileText } from 'lucide-react';
-import { Shipment, GeneralDocument } from '../types';
-import { fetchShipments, fetchGeneralDocuments } from '../services/backendApi';
-import CollapsibleSection from '../components/common/CollapsibleSection';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import { Package, RefreshCw, Truck, Plus, Upload, FileText, ArrowUpDown, Settings, Download, Trash2, FileSpreadsheet, AlertCircle } from 'lucide-react';
+import { Shipment } from '../types';
+import { fetchShipments, createShipment, importShipments } from '../services/backendApi';
+import { GoogleDriveService, ShipmentDocument } from '../services/googleDriveService';
+import { UploadDocumentsModal } from '../components/ui/upload-documents-modal';
+import { AddShipmentModal } from '../components/ui/add-shipment-modal';
+import { CsvImportModal } from '../components/ui/csv-import-modal';
+import { ShipmentDetailsModal } from '../components/ui/shipment-details-modal';
+import { ColumnManagerModal } from '../components/ui/column-manager-modal';
+import { supabase } from '../lib/supabase';
 
 function Shipments() {
+  const { isGmailSignedIn } = useAuth();
+  const navigate = useNavigate();
   const [shipments, setShipments] = useState<Shipment[]>([]);
-  const [documents, setDocuments] = useState<GeneralDocument[]>([]);
+  const [shipmentDocuments, setShipmentDocuments] = useState<Record<number, ShipmentDocument[]>>({});
   const [loading, setLoading] = useState(true);
-  const [documentsLoading, setDocumentsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [documentsError, setDocumentsError] = useState<string | null>(null);
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const [addShipmentModalOpen, setAddShipmentModalOpen] = useState(false);
+  const [csvImportModalOpen, setCsvImportModalOpen] = useState(false);
+  const [detailsModalOpen, setDetailsModalOpen] = useState(false);
+  const [columnManagerModalOpen, setColumnManagerModalOpen] = useState(false);
+  const [selectedShipments, setSelectedShipments] = useState<Set<number>>(new Set());
+  const [selectedShipmentForUpload, setSelectedShipmentForUpload] = useState<{ id: number; containerNumber: string } | null>(null);
+  const [selectedShipmentForDetails, setSelectedShipmentForDetails] = useState<Shipment | null>(null);
+  const [isExitingButtons, setIsExitingButtons] = useState(false);
+  
+  // Dynamic columns state
+  const [visibleColumns, setVisibleColumns] = useState<string[]>([
+    'ref', 'status', 'pod', 'vendor', 'po', 'pkg', 'kg', 'vol', 'pickup_date', 'note'
+  ]);
+  const [allColumns, setAllColumns] = useState<{[key: string]: string}>({
+    ref: 'Ref',
+    status: 'Status', 
+    pod: 'Pod',
+    vendor: 'Vendor',
+    po: 'Po',
+    pkg: 'PKG',
+    kg: 'Kg',
+    vol: 'VOL',
+    pickup_date: 'Pickup Date',
+    note: 'Note'
+  });
 
   // Fetch shipments and documents on component mount
   useEffect(() => {
     fetchShipmentData();
-    fetchDocumentData();
+    fetchTableColumns();
   }, []);
+
+  // Function to fetch available table columns
+  const fetchTableColumns = async () => {
+    try {
+      // First try to use the get_table_columns function
+      const { data, error } = await supabase.rpc('get_table_columns', {
+        table_name_param: 'shipments'
+      });
+
+      if (error) {
+        console.warn('get_table_columns function not available, using sample data method:', error);
+        // Fallback: Get a sample record to determine columns
+        const { data: sampleData } = await supabase
+          .from('shipments')
+          .select('*')
+          .limit(1);
+
+        if (sampleData && sampleData.length > 0) {
+          const columnNames = Object.keys(sampleData[0]);
+          const columnMap: {[key: string]: string} = {};
+          
+          columnNames.forEach(col => {
+            if (!['id', 'created_at', 'updated_at', 'consignee', 'documents'].includes(col)) {
+              // Convert snake_case to Title Case for display
+              const displayName = col.split('_').map(word => 
+                word.charAt(0).toUpperCase() + word.slice(1)
+              ).join(' ');
+              columnMap[col] = displayName;
+            }
+          });
+
+          setAllColumns(columnMap);
+          setVisibleColumns(Object.keys(columnMap));
+        }
+      } else {
+        // Use the data from get_table_columns function
+        const columnMap: {[key: string]: string} = {};
+        const visibleCols: string[] = [];
+        
+        data.forEach((col: any) => {
+          const colName = col.column_name;
+          if (!['id', 'created_at', 'updated_at', 'consignee', 'documents'].includes(colName)) {
+            // Convert snake_case to Title Case for display
+            const displayName = colName.split('_').map((word: string) => 
+              word.charAt(0).toUpperCase() + word.slice(1)
+            ).join(' ');
+            columnMap[colName] = displayName;
+            visibleCols.push(colName);
+          }
+        });
+
+        setAllColumns(columnMap);
+        setVisibleColumns(visibleCols);
+      }
+    } catch (error) {
+      console.error('Error fetching table columns:', error);
+    }
+  };
 
   // Function to fetch shipments
   const fetchShipmentData = async (forceRefresh = false) => {
@@ -31,6 +123,11 @@ function Shipments() {
       
       const data = await fetchShipments(forceRefresh);
       setShipments(data);
+      
+      // Fetch documents for each shipment
+      for (const shipment of data) {
+        fetchShipmentDocumentsData(shipment.id);
+      }
     } catch (error) {
       console.error('Error fetching shipments:', error);
       setError('Failed to load shipments. Please try again.');
@@ -40,72 +137,277 @@ function Shipments() {
     }
   };
 
-  // Function to fetch documents
-  const fetchDocumentData = async (forceRefresh = false) => {
+  // Function to fetch shipment-specific documents
+  const fetchShipmentDocumentsData = async (shipmentId: number) => {
     try {
-      setDocumentsLoading(true);
-      setDocumentsError(null);
+      console.log(`🔍 Fetching documents for shipment ${shipmentId}...`);
+      const data = await GoogleDriveService.getShipmentDocuments(shipmentId);
+      console.log(`📋 Retrieved ${data.length} documents for shipment ${shipmentId}:`, data);
       
-      const data = await fetchGeneralDocuments(forceRefresh);
-      setDocuments(data);
+      setShipmentDocuments(prev => ({
+        ...prev,
+        [shipmentId]: data
+      }));
+      
+      console.log(`✅ Updated state for shipment ${shipmentId}`);
     } catch (error) {
-      console.error('Error fetching documents:', error);
-      setDocumentsError('Failed to load documents. Please try again.');
-    } finally {
-      setDocumentsLoading(false);
+      console.error('Error fetching shipment documents:', error);
+    }
+  };
+
+  // Handle opening upload modal
+  const handleUploadClick = (shipmentId: number, ref: string) => {
+    setSelectedShipmentForUpload({ id: shipmentId, containerNumber: ref });
+    setUploadModalOpen(true);
+  };
+
+  // Handle upload completion
+  const handleUploadComplete = async () => {
+    if (selectedShipmentForUpload) {
+      console.log(`🔄 Upload completed for shipment ${selectedShipmentForUpload.id}, refreshing...`);
+      
+      // Small delay to ensure database transaction is committed
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Refresh documents for this specific shipment
+      await fetchShipmentDocumentsData(selectedShipmentForUpload.id);
+      
+      // Also refresh all shipments data to ensure consistency
+      await fetchShipmentData(true);
     }
   };
 
   // Handle refresh button click
   const handleRefresh = () => {
     fetchShipmentData(true);
-    fetchDocumentData(true);
   };
 
-  // Group shipments by container number instead of shipper
-  const groupedShipments = shipments.reduce<Record<string, Shipment>>((acc, shipment) => {
-    const containerKey = shipment.container_n || `unknown-${shipment.id}`;
-    acc[containerKey] = shipment;
-    return acc;
-  }, {});
+  // Handle creating a new shipment
+  const handleCreateShipment = async (shipmentData: {
+    ref: string;
+    status: string;
+    pod: string;
+    consignee: string;
+    vendor: string;
+    po: string;
+    pkg: number;
+    kg: number;
+    vol: number;
+    pickup_date: string | null;
+    note: string;
+  }) => {
+    try {
+      console.log('Creating new shipment:', shipmentData);
+      const newShipment = await createShipment(shipmentData);
+      console.log('Successfully created shipment:', newShipment);
+      
+      // Refresh the shipments list to include the new shipment
+      await fetchShipmentData(true);
+      
+      // Close the modal
+      setAddShipmentModalOpen(false);
+    } catch (error) {
+      console.error('Error creating shipment:', error);
+      // Re-throw to let the modal handle the error
+      throw error;
+    }
+  };
 
-  // Format date strings for display
-  const formatDate = (dateStr: string) => {
+  // Handle CSV import
+  const handleCsvImport = async (csvData: any[]) => {
+    try {
+      console.log('Importing CSV data:', csvData);
+      await importShipments(csvData);
+      console.log('Successfully imported CSV data');
+      
+      // Refresh the shipments list
+      await fetchShipmentData(true);
+      
+      // Close the modal
+      setCsvImportModalOpen(false);
+    } catch (error) {
+      console.error('Error importing CSV:', error);
+      throw error;
+    }
+  };
+
+  // Handle checkbox selection
+  const handleSelectShipment = (shipmentId: number, checked: boolean) => {
+    const newSelected = new Set(selectedShipments);
+    if (checked) {
+      newSelected.add(shipmentId);
+    } else {
+      newSelected.delete(shipmentId);
+    }
+    
+    // Handle exit animation when going from some selected to none selected
+    const wasSomeSelected = selectedShipments.size > 0;
+    const willBeSomeSelected = newSelected.size > 0;
+    
+    if (wasSomeSelected && !willBeSomeSelected) {
+      setIsExitingButtons(true);
+      setTimeout(() => {
+        setSelectedShipments(newSelected);
+        setIsExitingButtons(false);
+      }, 300);
+    } else {
+      setSelectedShipments(newSelected);
+    }
+  };
+
+  // Handle select all
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedShipments(new Set(shipments.map(s => s.id)));
+    } else {
+      // Handle exit animation when deselecting all
+      setIsExitingButtons(true);
+      setTimeout(() => {
+        setSelectedShipments(new Set());
+        setIsExitingButtons(false);
+      }, 300);
+    }
+  };
+
+  // Handle row click to open details modal
+  const handleRowClick = (shipment: Shipment) => {
+    setSelectedShipmentForDetails(shipment);
+    setDetailsModalOpen(true);
+  };
+
+  // Handle shipment update from details modal
+  const handleShipmentUpdate = (updatedShipment: Shipment) => {
+    setShipments(prev => prev.map(s => s.id === updatedShipment.id ? updatedShipment : s));
+    setSelectedShipmentForDetails(updatedShipment);
+  };
+
+  // Handle column changes from column manager
+  const handleColumnsChange = () => {
+    // Refresh the columns and shipments data
+    fetchTableColumns();
+    fetchShipmentData(true);
+  };
+
+  // Export shipments to CSV
+  const exportToCSV = (shipmentsToExport: Shipment[] = selectedShipments.size > 0 
+    ? shipments.filter(s => selectedShipments.has(s.id))
+    : shipments
+  ) => {
+    const headers = [
+      'Ref', 'Status', 'POD', 'Vendor', 'PO', 'PKG', 'KG', 'VOL', 'Pickup Date', 'Note', 'Consignee'
+    ];
+    
+    const csvContent = [
+      headers.join(','),
+      ...shipmentsToExport.map(shipment => [
+        `"${shipment.ref || ''}"`,
+        `"${shipment.status || ''}"`,
+        `"${shipment.pod || ''}"`,
+        `"${shipment.vendor || ''}"`,
+        `"${shipment.po || ''}"`,
+        `"${shipment.pkg || 0}"`,
+        `"${shipment.kg || 0}"`,
+        `"${shipment.vol || 0}"`,
+        `"${shipment.pickup_date || ''}"`,
+        `"${shipment.note || ''}"`,
+        `"${shipment.consignee || ''}"`
+      ].join(','))
+    ].join('\\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `shipments_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Handle bulk delete
+  const handleBulkDelete = async () => {
+    if (selectedShipments.size === 0) return;
+
+    const confirmDelete = window.confirm(
+      `Are you sure you want to delete ${selectedShipments.size} shipment(s)? This action cannot be undone.`
+    );
+    
+    if (!confirmDelete) return;
+
+    try {
+      const shipmentIds = Array.from(selectedShipments);
+      
+      const { error } = await supabase
+        .from('shipments')
+        .delete()
+        .in('id', shipmentIds);
+
+      if (error) throw error;
+
+      // Refresh the shipments list
+      await fetchShipmentData(true);
+      
+      // Clear selection
+      setSelectedShipments(new Set());
+    } catch (error) {
+      console.error('Error deleting shipments:', error);
+      setError('Failed to delete shipments. Please try again.');
+    }
+  };
+
+  // Function to format a cell value based on column type
+  const formatCellValue = (value: any, columnName: string) => {
+    if (value === null || value === undefined) return '—';
+    
+    if (columnName === 'pickup_date') {
+      return formatDate(value);
+    }
+    
+    if (['kg', 'vol'].includes(columnName) && typeof value === 'number') {
+      return value.toLocaleString();
+    }
+    
+    if (typeof value === 'object') {
+      return JSON.stringify(value);
+    }
+    
+    return String(value);
+  };
+
+  // Function to get column width and alignment classes
+  const getColumnClasses = (columnName: string) => {
+    const baseClasses = "px-3 py-3 whitespace-nowrap text-xs";
+    
+    if (['pkg', 'kg', 'vol'].includes(columnName)) {
+      return `${baseClasses} text-right`;
+    }
+    
+    return `${baseClasses} text-gray-900`;
+  };
+
+  // Function to get header classes
+  const getHeaderClasses = (columnName: string) => {
+    const baseClasses = "px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider";
+    
+    if (['pkg', 'kg', 'vol'].includes(columnName)) {
+      return `px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider`;
+    }
+    
+    return baseClasses;
+  };  // Format date strings for display
+  const formatDate = (dateStr: string | null) => {
     if (!dateStr) return 'N/A';
     
-    // Try to parse the date string
     try {
       const date = new Date(dateStr);
       if (isNaN(date.getTime())) {
-        // If not a valid date format, return as is
         return dateStr;
       }
       return date.toLocaleDateString('en-US', {
         year: 'numeric',
         month: 'short',
         day: 'numeric'
-      });
-    } catch (e) {
-      // Return the original string if parsing fails
-      return dateStr;
-    }
-  };
-
-  // Format the uploaded_at date
-  const formatUploadedAt = (dateStr: string) => {
-    if (!dateStr) return 'N/A';
-    
-    try {
-      const date = new Date(dateStr);
-      if (isNaN(date.getTime())) {
-        return dateStr;
-      }
-      return date.toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
       });
     } catch (e) {
       return dateStr;
@@ -115,33 +417,44 @@ function Shipments() {
   // Get color class for shipping status
   const getStatusColorClass = (status: string) => {
     status = status.toLowerCase();
-    if (status.includes('delivered') || status.includes('completed')) {
+    if (status.includes('delivered') || status.includes('shipped')) {
       return 'bg-green-100 text-green-800';
-    } else if (status.includes('transit') || status.includes('shipping')) {
+    } else if (status.includes('transit') || status.includes('pending')) {
       return 'bg-blue-100 text-blue-800';
-    } else if (status.includes('delay') || status.includes('issue')) {
+    } else if (status.includes('delay') || status.includes('cancelled')) {
       return 'bg-red-100 text-red-800';
-    } else if (status.includes('customs') || status.includes('processing')) {
-      return 'bg-yellow-100 text-yellow-800';
     } else {
       return 'bg-gray-100 text-gray-800';
     }
   };
 
-  // Get file type icon based on file extension
-  const getFileTypeIcon = (fileName: string) => {
-    const extension = fileName.split('.').pop()?.toLowerCase();
-    
-    if (extension === 'pdf') {
-      return <FileText className="w-4 h-4 text-red-500" />;
-    } else if (['doc', 'docx'].includes(extension || '')) {
-      return <FileText className="w-4 h-4 text-blue-500" />;
-    } else if (['xls', 'xlsx'].includes(extension || '')) {
-      return <FileText className="w-4 h-4 text-green-500" />;
-    } else {
-      return <FileText className="w-4 h-4 text-gray-500" />;
-    }
-  };
+  // Check if all shipments are selected
+  const isAllSelected = shipments.length > 0 && shipments.every(s => selectedShipments.has(s.id));
+
+  // Check Gmail authentication
+  if (!isGmailSignedIn) {
+    return (
+      <div className="fade-in pb-6">
+        <div className="text-center py-16">
+          <div className="max-w-md mx-auto">
+            <div className="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <AlertCircle className="w-8 h-8 text-yellow-600" />
+            </div>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">Gmail Connection Required</h3>
+            <p className="text-gray-600 mb-6">
+              Please connect to Gmail to access Shipments. This page requires Gmail integration to manage your shipment tracking and documents.
+            </p>
+            <button
+              onClick={() => navigate('/inbox')}
+              className="btn btn-primary"
+            >
+              Go to Inbox to Connect Gmail
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fade-in pb-6">
@@ -152,82 +465,87 @@ function Shipments() {
           </div>
           <h1 className="text-2xl font-semibold text-gray-800">Shipment Tracking</h1>
         </div>
-        <button
-          onClick={handleRefresh}
-          className="btn btn-secondary flex items-center"
-          disabled={refreshing}
-        >
-          <RefreshCw size={18} className={`mr-2 ${refreshing ? 'animate-spin' : ''}`} />
-          {refreshing ? 'Refreshing...' : 'Refresh'}
-        </button>
+        <div className="flex items-center space-x-2">
+          {/* Export Buttons */}
+          <button
+            onClick={() => exportToCSV()}
+            className={`px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 text-gray-700 flex items-center transition-all duration-300 ${
+              (selectedShipments.size > 0 || isExitingButtons) ? 'transform -translate-x-2' : 'transform translate-x-0'
+            }`}
+          >
+            <Download size={14} className="mr-1.5" />
+            Export All
+          </button>
+          
+          {(selectedShipments.size > 0 || isExitingButtons) && (
+            <button
+              onClick={() => exportToCSV(shipments.filter(s => selectedShipments.has(s.id)))}
+              className={`px-3 py-1.5 text-sm border border-blue-300 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 flex items-center transition-all duration-300 ${
+                isExitingButtons ? 'animate-bounce-down opacity-0 scale-95' : 'animate-bounce-up opacity-100'
+              }`}
+              style={{
+                animation: isExitingButtons ? 'bounceDown 0.3s ease-in-out' : 'bounceUp 0.3s ease-in-out'
+              }}
+            >
+              <FileSpreadsheet size={14} className="mr-1.5" />
+              Export Selected ({selectedShipments.size})
+            </button>
+          )}
+
+          {/* Delete Selected */}
+          {(selectedShipments.size > 0 || isExitingButtons) && (
+            <button
+              onClick={handleBulkDelete}
+              className={`px-3 py-1.5 text-sm border border-red-300 rounded-md bg-red-50 hover:bg-red-100 text-red-700 flex items-center transition-all duration-300 ${
+                isExitingButtons ? 'animate-bounce-down opacity-0 scale-95' : 'animate-bounce-up opacity-100'
+              }`}
+              style={{
+                animation: isExitingButtons 
+                  ? 'bounceDown 0.3s ease-in-out 0.1s both' 
+                  : 'bounceUp 0.3s ease-in-out 0.1s both'
+              }}
+            >
+              <Trash2 size={14} className="mr-1.5" />
+              Delete Selected ({selectedShipments.size})
+            </button>
+          )}
+
+          <button
+            onClick={() => setCsvImportModalOpen(true)}
+            className="px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 text-gray-700 flex items-center"
+          >
+            <Upload size={14} className="mr-1.5" />
+            Import CSV
+          </button>
+          <button
+            onClick={() => setAddShipmentModalOpen(true)}
+            className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md flex items-center"
+          >
+            <Plus size={14} className="mr-1.5" />
+            Add Shipment
+          </button>
+          <button
+            onClick={() => setColumnManagerModalOpen(true)}
+            className="px-3 py-1.5 text-sm bg-gray-600 hover:bg-gray-700 text-white rounded-md flex items-center"
+          >
+            <Settings size={14} className="mr-1.5" />
+            Manage Columns
+          </button>
+          <button
+            onClick={handleRefresh}
+            className="px-3 py-1.5 text-sm bg-gray-600 hover:bg-gray-700 text-white rounded-md flex items-center"
+            disabled={refreshing}
+          >
+            <RefreshCw size={14} className={`mr-1.5 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? 'Refreshing...' : 'Refresh'}
+          </button>
+        </div>
       </div>
-      
-      {/* Documents Section */}
-      <CollapsibleSection
-        title={
-          <div className="flex items-center">
-            <div className="mr-3 p-1 bg-gray-100 rounded">
-              <FileText className="w-5 h-5 text-blue-600" />
-            </div>
-            <div>
-              <h2 className="text-lg font-medium">Shipping Documents</h2>
-              <p className="text-sm text-gray-500">{documents.length} document{documents.length !== 1 ? 's' : ''}</p>
-            </div>
-          </div>
-        }
-        defaultExpanded={true}
-        className="mb-6 bg-white"
-      >
-        {documentsError && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 text-sm text-red-800">
-            <p className="flex items-center">
-              <Info size={16} className="mr-2" />
-              {documentsError}
-            </p>
-          </div>
-        )}
-        
-        {documentsLoading ? (
-          <div className="flex justify-center items-center h-24">
-            <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div>
-          </div>
-        ) : documents.length === 0 ? (
-          <div className="text-center py-6 bg-gray-50 rounded-lg border border-gray-200">
-            <FileText className="w-10 h-10 text-gray-300 mx-auto mb-2" />
-            <p className="text-gray-500">No documents available</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
-            {documents.map(doc => (
-              <a
-                key={doc.id}
-                href={doc.document_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-start p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                <div className="mr-3 p-2 bg-gray-100 rounded">
-                  {getFileTypeIcon(doc.file_name)}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-gray-900 truncate">
-                    {doc.file_name}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Uploaded: {formatUploadedAt(doc.uploaded_at)}
-                  </p>
-                </div>
-                <ExternalLink size={14} className="text-gray-400 mt-1" />
-              </a>
-            ))}
-          </div>
-        )}
-      </CollapsibleSection>
       
       {error && (
         <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-800">
           <p className="flex items-center">
-            <Info size={16} className="mr-2" />
+            <Package size={16} className="mr-2" />
             {error}
           </p>
         </div>
@@ -242,99 +560,160 @@ function Shipments() {
           <Package className="w-16 h-16 text-gray-300 mx-auto mb-4" />
           <h2 className="text-xl font-medium text-gray-700 mb-2">No Shipments Found</h2>
           <p className="text-gray-500 mb-4">
-            There are no shipments in the system yet. New shipments will appear here once they are added.
+            There are no shipments in the system yet. Add a new shipment or import from CSV.
           </p>
         </div>
       ) : (
-        <div className="space-y-4">
-          {/* Shipments grouped by container */}
-          {Object.entries(groupedShipments).map(([containerNumber, shipment]) => (
-            <CollapsibleSection
-              key={containerNumber}
-              title={
-                <div className="flex items-center justify-between w-full">
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center">
-                        <Box className="w-5 h-5 text-blue-500 mr-3" />
-                        <div>
-                          <h3 className="text-lg font-semibold text-gray-800">
-                            Container {containerNumber === `unknown-${shipment.id}` ? 'N/A' : containerNumber}
-                          </h3>
-                          <div className="flex items-center space-x-6 mt-1">
-                            <div className="flex items-center text-sm text-gray-600">
-                              <Calendar className="w-4 h-4 mr-1" />
-                              <span>ETD: {formatDate(shipment.etd)}</span>
+        <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+          {/* Table */}
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="w-8 px-2 py-3 text-left border-r border-gray-200">
+                    <input
+                      type="checkbox"
+                      checked={isAllSelected}
+                      onChange={(e) => handleSelectAll(e.target.checked)}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                  </th>
+                  {visibleColumns.map((columnName, index) => (
+                    <th key={columnName} className={`${getHeaderClasses(columnName)} ${
+                      index < visibleColumns.length - 1 ? 'border-r border-gray-200' : ''
+                    }`}>
+                      <div className="flex items-center cursor-pointer">
+                        {allColumns[columnName] || columnName}
+                        {columnName === 'ref' && <ArrowUpDown className="w-3 h-3 ml-1" />}
+                      </div>
+                    </th>
+                  ))}
+                  <th className="w-16 px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {shipments.map((shipment) => (
+                  <tr 
+                    key={shipment.id} 
+                    className="hover:bg-gray-50 cursor-pointer"
+                    onClick={() => handleRowClick(shipment)}
+                  >
+                    <td className="w-8 px-2 py-3 border-r border-gray-200">
+                      <input
+                        type="checkbox"
+                        checked={selectedShipments.has(shipment.id)}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          handleSelectShipment(shipment.id, e.target.checked);
+                        }}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                    </td>
+                    {visibleColumns.map((columnName, index) => (
+                      <td key={columnName} className={`${getColumnClasses(columnName)} ${
+                        index < visibleColumns.length - 1 ? 'border-r border-gray-200' : ''
+                      }`}>
+                        {columnName === 'status' ? (
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getStatusColorClass(shipment[columnName as keyof Shipment] as string)}`}>
+                            <div className="max-w-[80px] truncate" title={shipment[columnName as keyof Shipment] as string}>
+                              {shipment[columnName as keyof Shipment] as string}
                             </div>
-                            <div className="flex items-center text-sm text-gray-600">
-                              <Calendar className="w-4 h-4 mr-1" />
-                              <span>ETA: {formatDate(shipment.eta)}</span>
-                            </div>
+                          </span>
+                        ) : columnName === 'ref' ? (
+                          <div className="max-w-[100px] truncate font-medium" title={formatCellValue(shipment[columnName as keyof Shipment], columnName)}>
+                            {formatCellValue(shipment[columnName as keyof Shipment], columnName)}
                           </div>
-                        </div>
+                        ) : (
+                          <div className={`max-w-[120px] truncate ${['pkg', 'kg', 'vol'].includes(columnName) ? '' : ''}`} title={formatCellValue(shipment[columnName as keyof Shipment], columnName)}>
+                            {formatCellValue(shipment[columnName as keyof Shipment], columnName)}
+                          </div>
+                        )}
+                      </td>
+                    ))}
+                    <td className="w-16 px-3 py-3 whitespace-nowrap text-xs font-medium">
+                      <div className="flex items-center justify-center">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleUploadClick(shipment.id, shipment.ref);
+                          }}
+                          className="text-blue-600 hover:text-blue-900 p-1"
+                          title="Upload Documents"
+                        >
+                          <Upload className="w-4 h-4" />
+                        </button>
+                        {shipmentDocuments[shipment.id]?.length > 0 && (
+                          <span className="text-green-600 flex items-center ml-1">
+                            <FileText className="w-3 h-3" />
+                            <span className="text-xs">{shipmentDocuments[shipment.id].length}</span>
+                          </span>
+                        )}
                       </div>
-                      <div className="flex items-center space-x-3">
-                        <span className="text-sm text-gray-500">{shipment.shipper}</span>
-                        <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getStatusColorClass(shipment.shipping_status)}`}>
-                          {shipment.shipping_status}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              }
-              defaultExpanded={false}
-              className="bg-white"
-            >
-              <div className="mt-4">
-                {/* Shipment details */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-                  <div>
-                    <h5 className="text-xs text-gray-500 uppercase mb-1">Consignee</h5>
-                    <p className="text-sm font-medium">{shipment.consignee}</p>
-                  </div>
-                  <div>
-                    <h5 className="text-xs text-gray-500 uppercase mb-1">Vessel/Carrier</h5>
-                    <p className="text-sm font-medium">{shipment.vessel_carrier}</p>
-                  </div>
-                  <div>
-                    <h5 className="text-xs text-gray-500 uppercase mb-1">Reference</h5>
-                    <p className="text-sm font-medium">{shipment.ref || `Shipment #${shipment.id}`}</p>
-                  </div>
-                  <div className="md:col-span-2 lg:col-span-3">
-                    <h5 className="text-xs text-gray-500 uppercase mb-1">Goods Description</h5>
-                    <p className="text-sm font-medium">{shipment.description_of_goods}</p>
-                  </div>
-                </div>
-
-                {/* Container-specific documents section */}
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <div className="flex items-center mb-4">
-                    <FileText className="w-5 h-5 text-blue-600 mr-2" />
-                    <h4 className="text-base font-medium">Container Documents</h4>
-                  </div>
-                  
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm">
-                    <div className="flex items-start">
-                      <Info className="w-5 h-5 text-blue-600 mr-3 mt-0.5 flex-shrink-0" />
-                      <div>
-                        <p className="text-blue-800 font-medium mb-2">
-                          Feature Coming Soon
-                        </p>
-                        <p className="text-blue-700">
-                          Documents specific to container <strong>{containerNumber === `unknown-${shipment.id}` ? 'this container' : containerNumber}</strong> will 
-                          appear here once the necessary database and API changes are implemented. This will include 
-                          bills of lading, customs forms, inspection certificates, and other container-specific documentation.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </CollapsibleSection>
-          ))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          
+          {/* Footer with selected count */}
+          {selectedShipments.size > 0 && (
+            <div className="bg-gray-50 px-4 py-3 border-t">
+              <p className="text-sm text-gray-700">
+                {selectedShipments.size} of {shipments.length} shipment(s) selected
+              </p>
+            </div>
+          )}
         </div>
       )}
+      
+      {/* Upload Documents Modal */}
+      {uploadModalOpen && selectedShipmentForUpload && (
+        <UploadDocumentsModal
+          isOpen={uploadModalOpen}
+          onClose={() => setUploadModalOpen(false)}
+          shipmentId={selectedShipmentForUpload.id}
+          containerNumber={selectedShipmentForUpload.containerNumber}
+          onUploadComplete={handleUploadComplete}
+        />
+      )}
+      
+      {/* Add Shipment Modal */}
+      <AddShipmentModal
+        isOpen={addShipmentModalOpen}
+        onClose={() => setAddShipmentModalOpen(false)}
+        onSubmit={handleCreateShipment}
+      />
+      
+      {/* CSV Import Modal */}
+      <CsvImportModal
+        isOpen={csvImportModalOpen}
+        onClose={() => setCsvImportModalOpen(false)}
+        onImport={handleCsvImport}
+      />
+      
+      {/* Shipment Details Modal */}
+      <ShipmentDetailsModal
+        isOpen={detailsModalOpen}
+        onClose={() => setDetailsModalOpen(false)}
+        shipment={selectedShipmentForDetails}
+        documents={selectedShipmentForDetails ? shipmentDocuments[selectedShipmentForDetails.id] || [] : []}
+        onUpdate={handleShipmentUpdate}
+        onDocumentsUpdate={() => {
+          if (selectedShipmentForDetails) {
+            fetchShipmentDocumentsData(selectedShipmentForDetails.id);
+          }
+        }}
+      />
+      
+      {/* Column Manager Modal */}
+      <ColumnManagerModal
+        isOpen={columnManagerModalOpen}
+        onClose={() => setColumnManagerModalOpen(false)}
+        onColumnsChanged={handleColumnsChange}
+      />
     </div>
   );
 }

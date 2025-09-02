@@ -1,51 +1,18 @@
 import { useState, useEffect } from 'react';
 import { useProfile } from '../../contexts/ProfileContext';
+import { useAuth } from '../../contexts/AuthContext';
 import RichTextEditor from './RichTextEditor';
 import { Button } from '../ui/button';
-import { Save, RotateCcw, Eye, X } from 'lucide-react';
-import Modal from './Modal';
+import { Save, AlertCircle } from 'lucide-react';
 
 // Default signatures
-const DEFAULT_SIGNATURES: {[key: string]: string} = {
-  Dimitry: `
-    <div style="font-family: Arial, sans-serif; color: #333; margin-top: 20px; padding-top: 10px; border-top: 1px solid #ddd;">
-      <p style="margin: 0; padding: 0;"><strong>D&D Design Center</strong></p>
-      <p style="margin: 0; padding: 0;">2615 East 17 street</p>
-      <p style="margin: 0; padding: 0;">Brooklyn NY 11235</p>
-      <p style="margin: 0; padding: 0;">Tel: (718) 934-7100</p>
-      <p style="margin: 0; padding: 0;">Email: info@dnddesigncenter.com</p>
-      <p style="margin: 0; padding: 0;"><a href="https://www.dnddesigncenter.com" style="color: #007bff; text-decoration: none;">www.dnddesigncenter.com</a></p>
-    </div>
-  `,
-  David: `
-    <div style="font-family: Arial, sans-serif; color: #333; margin-top: 20px; padding-top: 10px; border-top: 1px solid #ddd;">
-      <iframe src="https://drive.google.com/file/d/1Rg-btxeibQ4KGL_cwoja0bM0oajLFRUj/preview" width="500" height="80" allow="autoplay" style="border: none;"></iframe>
-    </div>
-  `,
-  Natalia: `
-    <div style="font-family: Arial, sans-serif; color: #333; margin-top: 20px; padding-top: 10px; border-top: 1px solid #ddd;">
-      <p style="margin: 0; padding: 0;"><strong>NATALIA LANDA</strong></p>
-      <p style="margin: 0; padding: 0;">Designer</p>
-      <p style="margin: 0; padding: 0;">D&D design center</p>
-      <p style="margin: 0; padding: 0;">2615 East 17 street</p>
-      <p style="margin: 0; padding: 0;">Brooklyn New York, 11235</p>
-      <p style="margin: 0; padding: 0;">T-718-934-7100</p>
-      <p style="margin: 0; padding: 0;"><a href="https://www.dnddesigncenter.com" style="color: #007bff; text-decoration: none;">www.dnddesigncenter.com</a></p>
-      <p style="margin: 0; padding: 0;">Natalia.Landa2615@gmail.com</p>
-    </div>
-  `,
-  Marti: `
-    <div style="font-family: Arial, sans-serif; color: #333; margin-top: 20px; padding-top: 10px; border-top: 1px solid #ddd;">
-      <iframe src="https://drive.google.com/file/d/19vC1cBePeyN79OM6RLL-ksPMC8vtXndL/preview" width="500" height="80" allow="autoplay" style="border: none;"></iframe>
-    </div>
-  `
-};
 
 function SignatureManager() {
   const { currentProfile, updateProfileSignature } = useProfile();
+  const { isGmailSignedIn } = useAuth();
   const [signature, setSignature] = useState<string>('');
   const [isSaving, setIsSaving] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
+  const [] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,19 +24,8 @@ function SignatureManager() {
   }, [currentProfile]);
 
   // Reset signature to profile's saved signature
-  const handleReset = () => {
-    if (currentProfile) {
-      setSignature(currentProfile.signature || '');
-    }
-  };
 
   // Reset to default signature for current profile
-  const handleUseDefault = () => {
-    if (currentProfile) {
-      const defaultSig = DEFAULT_SIGNATURES[currentProfile.name] || '';
-      setSignature(defaultSig);
-    }
-  };
 
   // Save signature to database
   const handleSave = async () => {
@@ -106,6 +62,17 @@ function SignatureManager() {
       setIsSaving(false);
     }
   };
+
+  if (!isGmailSignedIn) {
+    return (
+      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-center gap-3">
+        <AlertCircle className="h-5 w-5 text-yellow-600 flex-shrink-0" />
+        <div className="text-sm text-yellow-800">
+          Please connect to Gmail to manage your email signature.
+        </div>
+      </div>
+    );
+  }
 
   if (!currentProfile) {
     return (

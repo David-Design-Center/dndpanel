@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback } from "react";
 import { ChevronRight, Folder, File, FolderOpen } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -20,6 +20,7 @@ export type TreeViewProps = {
   onNodeClick?: (node: TreeNode) => void;
   onNodeExpand?: (nodeId: string, expanded: boolean) => void;
   defaultExpandedIds?: string[];
+  expandedIds?: string[]; // Add controlled expanded state
   showLines?: boolean;
   showIcons?: boolean;
   selectable?: boolean;
@@ -37,6 +38,7 @@ export function TreeView({
   onNodeClick,
   onNodeExpand,
   defaultExpandedIds = [],
+  expandedIds, // Add controlled expandedIds
   showLines = true,
   showIcons = true,
   selectable = true,
@@ -46,32 +48,42 @@ export function TreeView({
   indent = 20,
   animateExpand = true,
 }: TreeViewProps) {
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(
+  const [internalExpandedIds, setInternalExpandedIds] = useState<Set<string>>(
     new Set(defaultExpandedIds),
   );
   const [internalSelectedIds, setInternalSelectedIds] =
     useState<string[]>(selectedIds);
 
+  // Use controlled expandedIds if provided, otherwise use internal state
+  const isExpandedControlled = expandedIds !== undefined;
+  const currentExpandedIds = isExpandedControlled ? new Set(expandedIds) : internalExpandedIds;
+
   const isControlled =
     selectedIds !== undefined && onSelectionChange !== undefined;
   const currentSelectedIds = isControlled ? selectedIds : internalSelectedIds;
 
-  // Sync expanded state with defaultExpandedIds prop changes
-  useEffect(() => {
-    setExpandedIds(new Set(defaultExpandedIds));
-  }, [defaultExpandedIds]);
+  // Only sync expanded state with defaultExpandedIds on initial mount
+  // Remove the useEffect that syncs on every defaultExpandedIds change to prevent 
+  // setState-during-render warnings when parent and child both manage the same state
 
   const toggleExpanded = useCallback(
     (nodeId: string) => {
-      setExpandedIds((prev) => {
-        const newSet = new Set(prev);
-        const isExpanded = newSet.has(nodeId);
-        isExpanded ? newSet.delete(nodeId) : newSet.add(nodeId);
+      if (isExpandedControlled) {
+        // For controlled mode, just call the callback and let parent handle state
+        const isExpanded = currentExpandedIds.has(nodeId);
         onNodeExpand?.(nodeId, !isExpanded);
-        return newSet;
-      });
+      } else {
+        // For uncontrolled mode, manage internal state
+        setInternalExpandedIds((prev) => {
+          const newSet = new Set(prev);
+          const isExpanded = newSet.has(nodeId);
+          isExpanded ? newSet.delete(nodeId) : newSet.add(nodeId);
+          onNodeExpand?.(nodeId, !isExpanded);
+          return newSet;
+        });
+      }
     },
-    [onNodeExpand],
+    [onNodeExpand, isExpandedControlled, currentExpandedIds],
   );
 
   const handleSelection = useCallback(
@@ -108,7 +120,7 @@ export function TreeView({
     parentPath: boolean[] = [],
   ) => {
     const hasChildren = (node.children?.length ?? 0) > 0;
-    const isExpanded = expandedIds.has(node.id);
+    const isExpanded = currentExpandedIds.has(node.id);
     const isSelected = currentSelectedIds.includes(node.id);
     const currentPath = [...parentPath, isLast];
 
@@ -127,17 +139,12 @@ export function TreeView({
       <div key={node.id} className="select-none">
         <motion.div
           className={cn(
-            "flex items-center py-0.5 px-1 cursor-pointer transition-all duration-200 relative group rounded-md mx-0.5",
+            "flex items-center py-0.5 px-0.5 transition-all duration-200 relative group rounded-md mx-0",
             "hover:bg-accent/50",
             isSelected && "bg-accent/80",
             selectable && "hover:border-accent-foreground/10",
           )}
-          style={{ paddingLeft: level * indent + 4 }}
-          onClick={(e) => {
-            if (hasChildren) toggleExpanded(node.id);
-            handleSelection(node.id, e.ctrlKey || e.metaKey);
-            onNodeClick?.(node);
-          }}
+          style={{ paddingLeft: level * indent + 2 }}
           whileTap={{ scale: 0.98, transition: { duration: 0.1 } }}
         >
           {/* Tree Lines */}
@@ -148,7 +155,7 @@ export function TreeView({
                   key={pathIndex}
                   className="absolute top-0 bottom-0 border-l border-border/40"
                   style={{
-                    left: pathIndex * indent + 12,
+                    left: pathIndex * indent + 8,
                     display:
                       pathIndex === currentPath.length - 1 && isLastInPath
                         ? "none"
@@ -159,7 +166,7 @@ export function TreeView({
               <div
                 className="absolute top-1/2 border-t border-border/40"
                 style={{
-                  left: (level - 1) * indent + 12,
+                  left: (level - 1) * indent + 8,
                   width: indent - 4,
                   transform: "translateY(-1px)",
                 }}
@@ -168,7 +175,7 @@ export function TreeView({
                 <div
                   className="absolute top-0 border-l border-border/40"
                   style={{
-                    left: (level - 1) * indent + 12,
+                    left: (level - 1) * indent + 8,
                     height: "50%",
                   }}
                 />
@@ -176,9 +183,13 @@ export function TreeView({
             </div>
           )}
 
-          {/* Expand Icon */}
+          {/* Expand Icon - Left clickable for expand/collapse */}
           <motion.div
-            className="flex items-center justify-center w-3 h-3 mr-0.5"
+            className="flex items-center justify-center w-4 h-3 mr-0.5 cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (hasChildren) toggleExpanded(node.id);
+            }}
             animate={{ rotate: hasChildren && isExpanded ? 90 : 0 }}
             transition={{ duration: 0.2, ease: "easeInOut" }}
           >
@@ -190,7 +201,7 @@ export function TreeView({
           {/* Node Icon */}
           {showIcons && (
             <motion.div
-              className="flex items-center justify-center w-3 h-3 mr-1 text-muted-foreground"
+              className="flex items-center justify-center w-3 h-3 mr-0.5 text-muted-foreground"
               whileHover={{ scale: 1.1 }}
               transition={{ duration: 0.15 }}
             >
@@ -198,8 +209,15 @@ export function TreeView({
             </motion.div>
           )}
 
-          {/* Label */}
-          <div className="text-xs font-medium truncate flex-1">
+          {/* Label - Right 2/3 clickable for node selection */}
+          <div 
+            className="text-xs font-medium truncate flex-1 cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleSelection(node.id, e.ctrlKey || e.metaKey);
+              onNodeClick?.(node);
+            }}
+          >
             {typeof node.label === 'string' ? (
               <span>{node.label}</span>
             ) : (
@@ -256,7 +274,7 @@ export function TreeView({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2, ease: "easeOut" }}
     >
-      <div className="p-1">
+      <div className="px-0.5 py-0">
         {data.map((node, index) =>
           renderNode(node, 0, index === data.length - 1),
         )}

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { GmailLabel } from '../types';
 import { fetchGmailLabels, createGmailLabel, updateGmailLabel, deleteGmailLabel } from '../integrations/gapiService';
@@ -23,6 +23,7 @@ interface LabelContextType {
   editLabelError: string | null;
   isDeletingLabel: boolean;
   deleteLabelError: string | null;
+  systemCounts: Record<string, number>; // ✅ NEW: Clear derivation for system folder badges
 }
 
 const LabelContext = createContext<LabelContextType | undefined>(undefined);
@@ -35,6 +36,11 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
   // Cache to prevent duplicate API calls when switching tabs/pages
   const labelsCache = useRef<{[profileId: string]: { labels: GmailLabel[], timestamp: number }}>({});
   const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes cache
+  
+  // Request coalescing to prevent duplicate label fetches
+  const inFlightRequest = useRef<Promise<GmailLabel[]> | null>(null);
+  const lastLoadedAt = useRef<number>(0);
+  
   const [isAddingLabel, setIsAddingLabel] = useState(false);
   const [addLabelError, setAddLabelError] = useState<string | null>(null);
   const [isEditingLabel, setIsEditingLabel] = useState(false);
@@ -45,6 +51,29 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
   const { currentProfile, authFlowCompleted } = useProfile();
   const { isDataLoadingAllowed } = useSecurity();
   const location = useLocation();
+
+  // Coalesced label fetching function
+  const loadLabelsOnce = useCallback(async (): Promise<GmailLabel[]> => {
+    // If already in-flight, return the same promise
+    if (inFlightRequest.current) {
+      console.log('🔄 Labels already loading, reusing in-flight request');
+      return inFlightRequest.current;
+    }
+
+    try {
+      // Mark request as in-flight
+      inFlightRequest.current = fetchGmailLabels();
+      const gmailLabels = await inFlightRequest.current;
+      
+      lastLoadedAt.current = Date.now();
+      console.log('🔄 Labels loaded successfully at:', lastLoadedAt.current);
+      
+      return gmailLabels;
+    } finally {
+      // Clear in-flight marker
+      inFlightRequest.current = null;
+    }
+  }, []);
 
   const refreshLabels = useCallback(async () => {
     // Security check: Block all data fetches during auth flow
@@ -82,12 +111,27 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    // ✅ OPTIMIZATION: Prevent duplicate label fetches with coalescing
+    // Skip if we already loaded recently (within 3 seconds) or if already loading
+    const timeSinceLastLoad = Date.now() - lastLoadedAt.current;
+    if (timeSinceLastLoad < 3000 && lastLoadedAt.current > 0) {
+      console.log('🛑 Skipping duplicate label fetch - loaded', timeSinceLastLoad, 'ms ago');
+      return;
+    }
+
+    // If already in-flight, wait for it to complete
+    if (inFlightRequest.current) {
+      console.log('🔄 Waiting for in-flight labels request to complete');
+      await inFlightRequest.current;
+      return;
+    }
+
     try {
       setLoadingLabels(true);
       setError(null);
       
       console.log('🔄 Fetching fresh Gmail labels for profile:', currentProfile.name, 'email:', currentProfile.userEmail);
-      const gmailLabels = await fetchGmailLabels();
+      const gmailLabels = await loadLabelsOnce();
       
       // Debug: Log labels with counts (only those with counts to reduce noise)
       const labelsWithCounts = gmailLabels.filter(label => 
@@ -224,6 +268,22 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
 
     const handleForceRefresh = () => {
       console.log('🔄 LabelContext: Force refresh data event received');
+      
+      // ✅ OPTIMIZATION: Coalesce force refresh to prevent duplicate label fetches
+      const timeSinceLastLoad = Date.now() - lastLoadedAt.current;
+      if (timeSinceLastLoad < 3000 || inFlightRequest.current) {
+        console.log('🛑 Skipping force refresh - recently loaded or already loading');
+        if (inFlightRequest.current) {
+          // Wait for in-flight request to complete
+          inFlightRequest.current.then(() => {
+            console.log('✅ In-flight request completed, force refresh satisfied');
+          }).catch(() => {
+            console.log('❌ In-flight request failed, force refresh satisfied');
+          });
+        }
+        return;
+      }
+      
       if (currentProfile && isGmailSignedIn && isGmailApiReady) {
         console.log('🔄 LabelContext: Force refreshing labels now');
         refreshLabels();
@@ -239,6 +299,25 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     };
   }, [clearLabelsCache, refreshLabels, currentProfile, isGmailSignedIn, isGmailApiReady]);
 
+  // ✅ SYSTEM COUNTS: Clear derivation for system folder badges
+  const systemCounts = useMemo(() => {
+    const map: Record<string, number> = {};
+    
+    for (const label of labels) {
+      if (!label.id) continue;
+      
+      // Try messagesUnread first, fallback to threadsUnread
+      const count = (label as any).messagesUnread ?? (label as any).threadsUnread ?? 0;
+      map[label.id] = count;
+    }
+    
+    console.log('📊 System counts derived from labels:', Object.entries(map)
+      .filter(([, count]) => count > 0)
+      .reduce((acc, [id, count]) => ({ ...acc, [id]: count }), {}));
+    
+    return map; // ✅ New reference when labels change
+  }, [labels]);
+
   const value = {
     labels,
     loadingLabels,
@@ -253,7 +332,8 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     isEditingLabel,
     editLabelError,
     isDeletingLabel,
-    deleteLabelError
+    deleteLabelError,
+    systemCounts // ✅ NEW: Export system counts for badges
   };
 
   return <LabelContext.Provider value={value}>{children}</LabelContext.Provider>;

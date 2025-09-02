@@ -66,7 +66,7 @@ function UnderlineTab({
       role="tab"
       aria-selected={!!active}
       className={cn(
-        "relative shrink-0 h-7 px-2 text-xs font-medium transition-colors",
+        "relative shrink-0 h-7 px-1.5 text-xs font-medium transition-colors",
         "text-gray-500 hover:text-gray-900",
         active && "text-gray-900",
         disabled && "opacity-50 cursor-not-allowed"
@@ -83,7 +83,7 @@ function UnderlineTab({
       {/* underline */}
       <span
         className={cn(
-          "pointer-events-none absolute left-1 right-1 -bottom-1 h-0.5 rounded transition-colors",
+          "pointer-events-none absolute left-0.5 right-0.5 -bottom-1 h-0.5 rounded transition-colors",
           active ? "bg-blue-600" : "bg-transparent"
         )}
       />
@@ -123,8 +123,8 @@ function ToolbarRow1({ state, setState, counts, onRefresh, isRefreshing }: Omit<
 
   return (
     <div className="sticky top-0 z-30 h-10 bg-white/80 backdrop-blur border-b border-gray-200">
-      <div className="flex items-center gap-2 px-3 md:px-4 overflow-x-auto md:overflow-visible snap-x snap-mandatory">
-        <div className="flex items-center gap-2 min-w-max snap-start">
+      <div className="flex items-center gap-1 px-2 md:px-4 overflow-x-auto snap-x snap-mandatory" style={{ minWidth: '480px' }}>
+        <div className="flex items-center gap-1 min-w-max snap-start">
           <UnderlineTab 
             active={sys==='INBOX'} 
             onClick={()=>setSys('INBOX')} 
@@ -202,11 +202,11 @@ function ToolbarRow2({ state, setState, counts, onEmptyTrash, isRefreshing, isEm
 
   return (
     <div className="sticky top-10 z-20 h-8 bg-white/80 backdrop-blur border-b border-gray-200">
-      <div className="flex items-center justify-between gap-2 px-3 md:px-4">
+      <div className="flex items-center justify-between gap-1 px-2 md:px-4" style={{ minWidth: '480px' }}>
         {/* Left: Categories when in Inbox, or Delete All when in Trash */}
-        <div className="flex items-center gap-2 overflow-x-auto md:overflow-visible snap-x snap-mandatory">
+        <div className="flex items-center gap-1 overflow-x-auto snap-x snap-mandatory">
           {showCategories && (
-            <div className="flex items-center gap-2 min-w-max snap-start">
+            <div className="flex items-center gap-1 min-w-max snap-start">
               <UnderlineTab 
                 active={c==='PRIMARY'} 
                 onClick={()=>setState({ category:'PRIMARY' })}

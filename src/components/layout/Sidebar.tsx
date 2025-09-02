@@ -1,4 +1,4 @@
-import { Inbox, MailPlus, ChevronRight, Clipboard, FileText, Settings, BarChart3, Package, Calendar, Users } from 'lucide-react';
+import { Inbox, ChevronRight, Clipboard, FileText, Settings, BarChart3, Package, Calendar, Users, GraduationCap } from 'lucide-react';
 import { useLocation, Link } from 'react-router-dom';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useProfile } from '../../contexts/ProfileContext';
@@ -8,12 +8,12 @@ import { useInboxLayout } from '../../contexts/InboxLayoutContext';
 import { useEmailPreloader } from '../../contexts/EmailPreloaderContext';
 import { Toggle } from '../ui/liquid-toggle';
 import ProfileSelector from '../profile/ProfileSelector';
+import TutorialsDialog from '../common/TutorialsDialog';
 
 interface SidebarProps {
-  onCompose: () => void;
 }
 
-function Sidebar({ onCompose }: SidebarProps) {
+function Sidebar({ }: SidebarProps) {
   const location = useLocation();
   const { currentProfile } = useProfile();
   const { isAdmin } = useAuth();
@@ -46,39 +46,9 @@ function Sidebar({ onCompose }: SidebarProps) {
           </div>
         </div>
 
-        {!isSidebarCollapsed && (
-          <div className="p-6">
-            <button
-              onClick={onCompose}
-              className="w-full flex items-center justify-center space-x-2 bg-gray-800 text-white px-4 py-3 rounded-full hover:bg-gray-900 transition-colors font-medium"
-            >
-              <MailPlus size={20} />
-              <span>Write Email</span>
-            </button>
-          </div>
-        )}
-
-        {isSidebarCollapsed && (
-          <div className="p-4">
-            <Tooltip delayDuration={300}>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={onCompose}
-                  className="w-full flex items-center justify-center bg-gray-800 text-white p-2 rounded-full hover:bg-gray-900 transition-colors"
-                >
-                  <MailPlus size={16} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right" className="bg-gray-800 text-white border-gray-700">
-                <p>Write Email</p>
-              </TooltipContent>
-            </Tooltip>
-          </div>
-        )}
-      
         {/* Profile Selector - Show for all users */}
         {!isSidebarCollapsed && (
-          <div className="px-6 mb-6">
+          <div className="px-6 mb-6 mt-6">
             <ProfileSelector />
             {/* Preloading Indicator */}
             {isPreloading && (
@@ -89,7 +59,7 @@ function Sidebar({ onCompose }: SidebarProps) {
             )}
           </div>
         )}
-            
+
         <nav className="flex-1 overflow-y-auto px-4">
           <div className="space-y-0">
             {/* Dashboard - Only for Admins */}
@@ -271,6 +241,19 @@ function Sidebar({ onCompose }: SidebarProps) {
                     <p>Settings</p>
                   </TooltipContent>
                 </Tooltip>
+
+                <TutorialsDialog variant="icon">
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <div className="flex items-center justify-center p-2 text-sm font-medium transition-all duration-200 rounded-xl text-gray-600 hover:bg-white hover:shadow-md cursor-pointer">
+                        <GraduationCap size={16} className="text-indigo-500" />
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" className="bg-gray-800 text-white border-gray-700">
+                      <p>Tutorials</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TutorialsDialog>
               </>
             ) : (
               /* Expanded versions */
@@ -346,6 +329,10 @@ function Sidebar({ onCompose }: SidebarProps) {
                   <span className="mr-3 flex-shrink-0"><Settings size={20} /></span>
                   <span className="truncate">Settings</span>
                 </Link>
+                
+                <div className="flex items-center px-4 py-3 text-sm font-medium transition-all duration-200 rounded-xl min-w-0 overflow-hidden text-gray-600 hover:bg-white hover:shadow-md cursor-pointer">
+                  <TutorialsDialog variant="sidebar" size={20} />
+                </div>
               </>
             )}
           </div>

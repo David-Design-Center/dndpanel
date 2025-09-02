@@ -47,6 +47,67 @@
   }
 }
 
+/* Bouncy Animations for Contacts */
+@keyframes bounceDown {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+  }
+  25% {
+    transform: translateY(-10px) scale(1.05);
+  }
+  50% {
+    transform: translateY(-5px) scale(1.02);
+  }
+  75% {
+    transform: translateY(-2px) scale(1.01);
+  }
+}
+
+@keyframes bounceUp {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+  }
+  25% {
+    transform: translateY(10px) scale(0.95);
+  }
+  50% {
+    transform: translateY(5px) scale(0.98);
+  }
+  75% {
+    transform: translateY(2px) scale(0.99);
+  }
+}
+
+@keyframes bounceIn {
+  0% {
+    transform: scale(0.3);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 0.8;
+  }
+  70% {
+    transform: scale(0.9);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 0.8;
+  }
+}
+
 /* Panel Animation Classes */
 .panel-slide-in-left {
   animation: slideInFromLeft 0.5s ease-in-out;
@@ -1378,6 +1439,26 @@ aside .flex.items-center {
 aside .flex.items-center span:not(.flex-shrink-0) {
   overflow: hidden !important;
   text-overflow: ellipsis !important;
+}
+
+/* Custom animation utility classes */
+.animate-bounce-down {
+  animation: bounceDown 0.3s ease-in-out;
+}
+
+.animate-bounce-up {
+  animation: bounceUp 0.3s ease-in-out;
+}
+
+.animate-bounce-in {
+  animation: bounceIn 0.5s ease-in-out;
+}
+
+.animate-pulse-soft {
+  animation: pulse 0.4s ease-in-out;
+}
+
+.sidebar-text-fix {
   white-space: nowrap !important;
   min-width: 0 !important;
 }

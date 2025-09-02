@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { TreeView, TreeNode } from '@/components/ui/tree-view';
 import { useAuth } from '../../contexts/AuthContext';
 import { getCurrentAccessToken } from '../../integrations/gapiService';
+import { subscribeLabelUpdateEvent, LabelUpdateEventDetail } from '../../utils/labelUpdateEvents';
 
 type FoldersWithUnreadProps = {
   onOpenLabel: (labelId: string) => void;
@@ -329,6 +330,47 @@ export function FoldersWithUnread({
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<ScanStats | null>(null);
   const hasScannedRef = useRef(false);
+
+  // Function to update unread counts dynamically when emails are read/unread
+  const updateUnreadCounts = useCallback((detail: LabelUpdateEventDetail) => {
+    const { labelIds, action } = detail;
+    const increment = action === 'mark-unread' ? 1 : -1;
+    
+    setItems(prevItems => {
+      const updateItemCounts = (items: UnreadLabelItem[]): UnreadLabelItem[] => {
+        return items.map(item => {
+          // Check if this item's labelId is in the affected labels
+          const isAffected = labelIds.includes(item.labelId);
+          let updatedCount = item.count;
+          
+          if (isAffected) {
+            updatedCount = Math.max(0, item.count + increment);
+          }
+          
+          // Recursively update children
+          const updatedChildren = updateItemCounts(item.children);
+          
+          // Calculate new count including children
+          const childrenTotal = updatedChildren.reduce((sum, child) => sum + child.count, 0);
+          const finalCount = isAffected ? updatedCount : item.count;
+          
+          return {
+            ...item,
+            count: item.isLeaf ? finalCount : childrenTotal,
+            children: updatedChildren
+          };
+        });
+      };
+      
+      return updateItemCounts(prevItems);
+    });
+  }, []);
+
+  // Listen for label update events
+  useEffect(() => {
+    const unsubscribe = subscribeLabelUpdateEvent(updateUnreadCounts);
+    return unsubscribe;
+  }, [updateUnreadCounts]);
 
   // Auto-expand all folders when items change
   useEffect(() => {

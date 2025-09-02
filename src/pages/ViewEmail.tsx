@@ -4,6 +4,7 @@ import { ArrowLeft, Reply, Trash, Paperclip, Tag, ChevronDown, Forward, Users, M
 import { formatDistanceToNow, parseISO, format } from 'date-fns';
 import { getAttachmentDownloadUrl, markEmailAsTrash, applyLabelsToEmail, deleteDraft, markAsRead } from '../services/emailService';
 import { optimizedEmailService } from '../services/optimizedEmailService';
+import { emitLabelUpdateEvent } from '../utils/labelUpdateEvents';
 import { Email } from '../types';
 import { useProfile } from '../contexts/ProfileContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -751,9 +752,29 @@ function ViewEmail() {
   // Mark email as read when it's viewed (optimistic update)
   useEffect(() => {
     if (email && !email.isRead) {
+      // Emit event for folder unread counter updates
+      if (email.labelIds && email.labelIds.length > 0) {
+        emitLabelUpdateEvent({
+          labelIds: email.labelIds,
+          action: 'mark-read',
+          threadId: email.threadId,
+          messageId: email.id
+        });
+      }
+      
       // Mark as read in the background, but don't wait for it
       markAsRead(email.id).catch(error => {
         console.error('Failed to mark email as read in ViewEmail:', error);
+        
+        // Emit revert event on failure
+        if (email.labelIds && email.labelIds.length > 0) {
+          emitLabelUpdateEvent({
+            labelIds: email.labelIds,
+            action: 'mark-unread',
+            threadId: email.threadId,
+            messageId: email.id
+          });
+        }
       });
     }
   }, [email?.id, email?.isRead]);

@@ -210,15 +210,25 @@ export interface InvoiceItem {
 
 export interface Shipment {
   id: number;
-  ref: string;
-  consignee: string;
-  shipper: string;
-  vessel_carrier: string;
-  etd: string; // Estimated Time of Departure
-  eta: string; // Estimated Time of Arrival
-  container_n: string;
-  description_of_goods: string;
-  shipping_status: string;
+  ref: string; // Reference/ritiro_id
+  status: string; // Status/giacenza
+  pod: string; // Port of Delivery
+  consignee: string; // Consignee
+  vendor: string; // Vendor (was shipper)
+  po: string; // Purchase Order
+  pkg: number; // Packages
+  kg: number; // Weight in kg
+  vol: number; // Volume
+  pickup_date: string | null; // Pickup Date (was etd/eta) - allow null for empty dates
+  note: string; // Notes
+  // Keep legacy fields for backward compatibility during migration
+  shipper?: string;
+  vessel_carrier?: string;
+  etd?: string | null; // Allow null for empty dates
+  eta?: string | null; // Allow null for empty dates
+  container_n?: string;
+  description_of_goods?: string;
+  shipping_status?: string;
 }
 
 // Document-related types
@@ -226,6 +236,17 @@ export interface GeneralDocument {
   id: string;
   file_name: string;
   document_url: string;
+  uploaded_at: string;
+}
+
+export interface ShipmentDocument {
+  id: string;
+  file_name: string;
+  drive_file_id: string; // Google Drive file ID
+  drive_file_url?: string; // Google Drive viewable URL
+  file_size?: number;
+  file_type?: string;
+  uploaded_by?: string;
   uploaded_at: string;
 }
 
