@@ -27,6 +27,11 @@ const SCOPES = [
   "https://www.googleapis.com/auth/contacts.readonly",
   "https://www.googleapis.com/auth/contacts.other.readonly",
   
+  // Calendar
+  "https://www.googleapis.com/auth/calendar",
+  "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/calendar.readonly",
+  
   // Drive
   "https://www.googleapis.com/auth/drive",
   "https://www.googleapis.com/auth/drive.file",

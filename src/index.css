@@ -1519,3 +1519,163 @@ aside .flex.items-center span:not(.flex-shrink-0) {
   --tw-ring-color: rgba(59, 130, 246, 0.2); /* blue-500 with opacity */
   box-shadow: 0 0 0 1px var(--tw-ring-color);
 }
+
+/* Modern Calendar Styling */
+.modern-calendar .fc-header-toolbar {
+  padding: 1rem 1.5rem;
+  background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 64px;
+}
+
+/* Left section - Navigation buttons */
+.modern-calendar .fc-toolbar-chunk:first-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Center section - Title */
+.modern-calendar .fc-toolbar-chunk:nth-child(2) {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+}
+
+/* Right section - View buttons */
+.modern-calendar .fc-toolbar-chunk:last-child {
+  display: flex;
+  align-items: center;
+}
+
+.modern-calendar .fc-button-group {
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  border: 0px solid #d1d5db;
+}
+
+.modern-calendar .fc-button {
+  border: none !important;
+  font-weight: 500 !important;
+  padding: 6px 12px !important;
+  font-size: 0.875rem !important;
+  transition: all 0.15s ease !important;
+  background: #ffffff !important;
+  color: #374151 !important;
+  border-radius: 0 !important;
+  min-height: 36px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.modern-calendar .fc-button:hover {
+  background: #f9fafb !important;
+  color: #111827 !important;
+}
+
+.modern-calendar .fc-button-active,
+.modern-calendar .fc-button-active:hover {
+  background: #1f2937 !important;
+  color: white !important;
+  font-weight: 600 !important;
+}
+
+.modern-calendar .fc-today-button,
+.modern-calendar .fc-prev-button,
+.modern-calendar .fc-next-button {
+  border-radius: 6px !important;
+  margin: 0 2px !important;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
+  border: 1px solid #d1d5db !important;
+  min-width: 36px !important;
+  min-height: 36px !important;
+}
+
+.modern-calendar .fc-today-button:hover,
+.modern-calendar .fc-prev-button:hover,
+.modern-calendar .fc-next-button:hover {
+  background: #f9fafb !important;
+  border-color: #9ca3af !important;
+}
+
+.modern-calendar .fc-toolbar-title {
+  font-size: 1.375rem !important;
+  font-weight: 400 !important;
+  color: #1f2937 !important;
+  margin: 0 !important;
+}
+
+.modern-calendar .fc-day-header {
+  background: #ffffff !important;
+  font-weight: 500 !important;
+  color: #6b7280 !important;
+  padding: 8px !important;
+  font-size: 0.875rem !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  border-bottom: 1px solid #f3f4f6 !important;
+}
+
+.modern-calendar .fc-col-header-cell {
+  border: none !important;
+  border-right: 1px solid #f3f4f6 !important;
+}
+
+.modern-calendar .fc-timegrid-slot {
+  border-color: #f1f5f9 !important;
+}
+
+.modern-calendar .fc-timegrid-slot-label {
+  color: #64748b !important;
+  font-size: 0.75rem !important;
+}
+
+/* Event styling with fixed time layout */
+.modern-calendar .fc-event {
+  border: none !important;
+  border-radius: 6px !important;
+  padding: 2px 4px !important;
+  font-size: 0.65rem !important;
+  font-weight: 400 !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+  transition: all 0.2s ease !important;
+  overflow: hidden !important;
+}
+
+.modern-calendar .fc-event:hover {
+  transform: translateY(-1px) !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15) !important;
+}
+
+/* Event content layout - time takes 1/3, title takes 2/3 */
+.modern-calendar .fc-event-main {
+  display: flex !important;
+  width: 100% !important;
+  align-items: center !important;
+  overflow: hidden !important;
+}
+
+.modern-calendar .fc-event-time {
+  flex: 0 0 33% !important;
+  font-weight: 400 !important;
+  font-size: 0.6rem !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  margin-right: 3px !important;
+  opacity: 0.9 !important;
+}
+
+.modern-calendar .fc-event-title {
+  flex: 1 1 67% !important;
+  font-weight: 400 !important;
+  font-size: 0.6rem !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}

@@ -10,7 +10,6 @@ import {
   Archive, 
   Mail, 
   MailOpen, 
-  MoreHorizontal, 
   Filter, 
   Paperclip,
   Star,
@@ -40,7 +39,8 @@ import {
   getLabelEmails,
   deleteEmail,
   markAsRead,
-  markAsUnread
+  markAsUnread,
+  clearEmailCache
 } from '../../services/emailService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useInboxLayout } from '../../contexts/InboxLayoutContext';
@@ -476,15 +476,11 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       prefetchEssentialFolders().then(({ sent, drafts, important }) => {
         console.log(`📧 Essential folders loaded: ${sent.length} sent, ${drafts.length} drafts, ${important.length} important`);
         
-        // Update UI with essential folders
-        setAllTabEmails(prev => ({
-          ...prev,
-          sent: sent,
-          drafts: drafts.slice(0, 10),
-          important: important
-        }));
+        // Note: These are IDs only - actual Email objects will be loaded when user clicks tabs
+        // So we don't update setAllTabEmails here to avoid TypeScript errors
+        // The IDs will be used for on-demand loading when tabs are accessed
 
-        // Update draft count
+        // Update draft count using the ID count
         setEmailCounts(prev => ({
           ...prev,
           drafts: Math.min(drafts.length, 99)
@@ -1042,6 +1038,79 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     }
     
     setRefreshing(false);
+  };
+
+  const handleRefreshCurrentTab = async () => {
+    if (!isGmailSignedIn || refreshing) return;
+    setRefreshing(true);
+    
+    try {
+      // Clear relevant caches to ensure fresh data
+      clearEmailCache();
+      
+      if (labelName) {
+        // For label pages, refresh only the current label
+        console.log(`🔄 Refreshing label: ${labelName}`);
+        await fetchLabelEmails(true);
+      } else if (pageType === 'inbox') {
+        // For inbox, refresh based on current tab
+        console.log(`🔄 Refreshing current tab: ${activeTab}`);
+        
+        // Determine what needs to be refreshed based on current tab
+        switch (activeTab) {
+          case 'all':
+            // Refresh main inbox data and current category
+            await fetchAllEmailTypes(true);
+            if (activeCategory && ['all', 'archive', 'spam', 'trash'].includes(activeTab)) {
+              await fetchCategoryEmails(true);
+            }
+            break;
+          case 'unread':
+          case 'sent':
+          case 'drafts':
+          case 'important':
+          case 'starred':
+          case 'allmail':
+            // Refresh specific tab data
+            await fetchAllEmailTypes(true);
+            break;
+          case 'archive':
+          case 'spam':
+          case 'trash':
+            // Refresh both the tab data and categories for these special folders
+            await fetchAllEmailTypes(true);
+            if (activeCategory) {
+              await fetchCategoryEmails(true);
+            }
+            break;
+          default:
+            // Fallback - refresh everything
+            await Promise.all([
+              fetchAllEmailTypes(true),
+              fetchCategoryEmails(true)
+            ]);
+        }
+      } else {
+        // For other page types (sent, drafts, etc.), refresh the specific page
+        console.log(`🔄 Refreshing page type: ${pageType}`);
+        await fetchAllEmailTypes(true);
+      }
+      
+      // Show success message
+      toast.success('Refreshed successfully', {
+        description: `${labelName ? `Label "${labelName}"` : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} emails updated`,
+        duration: 3000
+      });
+      
+    } catch (error) {
+      console.error('Error refreshing current tab:', error);
+      toast.error('Failed to refresh', {
+        description: 'Please check your connection and try again',
+        duration: 4000
+      });
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const handleSystemFolderFilter = async (folderType: string) => {
@@ -2282,10 +2351,13 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
               </button>
               
               <button
-                className="flex items-center space-x-1 px-2 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition-colors"
+                onClick={handleRefreshCurrentTab}
+                disabled={refreshing}
+                className="flex items-center space-x-1 px-2 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                title="Refresh current tab"
               >
-                <MoreHorizontal size={14} />
-                <span></span>
+                <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
+                <span>Refresh</span>
               </button>
             </div>
             
