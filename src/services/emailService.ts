@@ -23,7 +23,6 @@ import {
   isGmailSignedIn
 } from '../integrations/gapiService';
 import { queueGmailRequest } from '../utils/requestQueue';
-import { authCoordinator } from '../utils/authCoordinator';
 
 // Auto-reply functionality for out-of-office
 const processedSenders = new Set<string>(); // Track senders we've already replied to
@@ -410,46 +409,12 @@ export interface PaginatedEmailServiceResponse {
 
 // Service functions
 export const getEmails = async (
-  forceRefresh = false, 
-  query = 'in:inbox category:primary', 
-  maxResults = 10, 
+  forceRefresh = false,
+  query = 'in:inbox',
+  maxResults = 10,
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
-  // ✅ OPTIMIZATION: Block legacy q-based inbox queries during first paint
-  const isLegacyInboxQuery = (q?: string) =>
-    q?.includes('in:inbox') && q.includes('category:primary');
-  
-  // Check if we're in first paint phase and this is a legacy query
-  const isFirstPaint = window.location.pathname === '/inbox' && !pageToken && Date.now() - (window as any).__appStartTime < 10000;
-  
-  if (isFirstPaint && isLegacyInboxQuery(query)) {
-    console.debug('🛑 Skipping legacy inbox query on first paint:', query);
-    return {
-      emails: [],
-      nextPageToken: undefined,
-      resultSizeEstimate: 0
-    };
-  }
-
-  // Ensure authentication before proceeding
-  try {
-    const isAuthenticated = await authCoordinator.ensureAuthenticated();
-    if (!isAuthenticated) {
-      console.warn('⚠️ Gmail not authenticated, returning empty results');
-      return {
-        emails: [],
-        nextPageToken: undefined,
-        resultSizeEstimate: 0
-      };
-    }
-  } catch (authError) {
-    console.error('❌ Authentication check failed:', authError);
-    return {
-      emails: [],
-      nextPageToken: undefined,
-      resultSizeEstimate: 0
-    };
-  }
+  // Normal search-based fetch with caching
 
   // If pageToken is provided, always fetch new data (don't use cache for pagination)
   // If force refresh is requested, fetch new data
@@ -540,7 +505,7 @@ export const getEmails = async (
 
 // Specialized query functions
 export const getUnreadEmails = async (forceRefresh = false): Promise<Email[]> => {
-  const response = await getEmails(forceRefresh, 'in:inbox category:primary is:unread');
+  const response = await getEmails(forceRefresh, 'in:inbox is:unread');
   return response.emails;
 };
 
@@ -549,15 +514,7 @@ export const getPrimaryEmails = async (
   maxResults = 10, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
-  return getEmails(forceRefresh, 'in:inbox category:primary', maxResults, pageToken);
-};
-
-export const getPromotionsEmails = async (
-  forceRefresh = false, 
-  maxResults = 10, 
-  pageToken?: string
-): Promise<PaginatedEmailServiceResponse> => {
-  return getEmails(forceRefresh, 'in:inbox category:promotions', maxResults, pageToken);
+  return getEmailsByLabelIds(['INBOX'], forceRefresh, maxResults, pageToken);
 };
 
 export const getSocialEmails = async (
@@ -565,7 +522,7 @@ export const getSocialEmails = async (
   maxResults = 10, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
-  return getEmails(forceRefresh, 'in:inbox category:social', maxResults, pageToken);
+  return getEmailsByLabelIds(['CATEGORY_SOCIAL'], forceRefresh, maxResults, pageToken);
 };
 
 export const getUpdatesEmails = async (
@@ -573,7 +530,7 @@ export const getUpdatesEmails = async (
   maxResults = 10, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
-  return getEmails(forceRefresh, 'in:inbox category:updates', maxResults, pageToken);
+  return getEmailsByLabelIds(['CATEGORY_UPDATES'], forceRefresh, maxResults, pageToken);
 };
 
 export const getForumsEmails = async (
@@ -589,8 +546,9 @@ export const getAllInboxEmails = async (
   maxResults = 10, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
-  // Use labelIds for inbox emails for better performance
-  return getEmailsByLabelIds(['INBOX'], forceRefresh, maxResults, pageToken);
+  // Unified inbox: include everything except Sent and Trash
+  // Unified inbox: All Mail except Sent, Trash, and Spam
+  return getEmails(forceRefresh, '-in:sent -in:trash -in:spam', maxResults, pageToken);
 };
 
 export const getSentEmails = async (
@@ -602,7 +560,7 @@ export const getSentEmails = async (
   return getEmailsByLabelIds(['SENT'], forceRefresh, maxResults, pageToken);
 };
 
-export const getDraftEmails = async (forceRefresh = false): Promise<Email[]> => {
+export const getDraftEmails = async (_forceRefresh = false): Promise<Email[]> => {
   // Use users.drafts.list for proper draft handling
   try {
     if (!isGmailSignedIn()) {
@@ -661,11 +619,12 @@ export const getDraftEmails = async (forceRefresh = false): Promise<Email[]> => 
         drafts.push({
           id: message.id || draft.id,
           from: { name: fromName, email: fromEmail },
-          to: [{ name: toName, email: toEmail }],
+            to: [{ name: toName, email: toEmail }],
           subject: subject,
           body: body,
           preview: preview,
-          isRead: true, // Drafts are always "read"
+          // Preserve unread status if Gmail marks draft with UNREAD label
+          isRead: !(message.labelIds || []).includes('UNREAD'),
           isImportant: message.labelIds?.includes('IMPORTANT'),
           date: format(new Date(dateHeader), "yyyy-MM-dd'T'HH:mm:ss"),
           labelIds: message.labelIds || [],
@@ -743,7 +702,7 @@ export const getAllMailEmails = async (
 // Helper function to fetch emails by labelIds (more efficient than search queries)
 const getEmailsByLabelIds = async (
   labelIds: string[], 
-  forceRefresh = false, 
+  _forceRefresh = false, 
   maxResults = 20, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {

@@ -26,7 +26,36 @@ export const MessageCard: React.FC<MessageCardProps> = ({
 }) => {
   const fromData = message.from || { email: 'unknown@example.com', name: 'Unknown Sender' };
   const senderEmail = cleanEmailAddress(fromData.email || 'unknown@example.com');
-  const senderName = fromData.name || fromData.email || 'Unknown Sender';
+  const meAddresses = ['david.v@dnddesigncenter.com','marti@dnddesigncenter.com','martisuvorov12@gmail.com'];
+  let senderName = fromData.name?.trim() || '';
+  const lowerEmail = (fromData.email || '').toLowerCase();
+  const isFromMe = lowerEmail && meAddresses.includes(lowerEmail);
+  if (isFromMe && (message.labelIds || []).includes('DRAFT')) {
+    // Prefer recipient name for draft preview in thread
+    const recipient = (message.to || []).find(r => r.email && !meAddresses.includes(r.email.toLowerCase()));
+    if (recipient) {
+      const recipName = recipient.name?.trim();
+      if (recipName && recipName.toLowerCase() !== recipient.email.toLowerCase()) {
+        senderName = recipName;
+      } else if (recipient.email) {
+        senderName = recipient.email.split('@')[0];
+      } else {
+        senderName = 'Me';
+      }
+    } else {
+      senderName = 'Me';
+    }
+  } else if (!senderName || senderName.toLowerCase() === lowerEmail) {
+    if (isFromMe) {
+      senderName = 'Me';
+    } else if (lowerEmail) {
+      senderName = lowerEmail.split('@')[0] || lowerEmail;
+    } else {
+      senderName = 'Me';
+    }
+  } else if (isFromMe) {
+    senderName = 'Me';
+  }
   const toData = message.to || [];
 
   // Process email content to extract clean body, quoted content, signatures, etc.

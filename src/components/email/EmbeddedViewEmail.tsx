@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { X, Reply, Trash, Forward, Users } from 'lucide-react';
+import { X, Reply, Trash, Forward, Users, Maximize2 } from 'lucide-react';
 import { parseISO, format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
-import { getEmailById, markEmailAsTrash, getThreadEmails, sendReply, sendReplyAll } from '../../services/emailService';
+import { getEmailById, markEmailAsTrash, getThreadEmails, sendReply, sendReplyAll, sendEmail, deleteDraft, saveDraft } from '../../services/emailService';
 import { optimizedEmailService } from '../../services/optimizedEmailService';
 import { Email } from '../../types';
 import { useInboxLayout } from '../../contexts/InboxLayoutContext';
@@ -71,90 +71,94 @@ function EmbeddedViewEmail({ emailId, onEmailUpdate }: EmbeddedViewEmailProps) {
   const [replyContent, setReplyContent] = useState<string>('');
   const [sendingReply, setSendingReply] = useState(false);
   const [isReplyAll, setIsReplyAll] = useState(false);
+  const [isForwarding, setIsForwarding] = useState(false);
+  const [forwardTo, setForwardTo] = useState<string>('');
+  const [hydratedDraftId, setHydratedDraftId] = useState<string | null>(null);
+  const [undoDraftData, setUndoDraftData] = useState<{
+    emailSnapshot: Email;
+    body: string;
+    timeoutId: number;
+  } | null>(null);
+  const UNDO_MS = 8000;
   
   const { clearSelection } = useInboxLayout();
   const { currentProfile } = useProfile();
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  // Function to create an optimistic reply email for immediate UI update
-  const createOptimisticReply = (originalEmail: Email, replyContent: string, isReplyAllMode: boolean = false): Email => {
-    const now = new Date().toISOString();
-    
-    // Process subject for reply
-    let subject = originalEmail.subject || '';
-    subject = subject.startsWith('Re: ') ? subject : `Re: ${subject}`;
-
-    // Use current profile's email and name dynamically, with fallbacks
-    const fromEmail = currentProfile?.userEmail || 'unknown@example.com';
-    const fromName = currentProfile?.name || 'Current User';
-
-    // Determine recipients based on reply type
-    const toRecipients = [originalEmail.from];
-    let ccRecipients: Array<{ name: string; email: string }> = [];
-
-    if (isReplyAllMode) {
-      // For reply all, collect all unique participants from the thread
-      const allParticipants = new Map<string, { name: string; email: string }>();
+  // Function to send a forward email
+  const sendForward = async (originalEmail: Email, forwardContent: string, toEmail: string): Promise<{success: boolean; threadId?: string}> => {
+    try {
+      // Create a forward subject with "Fwd: " prefix
+      const subject = originalEmail.subject.startsWith('Fwd: ') ? originalEmail.subject : `Fwd: ${originalEmail.subject}`;
       
-      // Add recipients from all messages in the thread
-      processedThreadMessages.forEach(message => {
-        // Add original TO recipients
-        if (message.to) {
-          message.to.forEach(recipient => {
-            if (recipient.email && recipient.email !== fromEmail) {
-              allParticipants.set(recipient.email, recipient);
-            }
-          });
-        }
-        
-        // Add CC recipients from thread messages
-        if (message.cc) {
-          message.cc.forEach(recipient => {
-            if (recipient.email && recipient.email !== fromEmail) {
-              allParticipants.set(recipient.email, recipient);
-            }
-          });
-        }
+      // Format the original email for forwarding
+      const formattedDate = format(parseISO(originalEmail.date), 'PPpp');
+      const forwardedBody = `
+${forwardContent}
 
-        // Add senders (except current user)
-        if (message.from && message.from.email !== fromEmail) {
-          allParticipants.set(message.from.email, message.from);
-        }
-      });
+<br><br>
+---------- Forwarded message ---------<br>
+From: ${originalEmail.from.name} <${originalEmail.from.email}><br>
+Date: ${formattedDate}<br>
+Subject: ${originalEmail.subject}<br>
+To: ${formatRecipientsForHeaders(originalEmail.to || [])}<br>
+<br>
+${originalEmail.body}
+`;
 
-      // Remove the original sender from CC (they're already in TO)
-      allParticipants.delete(originalEmail.from.email);
+      // Create the forward email object
+      const forwardEmail: Omit<Email, 'id' | 'date' | 'isRead' | 'preview'> = {
+        from: { 
+          email: currentProfile?.userEmail || 'unknown@example.com', 
+          name: currentProfile?.name || 'Current User'
+        },
+        to: [{ email: toEmail, name: toEmail.split('@')[0] }],
+        subject: subject,
+        body: forwardedBody,
+        threadId: undefined, // Forwards create new threads
+        isImportant: false,
+        labelIds: [],
+        attachments: originalEmail.attachments || [] // Include original attachments when forwarding
+      };
+
+      // Send the forward using the existing sendEmail function
+      return await sendEmail(forwardEmail);
       
-      // Convert to array for CC
-      ccRecipients = Array.from(allParticipants.values());
+    } catch (error) {
+      console.error('Error sending forward:', error);
+      return { success: false };
     }
-
-    return {
-      id: `temp-reply-${Date.now()}`, // Temporary ID
-      from: {
-        email: fromEmail,
-        name: fromName
-      },
-      to: toRecipients,
-      cc: ccRecipients.length > 0 ? ccRecipients : undefined, // Include CC for reply-all
-      subject: subject,
-      body: replyContent, // Don't double-clean, server handles encoding
-      date: now,
-      isRead: true, // Our own message is read
-      preview: replyContent.replace(/<[^>]*>/g, '').substring(0, 100) + '...',
-      threadId: originalEmail.threadId,
-      isImportant: false,
-      labelIds: [],
-      attachments: []
-    };
   };
+
 
   useEffect(() => {
     if (emailId) {
       fetchEmailAndThread();
     }
   }, [emailId]);
+
+  // Draft hydration: listens for pending inline draft stashed on window and auto-opens editor
+  useEffect(() => {
+    function hydrateDraft() {
+      const stash = (window as any).__pendingInlineDraft;
+      if (!stash || !email) return;
+      if (hydratedDraftId === stash.draftId) return; // avoid duplicate
+      // Open inline reply editor pre-filled
+      setShowInlineReply(true);
+      setIsReplyAll(false);
+      setIsForwarding(false);
+      setReplyContent(stash.body || '');
+      setHydratedDraftId(stash.draftId);
+      delete (window as any).__pendingInlineDraft;
+    }
+    // Run immediately once email + thread loaded
+    if (email && (email.labelIds || []).includes('DRAFT')) {
+      hydrateDraft();
+    }
+    window.addEventListener('open-inline-draft', hydrateDraft);
+    return () => window.removeEventListener('open-inline-draft', hydrateDraft);
+  }, [email, hydratedDraftId]);
 
   // Optimized email fetching with fallback to standard method
   const fetchEmailOptimized = async (emailId: string): Promise<Email | undefined> => {
@@ -314,6 +318,73 @@ function EmbeddedViewEmail({ emailId, onEmailUpdate }: EmbeddedViewEmailProps) {
     }
   };
 
+  // Unified discard logic with undo
+  const handleDiscardDraft = async () => {
+    if (!email || !(email.labelIds || []).includes('DRAFT')) return;
+    try {
+      // Store snapshot for undo
+      const snapshot: Email = { ...email };
+      const currentBody = replyContent || email.body || '';
+      // Delete draft via API
+      await deleteDraft(email.id);
+      const timeoutId = window.setTimeout(() => {
+        // Finalize: emit refresh event & navigate away if still on draft
+        window.dispatchEvent(new CustomEvent('refresh-drafts'));
+        if ((snapshot.labelIds || []).includes('DRAFT')) {
+          navigate('/inbox');
+        }
+        setUndoDraftData(null);
+      }, UNDO_MS);
+      setUndoDraftData({ emailSnapshot: snapshot, body: currentBody, timeoutId });
+      toast({
+        title: 'Draft discarded',
+        description: 'Draft removed. Undo available for a few seconds.',
+        duration: UNDO_MS
+      });
+    } catch (e) {
+      console.error('Failed to discard draft', e);
+      toast({
+        title: 'Failed to discard draft',
+        description: 'Please try again.',
+        variant: 'destructive'
+      });
+    }
+  };
+
+  const undoDiscard = async () => {
+    if (!undoDraftData) return;
+    const { emailSnapshot, body, timeoutId } = undoDraftData;
+    window.clearTimeout(timeoutId);
+    try {
+      // Recreate draft (new draftId)
+      await saveDraft({
+        from: emailSnapshot.from,
+        to: emailSnapshot.to || [],
+        subject: emailSnapshot.subject || '(no subject)',
+        body: body,
+        isImportant: false,
+        labelIds: [],
+        attachments: emailSnapshot.attachments || [],
+        threadId: emailSnapshot.threadId
+      });
+      toast({
+        title: 'Draft restored',
+        description: 'Your draft was recreated.',
+        duration: 4000
+      });
+      window.dispatchEvent(new CustomEvent('refresh-drafts'));
+    } catch (e) {
+      console.error('Failed to restore draft', e);
+      toast({
+        title: 'Restore failed',
+        description: 'Could not recreate draft.',
+        variant: 'destructive'
+      });
+    } finally {
+      setUndoDraftData(null);
+    }
+  };
+
   // Handle Reply functionality - Modified to show inline reply
   const handleReply = () => {
     if (!email) return;
@@ -321,10 +392,12 @@ function EmbeddedViewEmail({ emailId, onEmailUpdate }: EmbeddedViewEmailProps) {
     // Toggle inline reply instead of navigating to compose
     setShowInlineReply(!showInlineReply);
     setIsReplyAll(false); // This is a regular reply, not reply all
+    setIsForwarding(false); // Not forwarding
     
     // Clear reply content when opening the reply
     if (!showInlineReply) {
       setReplyContent('');
+      setForwardTo('');
     }
   };
 
@@ -332,30 +405,16 @@ function EmbeddedViewEmail({ emailId, onEmailUpdate }: EmbeddedViewEmailProps) {
   const handleForward = () => {
     if (!email) return;
     
-    // Create a forward subject with "Fwd: " prefix
-    const subject = email.subject.startsWith('Fwd: ') ? email.subject : `Fwd: ${email.subject}`;
+    // Toggle inline reply window for forwarding
+    setShowInlineReply(!showInlineReply);
+    setIsReplyAll(false);
+    setIsForwarding(true); // This is a forward, not a reply
     
-    // Format the original email for forwarding
-    const formattedDate = format(parseISO(email.date), 'PPpp');
-    const forwardedBody = `
-<br><br>
----------- Forwarded message ---------<br>
-From: ${email.from.name} ${cleanEmailAddress(email.from.email)}<br>
-Date: ${formattedDate}<br>
-Subject: ${email.subject}<br>
-To: ${formatRecipientsForHeaders(email.to || [])}<br>
-<br>
-${email.body}
-`;
-    
-    // Navigate to compose with prefilled data for forwarding
-    navigate('/compose', { 
-      state: { 
-        subject: subject,
-        originalBody: forwardedBody,
-        attachments: email.attachments // Include attachments when forwarding
-      } 
-    });
+    // Clear reply content and forward recipient when opening
+    if (!showInlineReply) {
+      setReplyContent('');
+      setForwardTo('');
+    }
   };
 
   // Handle Reply All functionality
@@ -365,10 +424,72 @@ ${email.body}
     // Toggle inline reply for reply all
     setShowInlineReply(!showInlineReply);
     setIsReplyAll(true); // This is a reply all
+    setIsForwarding(false); // Not forwarding
     
     // Clear reply content when opening the reply
     if (!showInlineReply) {
       setReplyContent('');
+      setForwardTo('');
+    }
+  };
+
+  // Handle Reply functionality for a specific message in the thread
+  const handleReplyToMessage = (messageId: string) => {
+    const targetMessage = processedThreadMessages.find(msg => msg.id === messageId);
+    if (!targetMessage) return;
+    
+    // Set the email context to the target message for the inline reply
+    setEmail(targetMessage);
+    
+    // Toggle inline reply instead of navigating to compose
+    setShowInlineReply(!showInlineReply);
+    setIsReplyAll(false); // This is a regular reply, not reply all
+    setIsForwarding(false); // Not forwarding
+    
+    // Clear reply content when opening the reply
+    if (!showInlineReply) {
+      setReplyContent('');
+      setForwardTo('');
+    }
+  };
+
+  // Handle Reply All functionality for a specific message in the thread
+  const handleReplyAllToMessage = (messageId: string) => {
+    const targetMessage = processedThreadMessages.find(msg => msg.id === messageId);
+    if (!targetMessage) return;
+    
+    // Set the email context to the target message for the inline reply
+    setEmail(targetMessage);
+    
+    // Toggle inline reply for reply all
+    setShowInlineReply(!showInlineReply);
+    setIsReplyAll(true); // This is a reply all
+    setIsForwarding(false); // Not forwarding
+    
+    // Clear reply content when opening the reply
+    if (!showInlineReply) {
+      setReplyContent('');
+      setForwardTo('');
+    }
+  };
+
+  // Handle Forward functionality for a specific message in the thread
+  const handleForwardMessage = (messageId: string) => {
+    const targetMessage = processedThreadMessages.find(msg => msg.id === messageId);
+    if (!targetMessage) return;
+    
+    // Set the email context to the target message for forwarding
+    setEmail(targetMessage);
+    
+    // Toggle inline reply window for forwarding
+    setShowInlineReply(!showInlineReply);
+    setIsReplyAll(false);
+    setIsForwarding(true); // This is a forward, not a reply
+    
+    // Clear reply content and forward recipient when opening
+    if (!showInlineReply) {
+      setReplyContent('');
+      setForwardTo('');
     }
   };
 
@@ -394,7 +515,6 @@ ${email.body}
     );
   }
 
-  const subject = email.subject || 'No Subject';
   const messagesToShow = processedThreadMessages.length > 0 
     ? processedThreadMessages.filter(msg => msg !== null) 
     : (email ? [email] : []);
@@ -431,6 +551,9 @@ ${email.body}
         <OutlookThreadView 
           messages={messagesToShow}
           getSenderColor={getSenderColor}
+          onReply={handleReplyToMessage}
+          onReplyAll={handleReplyAllToMessage}
+          onForward={handleForwardMessage}
         />
       </div>
 
@@ -441,12 +564,16 @@ ${email.body}
             <div className="bg-white rounded border border-gray-200">
               <div className="px-3 py-1.5 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
                 <h3 className="text-xs font-medium text-gray-700">
-                  {isReplyAll ? 'Reply All' : 'Reply'} to: {email.subject.startsWith('Re: ') ? email.subject : `Re: ${email.subject}`}
+                  {isForwarding ? 'Forward' : (isReplyAll ? 'Reply All' : 'Reply')} 
+                  {isForwarding ? ': ' : ' to: '}
+                  {isForwarding ? `Fwd: ${email.subject}` : (email.subject.startsWith('Re: ') ? email.subject : `Re: ${email.subject}`)}
                 </h3>
                 <button
                   onClick={() => {
                     setShowInlineReply(false);
                     setIsReplyAll(false);
+                    setIsForwarding(false);
+                    setForwardTo('');
                   }}
                   className="text-gray-400 hover:text-gray-600 transition-colors"
                 >
@@ -457,7 +584,19 @@ ${email.body}
               <div className="p-2">
                 <div className="mb-2">
                   <div className="text-xs text-gray-600 mb-1">
-                    <span className="font-medium">To:</span> {cleanEmailAddress(email.from.email)}
+                    <span className="font-medium">{isForwarding ? 'To:' : 'To:'}</span> 
+                    {isForwarding ? (
+                      <input
+                        type="email"
+                        value={forwardTo}
+                        onChange={(e) => setForwardTo(e.target.value)}
+                        placeholder="Enter email address..."
+                        className="ml-2 text-xs border border-gray-300 rounded px-2 py-1 flex-1 min-w-0"
+                        style={{ width: 'calc(100% - 30px)' }}
+                      />
+                    ) : (
+                      <span className="ml-1">{cleanEmailAddress(email.from.email)}</span>
+                    )}
                   </div>
                 </div>
                 
@@ -476,75 +615,66 @@ ${email.body}
                     onClick={async () => {
                       if (!email || !replyContent.trim()) return;
                       
+                      // For forwarding, validate that we have a recipient
+                      if (isForwarding && !forwardTo.trim()) return;
+                      
                       setSendingReply(true);
                       
-                      // Create optimistic reply for immediate UI update
-                      const optimisticReply = createOptimisticReply(email, replyContent, isReplyAll);
-                      
-                      // Immediately add the reply to the thread for instant feedback
-                      setProcessedThreadMessages(prev => [...prev, optimisticReply]);
-                      
-                      // Clear the reply form immediately for better UX
-                      const originalReplyContent = replyContent;
-                      setReplyContent('');
-                      setShowInlineReply(false);
-                      
                       try {
-                        console.log('Sending reply with content:', originalReplyContent);
-                        const result = isReplyAll 
-                          ? await sendReplyAll(email, originalReplyContent)
-                          : await sendReply(email, originalReplyContent, false);
+                        console.log('Sending:', isForwarding ? 'forward' : 'reply', 'with content:', replyContent);
+                        
+                        let result;
+                        if (isForwarding) {
+                          // Send forward
+                          result = await sendForward(email, replyContent, forwardTo.trim());
+                        } else {
+                          // Send reply or reply all
+                          result = isReplyAll 
+                            ? await sendReplyAll(email, replyContent)
+                            : await sendReply(email, replyContent, false);
+                        }
                         
                         if (result.success) {
-                          console.log('✅ Reply sent successfully');
+                          console.log('✅ Email sent successfully');
                           
                           // Show success toast
                           toast({
-                            title: "Reply sent",
-                            description: `Your ${isReplyAll ? 'reply all' : 'reply'} has been sent successfully.`,
+                            title: isForwarding ? "Forward sent" : "Reply sent",
+                            description: `Your ${isForwarding ? 'forward' : (isReplyAll ? 'reply all' : 'reply')} has been sent successfully.`,
                             duration: 3000,
                           });
                           
-                          // Reset states
+                          // Clear the form and close
+                          setReplyContent('');
+                          setForwardTo('');
+                          setShowInlineReply(false);
                           setIsReplyAll(false);
+                          setIsForwarding(false);
                           
-                          // Optional: Refresh the thread to get the actual sent message with real ID
-                          // This will replace the optimistic reply with the real one
-                          setTimeout(() => {
-                            fetchEmailAndThread();
-                          }, 1000);
+                          // For replies, refresh the thread to show the new message
+                          if (!isForwarding) {
+                            setTimeout(() => {
+                              fetchEmailAndThread();
+                            }, 1000);
+                          }
                           
                         } else {
-                          console.error('❌ Failed to send reply');
-                          
-                          // Remove optimistic reply on failure
-                          setProcessedThreadMessages(prev => prev.filter(msg => msg.id !== optimisticReply.id));
-                          
-                          // Restore reply content and show reply form
-                          setReplyContent(originalReplyContent);
-                          setShowInlineReply(true);
+                          console.error('❌ Failed to send email');
                           
                           // Show error toast
                           toast({
-                            title: "Failed to send reply",
+                            title: isForwarding ? "Failed to send forward" : "Failed to send reply",
                             description: "Please try again.",
                             variant: "destructive",
                             duration: 5000,
                           });
                         }
                       } catch (error) {
-                        console.error('Error sending reply:', error);
-                        
-                        // Remove optimistic reply on error
-                        setProcessedThreadMessages(prev => prev.filter(msg => msg.id !== optimisticReply.id));
-                        
-                        // Restore reply content and show reply form
-                        setReplyContent(originalReplyContent);
-                        setShowInlineReply(true);
+                        console.error('Error sending email:', error);
                         
                         // Show error toast
                         toast({
-                          title: "Error sending reply",
+                          title: "Error sending email",
                           description: "An unexpected error occurred. Please try again.",
                           variant: "destructive",
                           duration: 5000,
@@ -554,45 +684,76 @@ ${email.body}
                       }
                     }}
                     className="btn btn-primary flex items-center text-xs px-3 py-1.5"
-                    disabled={!replyContent.trim() || sendingReply}
+                    disabled={(!replyContent.trim() || (isForwarding && !forwardTo.trim())) || sendingReply}
                   >
                     <Reply size={14} className="mr-1" />
-                    {sendingReply ? 'Sending...' : `Send ${isReplyAll ? 'Reply All' : 'Reply'}`}
+                    {sendingReply ? 'Sending...' : `Send ${isForwarding ? 'Forward' : (isReplyAll ? 'Reply All' : 'Reply')}`}
                   </button>
-                  
-                  <button 
-                    onClick={() => {
-                      // Create a reply subject with "Re: " prefix if it doesn't already have it
-                      const subject = email.subject.startsWith('Re: ') ? email.subject : `Re: ${email.subject}`;
-                      
-                      // Format the original email for the reply
-                      const formattedDate = format(parseISO(email.date), 'PPpp');
-                      const quotedBody = `
+                  <div className="flex items-center ml-3 space-x-2">
+                    {(email.labelIds || []).includes('DRAFT') && !sendingReply && (
+                      <button
+                        onClick={handleDiscardDraft}
+                        className="p-2 text-red-600 hover:text-red-700 hover:bg-red-50 rounded transition-colors"
+                        title="Discard draft"
+                        aria-label="Discard draft"
+                      >
+                        <Trash size={16} />
+                      </button>
+                    )}
+                    <button 
+                      onClick={() => {
+                        if (isForwarding) {
+                          const subject = email.subject.startsWith('Fwd: ') ? email.subject : `Fwd: ${email.subject}`;
+                          const formattedDate = format(parseISO(email.date), 'PPpp');
+                          const forwardedBody = `
+${replyContent}
+
+<br><br>
+---------- Forwarded message ---------<br>
+From: ${email.from.name} <${email.from.email}><br>
+Date: ${formattedDate}<br>
+Subject: ${email.subject}<br>
+To: ${formatRecipientsForHeaders(email.to || [])}<br>
+<br>
+${email.body}
+`;
+                          navigate('/compose', { 
+                            state: { 
+                              to: forwardTo,
+                              subject: subject,
+                              originalBody: forwardedBody,
+                              attachments: email.attachments
+                            } 
+                          });
+                        } else {
+                          const subject = email.subject.startsWith('Re: ') ? email.subject : `Re: ${email.subject}`;
+                          const formattedDate = format(parseISO(email.date), 'PPpp');
+                          const quotedBody = `
 <br><br>
 <div style="padding-left: 1em; margin-left: 1em; border-left: 2px solid #ccc;">
   <p>On ${formattedDate}, ${email.from.name} ${cleanEmailAddress(email.from.email)} wrote:</p>
   ${email.body}
 </div>
 `;
-                      
-                      // Combine current reply content with quoted original
-                      const fullBody = replyContent + quotedBody;
-                      
-                      // Navigate to full compose for advanced features
-                      navigate('/compose', { 
-                        state: { 
-                          to: email.from.email,
-                          subject: subject,
-                          replyToId: email.id,
-                          threadId: email.threadId,
-                          originalBody: fullBody
-                        } 
-                      });
-                    }}
-                    className="text-xs text-blue-600 hover:text-blue-800 font-medium transition-colors"
-                  >
-                    Open in full editor
-                  </button>
+                          const fullBody = replyContent + quotedBody;
+                          navigate('/compose', { 
+                            state: { 
+                              to: email.from.email,
+                              subject: subject,
+                              replyToId: email.id,
+                              threadId: email.threadId,
+                              originalBody: fullBody
+                            } 
+                          });
+                        }
+                      }}
+                      className="p-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors"
+                      title="Open in full editor"
+                      aria-label="Open in full editor"
+                    >
+                      <Maximize2 size={16} />
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -601,7 +762,7 @@ ${email.body}
       )}
 
       {/* Actions footer - hidden when reply window is open */}
-      {!showInlineReply && (
+  {!showInlineReply && (
         <div className="px-6 py-3 border-t border-gray-200 bg-gray-50 flex-shrink-0">
           <div className="flex items-center space-x-2 overflow-x-auto">
             <button 
@@ -632,7 +793,29 @@ ${email.body}
               <Trash size={14} className="mr-2" />
               Delete
             </button>
+            {(email.labelIds || []).includes('DRAFT') && (
+              <button
+                onClick={handleDiscardDraft}
+                className="btn btn-secondary flex items-center text-sm px-3 py-2 flex-shrink-0"
+              >
+                <Trash size={14} className="mr-2" />
+                Discard Draft
+              </button>
+            )}
           </div>
+        </div>
+      )}
+      {undoDraftData && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-xs px-4 py-2 rounded shadow flex items-center space-x-3 z-50">
+          <span>Draft discarded.</span>
+            <button
+              onClick={undoDiscard}
+              className="underline decoration-dotted hover:text-blue-300"
+            >Undo</button>
+            <button
+              onClick={() => { if (undoDraftData) { window.clearTimeout(undoDraftData.timeoutId); setUndoDraftData(null); window.dispatchEvent(new CustomEvent('refresh-drafts')); navigate('/inbox'); } }}
+              className="opacity-70 hover:opacity-100"
+            >Dismiss</button>
         </div>
       )}
     </div>

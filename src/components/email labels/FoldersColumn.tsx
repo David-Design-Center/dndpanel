@@ -646,12 +646,36 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
                               <span className="text-gray-700 truncate">{folder.name}</span>
                             </div>
                             
-                            {/* Count badge - always show for Inbox, only non-zero for others */}
-                            {(folder.name === 'Inbox' || folder.unreadCount > 0) && (
-                              <div className="bg-gray-100 text-gray-600 text-xs px-1.5 py-0.5 rounded-full min-w-[18px] text-center flex-shrink-0 ml-2 font-medium">
-                                {folder.unreadCount > 99 ? '99+' : folder.unreadCount}
-                              </div>
-                            )}
+                            {/* Count badges logic: 
+                                - Inbox: always show unread (capped 99+)
+                                - Drafts: show TOTAL drafts (exact, no cap)
+                                - Sent: never show a badge
+                                - Others: show unread only if > 0 (capped 99+)
+                            */}
+                            {(() => {
+                              const isInbox = folder.name === 'Inbox';
+                              const isDrafts = folder.name === 'Drafts';
+                              const isSent = folder.name === 'Sent';
+                              if (isSent) return null; // no badge for Sent
+                              if (isDrafts) {
+                                const total = folder.totalCount || 0;
+                                if (total <= 0) return null;
+                                return (
+                                  <div className="bg-gray-100 text-gray-700 text-xs px-1.5 py-0.5 rounded-full min-w-[20px] text-center flex-shrink-0 ml-2 font-medium">
+                                    {total}
+                                  </div>
+                                );
+                              }
+                              const unread = folder.unreadCount || 0;
+                              if (isInbox || unread > 0) {
+                                return (
+                                  <div className="bg-gray-100 text-gray-600 text-xs px-1.5 py-0.5 rounded-full min-w-[18px] text-center flex-shrink-0 ml-2 font-medium">
+                                    {unread > 99 ? '99+' : unread}
+                                  </div>
+                                );
+                              }
+                              return null;
+                            })()}
                           </button>
                         );
                       })}

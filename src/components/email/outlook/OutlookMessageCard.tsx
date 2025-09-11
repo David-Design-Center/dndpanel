@@ -103,7 +103,6 @@ export const OutlookMessageCard: React.FC<MessageCardProps> = ({
   // Clean sender name by removing angle brackets and extra formatting
   const rawSenderName = fromData.name || senderEmail;
   const senderName = rawSenderName.replace(/[<>]/g, '').trim();
-  const toNames = message.to?.map(t => t.name || cleanEmailAddress(t.email).split('@')[0]) || ['You'];
 
   // Process email content properly
   const processedContent = processEmailContent(message.body || '');
@@ -178,7 +177,7 @@ export const OutlookMessageCard: React.FC<MessageCardProps> = ({
               {senderName}
             </div>
             <div className="text-xs text-gray-600 truncate">
-              To: {toNames.length ? toNames.join(', ') : 'You'}
+              From: {senderEmail}
             </div>
           </div>
         </div>

@@ -513,7 +513,29 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
           <span className={`text-sm truncate w-48 flex-shrink-0 ${!email.isRead ? 'font-bold text-gray-900' : 'text-gray-800'}`}>
             {currentTab === 'sent'
               ? formatRecipients(email.to || [], 35)
-              : (cleanEncodingIssues(email.from?.name) || cleanEmailAddress(email.from?.email) || 'Unknown Sender')}
+              : (() => {
+                  const rawName = cleanEncodingIssues(email.from?.name) || '';
+                  const rawEmail = cleanEmailAddress(email.from?.email) || '';
+                  const meAddresses = ['david.v@dnddesigncenter.com','marti@dnddesigncenter.com','martisuvorov12@gmail.com'];
+                  const isFromMe = rawEmail && meAddresses.includes(rawEmail.toLowerCase());
+                  // If the message is a draft authored by me, prefer first non-me recipient's display name
+                  if (isFromMe && (email.labelIds || []).includes('DRAFT')) {
+                    const primaryRecipient = (email.to || []).find(r => r.email && !meAddresses.includes(r.email.toLowerCase()));
+                    if (primaryRecipient) {
+                      const recipName = primaryRecipient.name?.trim();
+                      if (recipName && recipName.toLowerCase() !== primaryRecipient.email.toLowerCase()) return recipName;
+                      if (primaryRecipient.email) return primaryRecipient.email.split('@')[0];
+                    }
+                    return 'Me';
+                  }
+                  if (isFromMe) return 'Me';
+                  if (rawName && rawName.toLowerCase() !== rawEmail.toLowerCase()) return rawName;
+                  if (rawEmail) {
+                    const local = rawEmail.split('@')[0];
+                    return local || rawEmail;
+                  }
+                  return 'Me';
+                })()}
           </span>
 
           {/* Subject + preview */}
