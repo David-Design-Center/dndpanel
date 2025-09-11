@@ -304,7 +304,7 @@ function Orders() {
           
           {/* Invoices Table View */}
           <div>
-            <h2 className="text-xl font-semibold mb-4">Invoices</h2>
+            <h2 className="text-xl font-semibold mb-4">Orders</h2>
             {filteredInvoices.length > 0 ? (
               <OrdersSpreadsheet 
                 orders={filteredInvoices} 
@@ -321,8 +321,8 @@ function Orders() {
                   </>
                 ) : (
                   <>
-                    <p className="text-gray-500 mb-4">No invoices to display</p>
-                    <p className="text-sm text-gray-400">Invoices will appear here once they are created in the system.</p>
+                    <p className="text-gray-500 mb-4">No orders to display</p>
+                    <p className="text-sm text-gray-400">Orders will appear here once they are created in the system.</p>
                   </>
                 )}
               </div>

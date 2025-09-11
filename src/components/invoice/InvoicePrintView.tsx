@@ -90,7 +90,7 @@ function InvoicePrintView({ invoice, innerRef, showInternalView = false }: Invoi
         }}>
           <div style={{ display: 'flex', alignItems: 'center' }}>
             <img 
-              src="https://res.cloudinary.com/designcenter/image/upload/v1741965462/DnD_Logo_Transparent.svg"
+              src="https://res.cloudinary.com/designcenter/image/upload/v1757594555/FullLogo_bjxeh8.avif"
               alt="D&D Design Center Logo"
               style={{
                 height: '100px',
