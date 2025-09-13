@@ -26,6 +26,13 @@ const TutorialsDialog: React.FC<TutorialsDialogProps> = ({
       cloudinaryId: 'GMT20250902-082920_Clip_Order_Dashboard_Tutorial__Creating_Orders_and_Invoices',
       thumbnailUrl: 'https://images.unsplash.com/photo-1554224155-6726b3ff858f?w=400&h=300&fit=crop',
       description: 'Learn how to create and manage customer orders and generate invoices'
+    },
+    {
+      id: 2,
+      title: 'Adding shipments and PDFs',
+      cloudinaryId: 'GMT20250913-131824_Clip_Updated_Shipment_Tracking_System_Demonstration',
+      thumbnailUrl: 'https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?w=400&h=300&fit=crop',
+      description: 'Learn how to create and manage shipping information'
     }
   ]
 
