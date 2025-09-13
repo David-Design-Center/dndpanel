@@ -1,18 +1,13 @@
 import React, { useState } from 'react';
 import { X, Package, AlertCircle } from 'lucide-react';
+import { FileUpload } from './file-upload';
 
 export interface NewShipmentData {
   ref: string;
-  status: string;
-  pod: string;
-  consignee: string;
-  vendor: string;
-  po: string;
-  pkg: number;
-  kg: number;
-  vol: number;
-  pickup_date: string;
-  note: string;
+  eta: string;
+  etd: string;
+  container_n: string; // Match database column name
+  documents?: File[]; // Add files array for uploads
 }
 
 interface AddShipmentModalProps {
@@ -28,67 +23,22 @@ export const AddShipmentModal: React.FC<AddShipmentModalProps> = ({
 }) => {
   const [formData, setFormData] = useState<NewShipmentData>({
     ref: '',
-    status: 'PENDING',
-    pod: '',
-    consignee: '',
-    vendor: '',
-    po: '',
-    pkg: 0,
-    kg: 0,
-    vol: 0,
-    pickup_date: '',
-    note: ''
+    eta: '',
+    etd: '',
+    container_n: '',
+    documents: []
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
 
-  const statusOptions = [
-    'PENDING',
-    'SHIPPED', 
-    'IN_TRANSIT',
-    'DELIVERED',
-    'DELAYED',
-    'CANCELLED'
-  ];
 
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
 
     if (!formData.ref.trim()) {
       newErrors.ref = 'Reference is required';
-    }
-
-    if (!formData.pod.trim()) {
-      newErrors.pod = 'Port of Delivery is required';
-    }
-
-    if (!formData.consignee.trim()) {
-      newErrors.consignee = 'Consignee is required';
-    }
-
-    if (!formData.vendor.trim()) {
-      newErrors.vendor = 'Vendor is required';
-    }
-
-    if (!formData.po.trim()) {
-      newErrors.po = 'Purchase Order is required';
-    }
-
-    if (formData.pkg <= 0) {
-      newErrors.pkg = 'Packages must be greater than 0';
-    }
-
-    if (formData.kg <= 0) {
-      newErrors.kg = 'Weight must be greater than 0';
-    }
-
-    if (formData.vol <= 0) {
-      newErrors.vol = 'Volume must be greater than 0';
-    }
-
-    if (!formData.pickup_date.trim()) {
-      newErrors.pickup_date = 'Pickup date is required';
     }
 
     setErrors(newErrors);
@@ -105,21 +55,22 @@ export const AddShipmentModal: React.FC<AddShipmentModalProps> = ({
     setIsSubmitting(true);
     
     try {
-      await onSubmit(formData);
+      // Add files to the form data before submission
+      const submitData = {
+        ...formData,
+        documents: selectedFiles
+      };
+      
+      await onSubmit(submitData);
       // Reset form on success
       setFormData({
         ref: '',
-        status: 'PENDING',
-        pod: '',
-        consignee: '',
-        vendor: '',
-        po: '',
-        pkg: 0,
-        kg: 0,
-        vol: 0,
-        pickup_date: '',
-        note: ''
+        eta: '',
+        etd: '',
+        container_n: '',
+        documents: []
       });
+      setSelectedFiles([]);
       setErrors({});
     } catch (error) {
       console.error('Error submitting shipment:', error);
@@ -140,6 +91,22 @@ export const AddShipmentModal: React.FC<AddShipmentModalProps> = ({
       setErrors(prev => ({
         ...prev,
         [field]: ''
+      }));
+    }
+  };
+
+  const handleFileSelect = (files: File[]) => {
+    setSelectedFiles(files);
+    setFormData(prev => ({
+      ...prev,
+      documents: files
+    }));
+    
+    // Clear error when files are selected
+    if (errors.documents) {
+      setErrors(prev => ({
+        ...prev,
+        documents: ''
       }));
     }
   };
@@ -190,188 +157,78 @@ export const AddShipmentModal: React.FC<AddShipmentModalProps> = ({
               {errors.ref && <p className="mt-1 text-xs text-red-600">{errors.ref}</p>}
             </div>
 
-            {/* Status */}
+            {/* Container Number */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Status *
+                Container Number
               </label>
-              <select
-                value={formData.status}
-                onChange={(e) => handleInputChange('status', e.target.value)}
+              <input
+                type="text"
+                value={formData.container_n}
+                onChange={(e) => handleInputChange('container_n', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Enter container number"
+                disabled={isSubmitting}
+              />
+            </div>
+
+            {/* ETD (Estimated Time of Departure) */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                ETD
+              </label>
+              <input
+                type="datetime-local"
+                value={formData.etd}
+                onChange={(e) => handleInputChange('etd', e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 disabled={isSubmitting}
-              >
-                {statusOptions.map(status => (
-                  <option key={status} value={status}>
-                    {status.replace('_', ' ')}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
 
-            {/* Port of Delivery */}
+            {/* ETA (Estimated Time of Arrival) */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Port of Delivery *
+                ETA
               </label>
               <input
-                type="text"
-                value={formData.pod}
-                onChange={(e) => handleInputChange('pod', e.target.value)}
-                className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                  errors.pod ? 'border-red-300' : 'border-gray-300'
-                }`}
-                placeholder="e.g., NEW YORK"
+                type="datetime-local"
+                value={formData.eta}
+                onChange={(e) => handleInputChange('eta', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 disabled={isSubmitting}
               />
-              {errors.pod && <p className="mt-1 text-xs text-red-600">{errors.pod}</p>}
             </div>
 
-            {/* Consignee */}
-            <div>
+            {/* Documents Upload - Full Width */}
+            <div className="md:col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Consignee *
+                Documents
               </label>
-              <input
-                type="text"
-                value={formData.consignee}
-                onChange={(e) => handleInputChange('consignee', e.target.value)}
-                className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                  errors.consignee ? 'border-red-300' : 'border-gray-300'
-                }`}
-                placeholder="Enter consignee name"
-                disabled={isSubmitting}
-              />
-              {errors.consignee && <p className="mt-1 text-xs text-red-600">{errors.consignee}</p>}
-            </div>
-
-            {/* Vendor */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Vendor *
-              </label>
-              <input
-                type="text"
-                value={formData.vendor}
-                onChange={(e) => handleInputChange('vendor', e.target.value)}
-                className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                  errors.vendor ? 'border-red-300' : 'border-gray-300'
-                }`}
-                placeholder="Enter vendor name"
-                disabled={isSubmitting}
-              />
-              {errors.vendor && <p className="mt-1 text-xs text-red-600">{errors.vendor}</p>}
-            </div>
-
-            {/* Purchase Order */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Purchase Order *
-              </label>
-              <input
-                type="text"
-                value={formData.po}
-                onChange={(e) => handleInputChange('po', e.target.value)}
-                className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                  errors.po ? 'border-red-300' : 'border-gray-300'
-                }`}
-                placeholder="Enter PO number"
-                disabled={isSubmitting}
-              />
-              {errors.po && <p className="mt-1 text-xs text-red-600">{errors.po}</p>}
-            </div>
-
-            {/* Packages */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Packages (PKG) *
-              </label>
-              <input
-                type="number"
-                min="1"
-                value={formData.pkg}
-                onChange={(e) => handleInputChange('pkg', parseInt(e.target.value) || 0)}
-                className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                  errors.pkg ? 'border-red-300' : 'border-gray-300'
-                }`}
-                placeholder="Enter number of packages"
-                disabled={isSubmitting}
-              />
-              {errors.pkg && <p className="mt-1 text-xs text-red-600">{errors.pkg}</p>}
-            </div>
-
-            {/* Weight */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Weight (KG) *
-              </label>
-              <input
-                type="number"
-                min="0.1"
-                step="0.1"
-                value={formData.kg}
-                onChange={(e) => handleInputChange('kg', parseFloat(e.target.value) || 0)}
-                className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                  errors.kg ? 'border-red-300' : 'border-gray-300'
-                }`}
-                placeholder="Enter weight in kg"
-                disabled={isSubmitting}
-              />
-              {errors.kg && <p className="mt-1 text-xs text-red-600">{errors.kg}</p>}
-            </div>
-
-            {/* Volume */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Volume (VOL) *
-              </label>
-              <input
-                type="number"
-                min="0.1"
-                step="0.1"
-                value={formData.vol}
-                onChange={(e) => handleInputChange('vol', parseFloat(e.target.value) || 0)}
-                className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                  errors.vol ? 'border-red-300' : 'border-gray-300'
-                }`}
-                placeholder="Enter volume"
-                disabled={isSubmitting}
-              />
-              {errors.vol && <p className="mt-1 text-xs text-red-600">{errors.vol}</p>}
-            </div>
-
-            {/* Pickup Date */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Pickup Date *
-              </label>
-              <input
-                type="date"
-                value={formData.pickup_date}
-                onChange={(e) => handleInputChange('pickup_date', e.target.value)}
-                className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                  errors.pickup_date ? 'border-red-300' : 'border-gray-300'
-                }`}
-                disabled={isSubmitting}
-              />
-              {errors.pickup_date && <p className="mt-1 text-xs text-red-600">{errors.pickup_date}</p>}
+              <div className="space-y-2">
+                <FileUpload
+                  onFileSelect={handleFileSelect}
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                  multiple={true}
+                  maxSize={10}
+                  disabled={isSubmitting}
+                  className="w-full"
+                />
+                {selectedFiles.length > 0 && (
+                  <div className="text-sm text-gray-600">
+                    {selectedFiles.length} file{selectedFiles.length > 1 ? 's' : ''} selected:
+                    <ul className="mt-1 ml-4 list-disc text-xs">
+                      {selectedFiles.map((file, index) => (
+                        <li key={index}>{file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {errors.documents && <p className="mt-1 text-xs text-red-600">{errors.documents}</p>}
+              </div>
             </div>
           </div>
 
-          {/* Notes - Full Width */}
-          <div className="mt-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Notes
-            </label>
-            <textarea
-              value={formData.note}
-              onChange={(e) => handleInputChange('note', e.target.value)}
-              rows={3}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="Enter any additional notes or comments"
-              disabled={isSubmitting}
-            />
-          </div>
         </form>
 
         <div className="border-t px-6 py-4 flex justify-end space-x-3">

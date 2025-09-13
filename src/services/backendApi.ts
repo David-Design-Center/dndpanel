@@ -467,24 +467,9 @@ const convertRowToShipment = (row: any): Shipment => {
   return {
     id: row.id,
     ref: row.ref || '',
-    status: row.status || row.shipping_status || '', // Support both old and new field names
-    pod: row.pod || '',
-    consignee: row.consignee || '',
-    vendor: row.vendor || row.shipper || '', // Support both old and new field names
-    po: row.po || '',
-    pkg: row.pkg || 0,
-    kg: row.kg || 0,
-    vol: row.vol || 0,
-    pickup_date: row.pickup_date || row.etd || null, // Use null instead of empty string for dates
-    note: row.note || row.description_of_goods || '', // Support both old and new field names
-    // Keep legacy fields for backward compatibility
-    shipper: row.shipper || row.vendor || '',
-    vessel_carrier: row.vessel_carrier || '',
-    etd: row.etd || row.pickup_date || null, // Use null instead of empty string for dates
-    eta: row.eta || null, // Use null instead of empty string for dates
-    container_n: row.container_n || '',
-    description_of_goods: row.description_of_goods || row.note || '',
-    shipping_status: row.shipping_status || row.status || ''
+    etd: row.etd || null, // Use null for empty dates
+    eta: row.eta || null, // Use null for empty dates
+    container_n: row.container_n || ''
   };
 };
 
@@ -510,6 +495,7 @@ const convertRowToGeneralDocument = (row: any): GeneralDocument => {
 const convertRowToShipmentDocument = (row: any): ShipmentDocument => {
   return {
     id: row.id,
+    shipment_id: row.shipment_id,
     file_name: row.file_name || '',
     drive_file_id: row.drive_file_id || '',
     drive_file_url: row.drive_file_url || '',
@@ -1375,16 +1361,10 @@ export const fetchShipments = async (forceRefresh: boolean = false): Promise<Shi
  */
 export const createShipment = async (shipmentData: {
   ref: string;
-  status: string;
-  pod: string;
-  consignee: string;
-  vendor: string;
-  po: string;
-  pkg: number;
-  kg: number;
-  vol: number;
-  pickup_date: string | null;
-  note: string;
+  eta: string;
+  etd: string;
+  container_n: string;
+  documents?: File[];
 }): Promise<Shipment> => {
   try {
     console.log('Creating new shipment:', shipmentData);
@@ -1393,17 +1373,9 @@ export const createShipment = async (shipmentData: {
       .from('shipments')
       .insert([{
         ref: shipmentData.ref,
-        status: shipmentData.status,
-        pod: shipmentData.pod,
-        consignee: shipmentData.consignee,
-        vendor: shipmentData.vendor,
-        po: shipmentData.po,
-        pkg: shipmentData.pkg,
-        kg: shipmentData.kg,
-        vol: shipmentData.vol,
-        pickup_date: shipmentData.pickup_date,
-        note: shipmentData.note,
-        documents: [] // Initialize empty documents array
+        eta: shipmentData.eta,
+        etd: shipmentData.etd,
+        container_n: shipmentData.container_n
         // Let created_at and updated_at be set automatically by the database
       }])
       .select()
@@ -1423,6 +1395,25 @@ export const createShipment = async (shipmentData: {
     // Convert database row to Shipment object
     const newShipment = convertRowToShipment(data);
     
+    // Handle document uploads if provided
+    if (shipmentData.documents && shipmentData.documents.length > 0) {
+      try {
+        // Import GoogleDriveService for file uploads
+        const { GoogleDriveService } = await import('../services/googleDriveService');
+        
+        // Upload each document
+        const uploadPromises = shipmentData.documents.map(file =>
+          GoogleDriveService.uploadFile(file, newShipment.id, undefined) // undefined for profile ID
+        );
+        
+        await Promise.all(uploadPromises);
+        console.log(`Successfully uploaded ${shipmentData.documents.length} documents for shipment ${newShipment.id}`);
+      } catch (uploadError) {
+        console.error('Error uploading documents:', uploadError);
+        // Don't fail the entire shipment creation if document upload fails
+      }
+    }
+    
     // Invalidate cache to force refresh on next fetch
     shipmentsCache.timestamp = 0;
     
@@ -1440,33 +1431,18 @@ export const createShipment = async (shipmentData: {
  */
 export const importShipments = async (shipments: {
   ref: string;
-  status: string;
-  pod: string;
-  consignee: string;
-  vendor: string;
-  po: string;
-  pkg: number;
-  kg: number;
-  vol: number;
-  pickup_date: string | null;
-  note: string;
+  eta: string;
+  etd: string;
+  container_n: string;
 }[]): Promise<void> => {
   try {
     console.log('Importing shipments:', shipments.length);
     
     const shipmentsToInsert = shipments.map(shipment => ({
       ref: shipment.ref,
-      status: shipment.status,
-      pod: shipment.pod,
-      consignee: shipment.consignee,
-      vendor: shipment.vendor,
-      po: shipment.po,
-      pkg: shipment.pkg,
-      kg: shipment.kg,
-      vol: shipment.vol,
-      pickup_date: shipment.pickup_date,
-      note: shipment.note,
-      documents: []
+      eta: shipment.eta,
+      etd: shipment.etd,
+      container_n: shipment.container_n
       // Let created_at and updated_at be set automatically by the database
     }));
 

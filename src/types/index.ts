@@ -211,24 +211,9 @@ export interface InvoiceItem {
 export interface Shipment {
   id: number;
   ref: string; // Reference/ritiro_id
-  status: string; // Status/giacenza
-  pod: string; // Port of Delivery
-  consignee: string; // Consignee
-  vendor: string; // Vendor (was shipper)
-  po: string; // Purchase Order
-  pkg: number; // Packages
-  kg: number; // Weight in kg
-  vol: number; // Volume
-  pickup_date: string | null; // Pickup Date (was etd/eta) - allow null for empty dates
-  note: string; // Notes
-  // Keep legacy fields for backward compatibility during migration
-  shipper?: string;
-  vessel_carrier?: string;
   etd?: string | null; // Allow null for empty dates
   eta?: string | null; // Allow null for empty dates
   container_n?: string;
-  description_of_goods?: string;
-  shipping_status?: string;
 }
 
 // Document-related types
@@ -241,6 +226,7 @@ export interface GeneralDocument {
 
 export interface ShipmentDocument {
   id: string;
+  shipment_id: number | null; // Foreign key to shipments table, null for bulk uploads
   file_name: string;
   drive_file_id: string; // Google Drive file ID
   drive_file_url?: string; // Google Drive viewable URL

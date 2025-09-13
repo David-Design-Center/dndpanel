@@ -279,28 +279,12 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ref</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Pod</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Vendor</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Po</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">PKG</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">KG</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">VOL</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Pickup Date</th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
                     {previewData.map((row, index) => (
                       <tr key={index}>
                         <td className="px-3 py-2 whitespace-nowrap text-sm">{row.ref}</td>
-                        <td className="px-3 py-2 whitespace-nowrap text-sm">{row.status}</td>
-                        <td className="px-3 py-2 whitespace-nowrap text-sm">{row.pod}</td>
-                        <td className="px-3 py-2 whitespace-nowrap text-sm">{row.vendor}</td>
-                        <td className="px-3 py-2 whitespace-nowrap text-sm">{row.po}</td>
-                        <td className="px-3 py-2 whitespace-nowrap text-sm">{row.pkg}</td>
-                        <td className="px-3 py-2 whitespace-nowrap text-sm">{row.kg}</td>
-                        <td className="px-3 py-2 whitespace-nowrap text-sm">{row.vol}</td>
-                        <td className="px-3 py-2 whitespace-nowrap text-sm">{row.pickup_date}</td>
                       </tr>
                     ))}
                   </tbody>

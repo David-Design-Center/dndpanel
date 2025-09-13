@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { X, FileText, Download, Calendar, Package, Truck, Edit2, Save, AlertTriangle, Trash2 } from 'lucide-react';
-import { Shipment } from '../../types';
-import { ShipmentDocument, GoogleDriveService } from '../../services/googleDriveService';
+import { X, FileText, Package, Truck, Edit2, Save, AlertTriangle } from 'lucide-react';
+import { Shipment, ShipmentDocument } from '../../types';
+import { DocumentsList } from './documents-list';
 import { supabase } from '../../lib/supabase';
 
 interface ShipmentDetailsModalProps {
@@ -18,7 +18,6 @@ export function ShipmentDetailsModal({ isOpen, onClose, shipment, documents, onU
   const [editedShipment, setEditedShipment] = useState<Shipment | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(null);
 
   useEffect(() => {
     if (shipment) {
@@ -37,15 +36,6 @@ export function ShipmentDetailsModal({ isOpen, onClose, shipment, documents, onU
         .from('shipments')
         .update({
           ref: editedShipment.ref,
-          status: editedShipment.status,
-          pod: editedShipment.pod,
-          vendor: editedShipment.vendor,
-          po: editedShipment.po,
-          pkg: editedShipment.pkg,
-          kg: editedShipment.kg,
-          vol: editedShipment.vol,
-          pickup_date: editedShipment.pickup_date,
-          note: editedShipment.note,
           updated_at: new Date().toISOString()
         })
         .eq('id', editedShipment.id);
@@ -72,65 +62,7 @@ export function ShipmentDetailsModal({ isOpen, onClose, shipment, documents, onU
     setError(null);
   };
 
-  const handleDeleteDocument = async (documentId: string) => {
-    if (!shipment) return;
-    
-    const confirmDelete = window.confirm('Are you sure you want to delete this document? This action cannot be undone.');
-    if (!confirmDelete) return;
-
-    try {
-      setDeletingDocumentId(documentId);
-      setError(null);
-
-      await GoogleDriveService.deleteDocument(documentId, shipment.id);
-      
-      // Call the documents update callback to refresh the documents list
-      if (onDocumentsUpdate) {
-        onDocumentsUpdate();
-      }
-    } catch (err: any) {
-      console.error('Error deleting document:', err);
-      setError(`Failed to delete document: ${err.message}`);
-    } finally {
-      setDeletingDocumentId(null);
-    }
-  };
-
   if (!isOpen || !shipment) return null;
-
-  const formatDate = (dateStr: string | null) => {
-    if (!dateStr) return 'N/A';
-    try {
-      const date = new Date(dateStr);
-      if (isNaN(date.getTime())) return dateStr;
-      return date.toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-      });
-    } catch (e) {
-      return dateStr;
-    }
-  };
-
-  const getStatusColorClass = (status: string) => {
-    status = status.toLowerCase();
-    if (status.includes('delivered') || status.includes('shipped')) {
-      return 'bg-green-100 text-green-800 border-green-200';
-    } else if (status.includes('transit') || status.includes('pending')) {
-      return 'bg-blue-100 text-blue-800 border-blue-200';
-    } else if (status.includes('delay') || status.includes('cancelled')) {
-      return 'bg-red-100 text-red-800 border-red-200';
-    } else {
-      return 'bg-gray-100 text-gray-800 border-gray-200';
-    }
-  };
-
-  const handleDocumentClick = (document: ShipmentDocument) => {
-    if (document.drive_file_url) {
-      window.open(document.drive_file_url, '_blank');
-    }
-  };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -202,172 +134,22 @@ export function ShipmentDetailsModal({ isOpen, onClose, shipment, documents, onU
                 </h3>
                 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Reference</label>
-                    {isEditing ? (
-                      <input
-                        type="text"
-                        value={editedShipment?.ref || ''}
-                        onChange={(e) => setEditedShipment(prev => prev ? { ...prev, ref: e.target.value } : null)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    ) : (
-                      <p className="text-sm text-gray-900 font-mono bg-gray-50 px-3 py-2 rounded">{shipment.ref}</p>
-                    )}
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-                    {isEditing ? (
-                      <input
-                        type="text"
-                        value={editedShipment?.status || ''}
-                        onChange={(e) => setEditedShipment(prev => prev ? { ...prev, status: e.target.value } : null)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    ) : (
-                      <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium border ${getStatusColorClass(shipment.status)}`}>
-                        {shipment.status}
-                      </span>
-                    )}
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Port of Discharge</label>
-                    {isEditing ? (
-                      <input
-                        type="text"
-                        value={editedShipment?.pod || ''}
-                        onChange={(e) => setEditedShipment(prev => prev ? { ...prev, pod: e.target.value } : null)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    ) : (
-                      <p className="text-sm text-gray-900">{shipment.pod || 'N/A'}</p>
-                    )}
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Consignee</label>
-                    {isEditing ? (
-                      <input
-                        type="text"
-                        value={editedShipment?.consignee || ''}
-                        onChange={(e) => setEditedShipment(prev => prev ? { ...prev, consignee: e.target.value } : null)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    ) : (
-                      <p className="text-sm text-gray-900">{shipment.consignee || 'N/A'}</p>
-                    )}
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Vendor</label>
-                    {isEditing ? (
-                      <input
-                        type="text"
-                        value={editedShipment?.vendor || ''}
-                        onChange={(e) => setEditedShipment(prev => prev ? { ...prev, vendor: e.target.value } : null)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    ) : (
-                      <p className="text-sm text-gray-900">{shipment.vendor || 'N/A'}</p>
-                    )}
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Purchase Order</label>
-                    {isEditing ? (
-                      <input
-                        type="text"
-                        value={editedShipment?.po || ''}
-                        onChange={(e) => setEditedShipment(prev => prev ? { ...prev, po: e.target.value } : null)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    ) : (
-                      <p className="text-sm text-gray-900 font-mono">{shipment.po || 'N/A'}</p>
-                    )}
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Packages</label>
-                    {isEditing ? (
-                      <input
-                        type="number"
-                        value={editedShipment?.pkg || 0}
-                        onChange={(e) => setEditedShipment(prev => prev ? { ...prev, pkg: parseInt(e.target.value) || 0 } : null)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    ) : (
-                      <p className="text-sm text-gray-900">{shipment.pkg?.toLocaleString() || '0'}</p>
-                    )}
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Weight (KG)</label>
-                    {isEditing ? (
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={editedShipment?.kg || 0}
-                        onChange={(e) => setEditedShipment(prev => prev ? { ...prev, kg: parseFloat(e.target.value) || 0 } : null)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    ) : (
-                      <p className="text-sm text-gray-900">{shipment.kg?.toLocaleString() || '0'} kg</p>
-                    )}
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Volume</label>
-                    {isEditing ? (
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={editedShipment?.vol || 0}
-                        onChange={(e) => setEditedShipment(prev => prev ? { ...prev, vol: parseFloat(e.target.value) || 0 } : null)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    ) : (
-                      <p className="text-sm text-gray-900">{shipment.vol?.toLocaleString() || '0'}</p>
-                    )}
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
-                      <Calendar className="w-4 h-4 mr-1" />
-                      Pickup Date
-                    </label>
-                    {isEditing ? (
-                      <input
-                        type="date"
-                        value={editedShipment?.pickup_date || ''}
-                        onChange={(e) => setEditedShipment(prev => prev ? { ...prev, pickup_date: e.target.value || null } : null)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    ) : (
-                      <p className="text-sm text-gray-900">{formatDate(shipment.pickup_date)}</p>
-                    )}
-                  </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Reference</label>
+                  {isEditing ? (
+                    <input
+                      type="text"
+                      value={editedShipment?.ref || ''}
+                      onChange={(e) => setEditedShipment(prev => prev ? { ...prev, ref: e.target.value } : null)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  ) : (
+                    <p className="text-sm text-gray-900 font-mono bg-gray-50 px-3 py-2 rounded">{shipment.ref}</p>
+                  )}
                 </div>
-                
-                {shipment.note && (
-                  <div className="mt-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-                    {isEditing ? (
-                      <textarea
-                        value={editedShipment?.note || ''}
-                        onChange={(e) => setEditedShipment(prev => prev ? { ...prev, note: e.target.value } : null)}
-                        rows={4}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        placeholder="Enter notes..."
-                      />
-                    ) : (
-                      <div className="bg-gray-50 rounded-lg p-3">
-                        <p className="text-sm text-gray-900 whitespace-pre-wrap">{shipment.note}</p>
-                      </div>
-                    )}
-                  </div>
-                )}
+                <div>
+                </div>
+                </div>
               </div>
             </div>
 
@@ -378,67 +160,10 @@ export function ShipmentDetailsModal({ isOpen, onClose, shipment, documents, onU
                 Documents ({documents.length})
               </h3>
               
-              {documents.length > 0 ? (
-                <div className="space-y-3">
-                  {documents.map((document) => (
-                    <div
-                      key={document.id}
-                      className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
-                    >
-                      <div 
-                        className="flex items-center min-w-0 flex-1 cursor-pointer"
-                        onClick={() => handleDocumentClick(document)}
-                      >
-                        <FileText className="w-5 h-5 text-blue-600 mr-3 flex-shrink-0" />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-gray-900 truncate">
-                            {document.file_name}
-                          </p>
-                          <p className="text-xs text-gray-500">
-                            {document.file_size ? `${(document.file_size / 1024 / 1024).toFixed(2)} MB` : ''} 
-                            {document.uploaded_at && ` • ${formatDate(document.uploaded_at)}`}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center space-x-2 flex-shrink-0 ml-2">
-                        {!isEditing ? (
-                          <Download className="w-4 h-4 text-gray-400" />
-                        ) : (
-                          <>
-                            <button
-                              onClick={() => handleDocumentClick(document)}
-                              className="p-1 text-blue-600 hover:text-blue-800 rounded"
-                              title="Download"
-                            >
-                              <Download className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteDocument(document.id);
-                              }}
-                              disabled={deletingDocumentId === document.id}
-                              className="p-1 text-red-600 hover:text-red-800 rounded disabled:opacity-50 disabled:cursor-not-allowed"
-                              title="Delete Document"
-                            >
-                              {deletingDocumentId === document.id ? (
-                                <div className="w-4 h-4 animate-spin rounded-full border-2 border-red-600 border-t-transparent"></div>
-                              ) : (
-                                <Trash2 className="w-4 h-4" />
-                              )}
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center py-8">
-                  <FileText className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                  <p className="text-sm text-gray-500">No documents uploaded yet</p>
-                </div>
-              )}
+              <DocumentsList
+                documents={documents}
+                onDocumentDeleted={onDocumentsUpdate}
+              />
             </div>
           </div>
         </div>

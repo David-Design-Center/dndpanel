@@ -1,15 +1,18 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Package, RefreshCw, Truck, Plus, Upload, FileText, ArrowUpDown, Settings, Download, Trash2, FileSpreadsheet, AlertCircle } from 'lucide-react';
-import { Shipment } from '../types';
+import { Package, RefreshCw, Truck, Plus, Upload, FileText, ArrowUpDown, Settings, Download, Trash2, FileSpreadsheet, AlertCircle, Eye } from 'lucide-react';
+import { Shipment, ShipmentDocument } from '../types';
 import { fetchShipments, createShipment, importShipments } from '../services/backendApi';
-import { GoogleDriveService, ShipmentDocument } from '../services/googleDriveService';
+import { GoogleDriveService } from '../services/googleDriveService';
 import { UploadDocumentsModal } from '../components/ui/upload-documents-modal';
-import { AddShipmentModal } from '../components/ui/add-shipment-modal';
+import { AddShipmentModal } from '../components/ui/add-shipment-modal-new';
 import { CsvImportModal } from '../components/ui/csv-import-modal';
 import { ShipmentDetailsModal } from '../components/ui/shipment-details-modal';
 import { ColumnManagerModal } from '../components/ui/column-manager-modal';
+import { DocumentPreviewModal } from '../components/ui/document-preview-modal';
+import { BulkUploadModal } from '../components/ui/bulk-upload-modal';
+import { AllShipmentFiles } from '../components/ui/all-shipment-files';
 import { supabase } from '../lib/supabase';
 
 function Shipments() {
@@ -25,91 +28,30 @@ function Shipments() {
   const [csvImportModalOpen, setCsvImportModalOpen] = useState(false);
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   const [columnManagerModalOpen, setColumnManagerModalOpen] = useState(false);
+  const [bulkUploadModalOpen, setBulkUploadModalOpen] = useState(false);
+  const [documentRefreshTrigger, setDocumentRefreshTrigger] = useState(0);
   const [selectedShipments, setSelectedShipments] = useState<Set<number>>(new Set());
   const [selectedShipmentForUpload, setSelectedShipmentForUpload] = useState<{ id: number; containerNumber: string } | null>(null);
   const [selectedShipmentForDetails, setSelectedShipmentForDetails] = useState<Shipment | null>(null);
   const [isExitingButtons, setIsExitingButtons] = useState(false);
+  const [documentPreviewModalOpen, setDocumentPreviewModalOpen] = useState(false);
+  const [selectedDocumentForPreview, setSelectedDocumentForPreview] = useState<ShipmentDocument | null>(null);
   
-  // Dynamic columns state
-  const [visibleColumns, setVisibleColumns] = useState<string[]>([
-    'ref', 'status', 'pod', 'vendor', 'po', 'pkg', 'kg', 'vol', 'pickup_date', 'note'
+  // Dynamic columns state - Updated for simplified schema
+  const [visibleColumns, _setVisibleColumns] = useState<string[]>([
+    'ref', 'eta', 'etd', 'container_n'
   ]);
-  const [allColumns, setAllColumns] = useState<{[key: string]: string}>({
-    ref: 'Ref',
-    status: 'Status', 
-    pod: 'Pod',
-    vendor: 'Vendor',
-    po: 'Po',
-    pkg: 'PKG',
-    kg: 'Kg',
-    vol: 'VOL',
-    pickup_date: 'Pickup Date',
-    note: 'Note'
+  const [allColumns, _setAllColumns] = useState<{[key: string]: string}>({
+    ref: 'Reference',
+    eta: 'ETA',
+    etd: 'ETD', 
+    container_n: 'Container Number'
   });
 
   // Fetch shipments and documents on component mount
   useEffect(() => {
     fetchShipmentData();
-    fetchTableColumns();
   }, []);
-
-  // Function to fetch available table columns
-  const fetchTableColumns = async () => {
-    try {
-      // First try to use the get_table_columns function
-      const { data, error } = await supabase.rpc('get_table_columns', {
-        table_name_param: 'shipments'
-      });
-
-      if (error) {
-        console.warn('get_table_columns function not available, using sample data method:', error);
-        // Fallback: Get a sample record to determine columns
-        const { data: sampleData } = await supabase
-          .from('shipments')
-          .select('*')
-          .limit(1);
-
-        if (sampleData && sampleData.length > 0) {
-          const columnNames = Object.keys(sampleData[0]);
-          const columnMap: {[key: string]: string} = {};
-          
-          columnNames.forEach(col => {
-            if (!['id', 'created_at', 'updated_at', 'consignee', 'documents'].includes(col)) {
-              // Convert snake_case to Title Case for display
-              const displayName = col.split('_').map(word => 
-                word.charAt(0).toUpperCase() + word.slice(1)
-              ).join(' ');
-              columnMap[col] = displayName;
-            }
-          });
-
-          setAllColumns(columnMap);
-          setVisibleColumns(Object.keys(columnMap));
-        }
-      } else {
-        // Use the data from get_table_columns function
-        const columnMap: {[key: string]: string} = {};
-        const visibleCols: string[] = [];
-        
-        data.forEach((col: any) => {
-          const colName = col.column_name;
-          if (!['id', 'created_at', 'updated_at', 'consignee', 'documents'].includes(colName)) {
-            // Convert snake_case to Title Case for display
-            const displayName = colName.split('_').map((word: string) => 
-              word.charAt(0).toUpperCase() + word.slice(1)
-            ).join(' ');
-            columnMap[colName] = displayName;
-            visibleCols.push(colName);
-          }
-        });
-
-        setAllColumns(columnMap);
-        setVisibleColumns(visibleCols);
-      }
-    } catch (error) {
-      console.error('Error fetching table columns:', error);
-    }
-  };
 
   // Function to fetch shipments
   const fetchShipmentData = async (forceRefresh = false) => {
@@ -161,6 +103,18 @@ function Shipments() {
     setUploadModalOpen(true);
   };
 
+  // Handle document preview
+  const handleDocumentPreview = (document: ShipmentDocument) => {
+    setSelectedDocumentForPreview(document);
+    setDocumentPreviewModalOpen(true);
+  };
+
+  // Handle closing document preview
+  const handleCloseDocumentPreview = () => {
+    setDocumentPreviewModalOpen(false);
+    setSelectedDocumentForPreview(null);
+  };
+
   // Handle upload completion
   const handleUploadComplete = async () => {
     if (selectedShipmentForUpload) {
@@ -185,16 +139,10 @@ function Shipments() {
   // Handle creating a new shipment
   const handleCreateShipment = async (shipmentData: {
     ref: string;
-    status: string;
-    pod: string;
-    consignee: string;
-    vendor: string;
-    po: string;
-    pkg: number;
-    kg: number;
-    vol: number;
-    pickup_date: string | null;
-    note: string;
+    eta: string;
+    etd: string;
+    container_n: string;
+    documents?: File[];
   }) => {
     try {
       console.log('Creating new shipment:', shipmentData);
@@ -227,6 +175,33 @@ function Shipments() {
       setCsvImportModalOpen(false);
     } catch (error) {
       console.error('Error importing CSV:', error);
+      throw error;
+    }
+  };
+
+  // Handle bulk file upload
+  const handleBulkUpload = async (files: File[]) => {
+    try {
+      console.log('Starting bulk upload for', files.length, 'files');
+      
+      // Upload all files to Google Drive without assigning to specific shipments
+      // Note: This uploads to a general "Bulk Documents" folder for later assignment
+      const uploadPromises = files.map(file => 
+        GoogleDriveService.uploadFile(file, 0, undefined) // shipmentId = 0 for bulk uploads
+      );
+      
+      await Promise.all(uploadPromises);
+      console.log('Successfully uploaded', files.length, 'files');
+      
+      // Refresh documents data for all shipments
+      await fetchShipmentData(true);
+      
+      // Trigger refresh of AllShipmentFiles component
+      setDocumentRefreshTrigger(prev => prev + 1);
+      
+      setBulkUploadModalOpen(false);
+    } catch (error) {
+      console.error('Error in bulk upload:', error);
       throw error;
     }
   };
@@ -283,8 +258,7 @@ function Shipments() {
 
   // Handle column changes from column manager
   const handleColumnsChange = () => {
-    // Refresh the columns and shipments data
-    fetchTableColumns();
+    // Refresh the shipments data
     fetchShipmentData(true);
   };
 
@@ -294,23 +268,19 @@ function Shipments() {
     : shipments
   ) => {
     const headers = [
-      'Ref', 'Status', 'POD', 'Vendor', 'PO', 'PKG', 'KG', 'VOL', 'Pickup Date', 'Note', 'Consignee'
+      'Reference',
+      'ETA', 
+      'ETD',
+      'Container Number'
     ];
     
     const csvContent = [
       headers.join(','),
       ...shipmentsToExport.map(shipment => [
         `"${shipment.ref || ''}"`,
-        `"${shipment.status || ''}"`,
-        `"${shipment.pod || ''}"`,
-        `"${shipment.vendor || ''}"`,
-        `"${shipment.po || ''}"`,
-        `"${shipment.pkg || 0}"`,
-        `"${shipment.kg || 0}"`,
-        `"${shipment.vol || 0}"`,
-        `"${shipment.pickup_date || ''}"`,
-        `"${shipment.note || ''}"`,
-        `"${shipment.consignee || ''}"`
+        `"${shipment.eta || ''}"`,
+        `"${shipment.etd || ''}"`,
+        `"${shipment.container_n || ''}"`,
       ].join(','))
     ].join('\\n');
 
@@ -360,12 +330,8 @@ function Shipments() {
   const formatCellValue = (value: any, columnName: string) => {
     if (value === null || value === undefined) return '—';
     
-    if (columnName === 'pickup_date') {
+    if (['eta', 'etd'].includes(columnName)) {
       return formatDate(value);
-    }
-    
-    if (['kg', 'vol'].includes(columnName) && typeof value === 'number') {
-      return value.toLocaleString();
     }
     
     if (typeof value === 'object') {
@@ -376,25 +342,14 @@ function Shipments() {
   };
 
   // Function to get column width and alignment classes
-  const getColumnClasses = (columnName: string) => {
+  const getColumnClasses = (_columnName: string) => {
     const baseClasses = "px-3 py-3 whitespace-nowrap text-xs";
-    
-    if (['pkg', 'kg', 'vol'].includes(columnName)) {
-      return `${baseClasses} text-right`;
-    }
-    
     return `${baseClasses} text-gray-900`;
   };
 
   // Function to get header classes
-  const getHeaderClasses = (columnName: string) => {
-    const baseClasses = "px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider";
-    
-    if (['pkg', 'kg', 'vol'].includes(columnName)) {
-      return `px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider`;
-    }
-    
-    return baseClasses;
+  const getHeaderClasses = (_columnName: string) => {
+    return "px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider";
   };  // Format date strings for display
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return 'N/A';
@@ -411,20 +366,6 @@ function Shipments() {
       });
     } catch (e) {
       return dateStr;
-    }
-  };
-
-  // Get color class for shipping status
-  const getStatusColorClass = (status: string) => {
-    status = status.toLowerCase();
-    if (status.includes('delivered') || status.includes('shipped')) {
-      return 'bg-green-100 text-green-800';
-    } else if (status.includes('transit') || status.includes('pending')) {
-      return 'bg-blue-100 text-blue-800';
-    } else if (status.includes('delay') || status.includes('cancelled')) {
-      return 'bg-red-100 text-red-800';
-    } else {
-      return 'bg-gray-100 text-gray-800';
     }
   };
 
@@ -509,20 +450,19 @@ function Shipments() {
               Delete Selected ({selectedShipments.size})
             </button>
           )}
-
-          <button
-            onClick={() => setCsvImportModalOpen(true)}
-            className="px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 text-gray-700 flex items-center"
-          >
-            <Upload size={14} className="mr-1.5" />
-            Import CSV
-          </button>
           <button
             onClick={() => setAddShipmentModalOpen(true)}
             className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md flex items-center"
           >
             <Plus size={14} className="mr-1.5" />
             Add Shipment
+          </button>
+          <button
+            onClick={() => setBulkUploadModalOpen(true)}
+            className="px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-700 text-white rounded-md flex items-center"
+          >
+            <Upload size={14} className="mr-1.5" />
+            Bulk Upload
           </button>
           <button
             onClick={() => setColumnManagerModalOpen(true)}
@@ -604,6 +544,7 @@ function Shipments() {
                       <input
                         type="checkbox"
                         checked={selectedShipments.has(shipment.id)}
+                        onClick={(e) => e.stopPropagation()}
                         onChange={(e) => {
                           e.stopPropagation();
                           handleSelectShipment(shipment.id, e.target.checked);
@@ -615,40 +556,70 @@ function Shipments() {
                       <td key={columnName} className={`${getColumnClasses(columnName)} ${
                         index < visibleColumns.length - 1 ? 'border-r border-gray-200' : ''
                       }`}>
-                        {columnName === 'status' ? (
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getStatusColorClass(shipment[columnName as keyof Shipment] as string)}`}>
-                            <div className="max-w-[80px] truncate" title={shipment[columnName as keyof Shipment] as string}>
-                              {shipment[columnName as keyof Shipment] as string}
-                            </div>
-                          </span>
-                        ) : columnName === 'ref' ? (
+                        {columnName === 'ref' ? (
                           <div className="max-w-[100px] truncate font-medium" title={formatCellValue(shipment[columnName as keyof Shipment], columnName)}>
                             {formatCellValue(shipment[columnName as keyof Shipment], columnName)}
                           </div>
                         ) : (
-                          <div className={`max-w-[120px] truncate ${['pkg', 'kg', 'vol'].includes(columnName) ? '' : ''}`} title={formatCellValue(shipment[columnName as keyof Shipment], columnName)}>
+                          <div className="max-w-[120px] truncate" title={formatCellValue(shipment[columnName as keyof Shipment], columnName)}>
                             {formatCellValue(shipment[columnName as keyof Shipment], columnName)}
                           </div>
                         )}
                       </td>
                     ))}
-                    <td className="w-16 px-3 py-3 whitespace-nowrap text-xs font-medium">
-                      <div className="flex items-center justify-center">
+                    <td className="w-32 px-3 py-3 whitespace-nowrap text-xs font-medium">
+                      <div className="flex items-center justify-center space-x-1">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             handleUploadClick(shipment.id, shipment.ref);
                           }}
-                          className="text-blue-600 hover:text-blue-900 p-1"
+                          className="text-blue-600 hover:text-blue-900 p-1 rounded"
                           title="Upload Documents"
                         >
                           <Upload className="w-4 h-4" />
                         </button>
+                        
                         {shipmentDocuments[shipment.id]?.length > 0 && (
-                          <span className="text-green-600 flex items-center ml-1">
-                            <FileText className="w-3 h-3" />
-                            <span className="text-xs">{shipmentDocuments[shipment.id].length}</span>
-                          </span>
+                          <div className="relative group">
+                            <button
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-green-600 hover:text-green-900 p-1 rounded flex items-center"
+                              title={`${shipmentDocuments[shipment.id].length} documents`}
+                            >
+                              <FileText className="w-4 h-4" />
+                              <span className="text-xs ml-1">{shipmentDocuments[shipment.id].length}</span>
+                            </button>
+                            
+                            {/* Documents dropdown */}
+                            <div className="absolute right-0 top-8 z-10 w-80 bg-white rounded-lg shadow-lg border border-gray-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
+                              <div className="p-3">
+                                <h4 className="text-sm font-medium text-gray-900 mb-3">Documents</h4>
+                                <div className="space-y-2 max-h-40 overflow-y-auto">
+                                  {shipmentDocuments[shipment.id].map((doc) => (
+                                    <div key={doc.id} className="flex items-center justify-between p-2 bg-gray-50 rounded text-xs">
+                                      <div className="flex items-center flex-1 min-w-0">
+                                        <FileText className="w-3 h-3 text-gray-400 mr-2 flex-shrink-0" />
+                                        <span className="truncate" title={doc.file_name}>
+                                          {doc.file_name}
+                                        </span>
+                                      </div>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleDocumentPreview(doc);
+                                        }}
+                                        className="ml-2 text-blue-600 hover:text-blue-800 p-1"
+                                        title="Preview"
+                                      >
+                                        <Eye className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
                         )}
                       </div>
                     </td>
@@ -668,6 +639,13 @@ function Shipments() {
           )}
         </div>
       )}
+
+      {/* All Shipment Files Component */}
+      <AllShipmentFiles 
+        onRefresh={() => fetchShipmentData(true)}
+        refreshTrigger={documentRefreshTrigger}
+        className="mt-6"
+      />
       
       {/* Upload Documents Modal */}
       {uploadModalOpen && selectedShipmentForUpload && (
@@ -713,6 +691,23 @@ function Shipments() {
         isOpen={columnManagerModalOpen}
         onClose={() => setColumnManagerModalOpen(false)}
         onColumnsChanged={handleColumnsChange}
+      />
+
+      {/* Document Preview Modal */}
+      {selectedDocumentForPreview && (
+        <DocumentPreviewModal
+          isOpen={documentPreviewModalOpen}
+          onClose={handleCloseDocumentPreview}
+          document={selectedDocumentForPreview}
+        />
+      )}
+
+      {/* Bulk Upload Modal */}
+      <BulkUploadModal
+        isOpen={bulkUploadModalOpen}
+        onClose={() => setBulkUploadModalOpen(false)}
+        onUpload={handleBulkUpload}
+        title="Bulk File Upload"
       />
     </div>
   );

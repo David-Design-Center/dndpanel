@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { ShipmentDocument } from '../types';
 
 interface GoogleDriveFile {
   id: string;
@@ -7,17 +8,6 @@ interface GoogleDriveFile {
   size: string;
   webViewLink: string;
   webContentLink: string;
-}
-
-export interface ShipmentDocument {
-  id: string;
-  file_name: string;
-  file_type: string;
-  file_size: number;
-  drive_file_id: string;
-  drive_file_url: string;
-  uploaded_by: string;
-  uploaded_at: string;
 }
 
 export class GoogleDriveService {
@@ -136,7 +126,6 @@ export class GoogleDriveService {
     const createData = await createResponse.json();
     console.log('📁 Folder creation result:', createData);
     return createData.id;
-    return createData.id;
   }
 
   /**
@@ -184,6 +173,7 @@ export class GoogleDriveService {
       // Create document record
       const document: ShipmentDocument = {
         id: crypto.randomUUID(),
+        shipment_id: shipmentId,
         file_name: driveFile.name,
         drive_file_id: driveFile.id,
         drive_file_url: driveFile.webViewLink,
@@ -193,73 +183,57 @@ export class GoogleDriveService {
         uploaded_at: new Date().toISOString(),
       };
 
-      // Get current shipment documents
-      console.log(`📂 Fetching shipment ${shipmentId} for document update...`);
-      const { data: shipment, error: fetchError } = await supabase
-        .from('shipments')
-        .select('documents')
-        .eq('id', shipmentId)
-        .single();
+      // Check if shipment exists (skip for bulk uploads with shipmentId = 0)
+      if (shipmentId > 0) {
+        console.log(`📂 Verifying shipment ${shipmentId} exists...`);
+        const { data: shipment, error: fetchError } = await supabase
+          .from('shipments')
+          .select('id, ref')
+          .eq('id', shipmentId)
+          .single();
 
-      if (fetchError) {
-        console.error('❌ Database fetch error:', fetchError);
-        // If database fetch fails, delete the uploaded file from Drive
-        await this.deleteFileFromDrive(driveFile.id);
-        throw fetchError;
+        if (fetchError) {
+          console.error('❌ Database fetch error:', fetchError);
+          // If database fetch fails, delete the uploaded file from Drive
+          await this.deleteFileFromDrive(driveFile.id);
+          throw fetchError;
+        }
+
+        if (!shipment) {
+          console.error(`❌ Shipment ${shipmentId} not found in database!`);
+          await this.deleteFileFromDrive(driveFile.id);
+          throw new Error(`Shipment ${shipmentId} does not exist`);
+        }
+
+        console.log('✅ Shipment verification successful:', shipment);
+      } else {
+        console.log('📁 Bulk upload mode - skipping shipment verification');
       }
 
-      if (!shipment) {
-        console.error(`❌ Shipment ${shipmentId} not found in database!`);
+      // Save document to the documents table instead of shipments table
+      console.log(`� Saving document to documents table:`, document);
+      const { error: insertError } = await supabase
+        .from('documents')
+        .insert({
+          id: document.id,
+          shipment_id: shipmentId > 0 ? shipmentId : null, // Use null for bulk uploads
+          file_name: document.file_name,
+          drive_file_id: document.drive_file_id,
+          drive_file_url: document.drive_file_url,
+          file_size: document.file_size,
+          file_type: document.file_type,
+          uploaded_by: document.uploaded_by,
+          uploaded_at: document.uploaded_at
+        });
+
+      if (insertError) {
+        console.error('❌ Document insert error:', insertError);
+        // If database insert fails, delete the uploaded file from Drive
         await this.deleteFileFromDrive(driveFile.id);
-        throw new Error(`Shipment ${shipmentId} does not exist`);
+        throw insertError;
       }
 
-      console.log('📄 Current shipment documents:', shipment.documents);
-
-      // Check if this shipment actually exists by doing a separate verification query
-      console.log('🔍 Verifying shipment exists with all fields...');
-      const { data: verifyShipment, error: verifyError } = await supabase
-        .from('shipments')
-        .select('id, ref, consignee, documents')
-        .eq('id', shipmentId)
-        .single();
-      
-      console.log('✅ Shipment verification:', verifyShipment);
-      console.log('❌ Verification error:', verifyError);
-
-      // Add new document to the array
-      const currentDocuments = shipment.documents || [];
-      const updatedDocuments = [...currentDocuments, document];
-
-      console.log(`💾 Updating shipment ${shipmentId} with new document:`, document);
-
-      // Update shipment with new documents array (simplified - only update documents column)
-      const updateResult = await supabase
-        .from('shipments')
-        .update({ 
-          documents: updatedDocuments
-        })
-        .eq('id', shipmentId)
-        .select();
-
-      console.log('📊 Update result:', updateResult);
-
-      if (updateResult.error) {
-        console.error('❌ Database update error:', updateResult.error);
-        // If database update fails, delete the uploaded file from Drive
-        await this.deleteFileFromDrive(driveFile.id);
-        throw updateResult.error;
-      }
-
-      if (!updateResult.data || updateResult.data.length === 0) {
-        console.error('❌ No rows were updated! Check if shipment ID exists:', shipmentId);
-        // If no rows updated, delete the uploaded file from Drive
-        await this.deleteFileFromDrive(driveFile.id);
-        throw new Error(`Shipment ${shipmentId} not found or update failed`);
-      }
-
-      console.log('✅ Database updated successfully. Updated rows:', updateResult.data.length);
-      console.log('📄 Updated shipment data:', updateResult.data[0]);
+      console.log('✅ Document saved successfully to documents table');
       return document;
     } catch (error) {
       console.error('Error uploading file to Google Drive:', error);
@@ -275,23 +249,77 @@ export class GoogleDriveService {
       console.log(`📂 Fetching documents for shipment ${shipmentId}...`);
       
       const { data, error } = await supabase
-        .from('shipments')
-        .select('documents')
-        .eq('id', shipmentId)
-        .single();
+        .from('documents')
+        .select('*')
+        .eq('shipment_id', shipmentId);
 
       if (error) {
-        console.error(`❌ Error fetching shipment ${shipmentId}:`, error);
+        console.error('❌ Error fetching shipment documents:', error);
         throw error;
       }
 
-      console.log(`📄 Documents for shipment ${shipmentId}:`, data?.documents);
-
-      // Return the documents array or empty array if none exist
-      return data?.documents || [];
+      console.log(`📄 Documents for shipment ${shipmentId}:`, data || []);
+      return data || [];
     } catch (error) {
       console.error('Error fetching shipment documents:', error);
-      throw new Error('Failed to fetch shipment documents');
+      return [];
+    }
+  }
+
+  /**
+   * Get all documents (both assigned and unassigned/bulk uploaded)
+   */
+  static async getAllDocuments(): Promise<ShipmentDocument[]> {
+    try {
+      console.log(`📂 Fetching all documents...`);
+      
+      const { data, error } = await supabase
+        .from('documents')
+        .select('*')
+        .order('uploaded_at', { ascending: false });
+
+      if (error) {
+        console.error('❌ Error fetching all documents:', error);
+        throw error;
+      }
+
+      console.log(`📄 Retrieved ${data?.length || 0} total documents:`, data);
+      console.log(`📋 Documents breakdown:`, {
+        total: data?.length || 0,
+        assigned: data?.filter(d => d.shipment_id !== null).length || 0,
+        unassigned: data?.filter(d => d.shipment_id === null).length || 0
+      });
+      
+      return data || [];
+    } catch (error) {
+      console.error('Error fetching all documents:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get unassigned documents (bulk uploaded files)
+   */
+  static async getUnassignedDocuments(): Promise<ShipmentDocument[]> {
+    try {
+      console.log(`📂 Fetching unassigned documents...`);
+      
+      const { data, error } = await supabase
+        .from('documents')
+        .select('*')
+        .is('shipment_id', null)
+        .order('uploaded_at', { ascending: false });
+
+      if (error) {
+        console.error('❌ Error fetching unassigned documents:', error);
+        throw error;
+      }
+
+      console.log(`📄 Retrieved ${data?.length || 0} unassigned documents`);
+      return data || [];
+    } catch (error) {
+      console.error('Error fetching unassigned documents:', error);
+      return [];
     }
   }
 
@@ -316,22 +344,19 @@ export class GoogleDriveService {
   /**
    * Delete a document (both from Drive and database)
    */
-  static async deleteDocument(documentId: string, shipmentId: number): Promise<void> {
+  static async deleteDocument(documentId: string): Promise<void> {
     try {
-      // First, get the shipment to find the document
-      const { data: shipment, error: fetchError } = await supabase
-        .from('shipments')
-        .select('documents')
-        .eq('id', shipmentId)
+      // First, get the document from the documents table using only the document ID
+      const { data: document, error: fetchError } = await supabase
+        .from('documents')
+        .select('*')
+        .eq('id', documentId)
         .single();
 
       if (fetchError) {
         throw fetchError;
       }
 
-      const documents = shipment.documents || [];
-      const document = documents.find((doc: ShipmentDocument) => doc.id === documentId);
-      
       if (!document) {
         throw new Error('Document not found');
       }
@@ -344,20 +369,17 @@ export class GoogleDriveService {
         // Continue with database deletion even if Drive deletion fails
       }
 
-      // Remove document from array and update shipment
-      const updatedDocuments = documents.filter((doc: ShipmentDocument) => doc.id !== documentId);
-      
-      const { error: updateError } = await supabase
-        .from('shipments')
-        .update({ 
-          documents: updatedDocuments,
-          documents_updated_at: new Date().toISOString()
-        })
-        .eq('id', shipmentId);
+      // Delete document from the documents table using only the document ID
+      const { error: deleteError } = await supabase
+        .from('documents')
+        .delete()
+        .eq('id', documentId);
 
-      if (updateError) {
-        throw updateError;
+      if (deleteError) {
+        throw deleteError;
       }
+
+      console.log(`✅ Successfully deleted document: ${document.file_name}`);
     } catch (error) {
       console.error('Error deleting document:', error);
       throw new Error('Failed to delete document');
@@ -387,3 +409,5 @@ export class GoogleDriveService {
     return data.webContentLink;
   }
 }
+export type { ShipmentDocument };
+

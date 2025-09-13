@@ -4,7 +4,7 @@ import { Shipment } from '../types';
 import { fetchShipments, createShipment, importShipments } from '../services/backendApi';
 import { GoogleDriveService, ShipmentDocument } from '../services/googleDriveService';
 import { UploadDocumentsModal } from '../components/ui/upload-documents-modal';
-import { AddShipmentModal } from '../components/ui/add-shipment-modal';
+import { AddShipmentModal } from '../components/ui/add-shipment-modal-new';
 import { CsvImportModal } from '../components/ui/csv-import-modal';
 
 function Shipments() {
@@ -164,39 +164,6 @@ function Shipments() {
     }
   };
 
-  // Format date strings for display
-  const formatDate = (dateStr: string) => {
-    if (!dateStr) return 'N/A';
-    
-    try {
-      const date = new Date(dateStr);
-      if (isNaN(date.getTime())) {
-        return dateStr;
-      }
-      return date.toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      });
-    } catch (e) {
-      return dateStr;
-    }
-  };
-
-  // Get color class for shipping status
-  const getStatusColorClass = (status: string) => {
-    status = status.toLowerCase();
-    if (status.includes('delivered') || status.includes('shipped')) {
-      return 'bg-green-100 text-green-800';
-    } else if (status.includes('transit') || status.includes('pending')) {
-      return 'bg-blue-100 text-blue-800';
-    } else if (status.includes('delay') || status.includes('cancelled')) {
-      return 'bg-red-100 text-red-800';
-    } else {
-      return 'bg-gray-100 text-gray-800';
-    }
-  };
-
   return (
     <div className="fade-in pb-6">
       <div className="flex items-center justify-between mb-4">
@@ -207,13 +174,6 @@ function Shipments() {
           <h1 className="text-2xl font-semibold text-gray-800">Shipment Tracking</h1>
         </div>
         <div className="flex items-center space-x-3">
-          <button
-            onClick={() => setCsvImportModalOpen(true)}
-            className="btn btn-outline flex items-center"
-          >
-            <Upload size={18} className="mr-2" />
-            Import CSV
-          </button>
           <button
             onClick={() => setAddShipmentModalOpen(true)}
             className="btn btn-primary flex items-center"
@@ -275,36 +235,6 @@ function Shipments() {
                     </div>
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Pod
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Consignee
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Vendor
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Po
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    PKG
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Kg
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    VOL
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Pickup Date
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Note
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
@@ -322,42 +252,6 @@ function Shipments() {
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
                       {shipment.ref}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColorClass(shipment.status)}`}>
-                        {shipment.status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                      {shipment.pod}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                      {shipment.consignee}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                      {shipment.vendor}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                      {shipment.po}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                      {shipment.pkg}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                      {shipment.kg?.toLocaleString()}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                      {shipment.vol?.toLocaleString()}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                      {formatDate(shipment.pickup_date)}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-900 max-w-xs truncate">
-                      {shipment.note && (
-                        <span title={shipment.note}>
-                          {shipment.note.length > 50 ? `${shipment.note.substring(0, 50)}...` : shipment.note}
-                        </span>
-                      )}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm font-medium">
                       <div className="flex items-center space-x-2">

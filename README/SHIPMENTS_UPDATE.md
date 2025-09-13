@@ -7,16 +7,6 @@ Updated the shipments page from a collapsible card layout to a modern table form
 
 ### New Column Structure
 - **Ref**: Reference/ritiro_id (same as before)
-- **Status**: Status/giacenza (was shipping_status)
-- **Pod**: Port of Delivery (new)
-- **Consignee**: Consignee (same as before)
-- **Vendor**: Vendor (was shipper)
-- **Po**: Purchase Order (new)
-- **PKG**: Number of Packages (new)
-- **Kg**: Weight in kilograms (new)
-- **VOL**: Volume (new)
-- **Pickup Date**: Pickup Date (was ETD/ETA)
-- **Note**: Notes (was description_of_goods)
 
 ### New Features
 1. **Table Layout**: Clean, sortable table matching the design image
@@ -52,7 +42,7 @@ The system maintains backward compatibility by:
 ### Files Changed
 - `src/types/index.ts` - Updated Shipment interface
 - `src/pages/Shipments.tsx` - Complete rewrite with table layout
-- `src/components/ui/add-shipment-modal.tsx` - Updated for new fields
+- `src/components/ui/add-shipment-modal-new.tsx` - Updated for new fields
 - `src/components/ui/csv-import-modal.tsx` - New CSV import component
 - `src/services/backendApi.ts` - Updated API functions
 - `shipments_structure_migration.sql` - Database migration script
