@@ -453,6 +453,15 @@ function InvoiceGenerator({ orderId: propOrderId, onClose, isModal = false }: In
   
   // Update a payment
   const handlePaymentChange = (index: number, field: keyof typeof invoice.payments[0], value: any) => {
+    // Additional validation for date field to prevent future dates
+    if (field === 'date') {
+      const today = new Date().toISOString().split('T')[0];
+      if (value > today) {
+        console.warn('Attempted to set future payment date, ignoring');
+        return; // Don't update if trying to set future date
+      }
+    }
+    
     setInvoice(prev => ({
       ...prev,
       payments: prev.payments.map((payment, i) => 
@@ -912,6 +921,7 @@ function InvoiceGenerator({ orderId: propOrderId, onClose, isModal = false }: In
               {invoice.payments.length > 0 && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Payment History</label>
+                  <p className="text-xs text-gray-500 mb-2">Note: Payment dates cannot be scheduled in the future</p>
                   <div className="space-y-2">
                     {invoice.payments.map((payment, index) => (
                       <div key={index} className="flex items-center space-x-2 p-2 border border-gray-200 rounded">
@@ -920,7 +930,18 @@ function InvoiceGenerator({ orderId: propOrderId, onClose, isModal = false }: In
                             type="date"
                             className="w-full px-1 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
                             value={payment.date}
-                            onChange={(e) => handlePaymentChange(index, 'date', e.target.value)}
+                            onChange={(e) => {
+                              const selectedDate = e.target.value;
+                              const today = new Date().toISOString().split('T')[0];
+                              
+                              if (selectedDate > today) {
+                                alert('Payment date cannot be in the future. Please select today or an earlier date.');
+                                return;
+                              }
+                              
+                              handlePaymentChange(index, 'date', selectedDate);
+                            }}
+                            max={new Date().toISOString().split('T')[0]} // Prevent future dates in date picker
                           />
                         </div>
                         <div className="w-1/4 relative">
