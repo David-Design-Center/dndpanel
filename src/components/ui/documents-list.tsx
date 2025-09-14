@@ -7,12 +7,14 @@ import { GoogleDriveService } from '../../services/googleDriveService';
 interface DocumentsListProps {
   documents: ShipmentDocument[];
   onDocumentDeleted?: () => void;
+  isAdmin?: boolean; // Admin status for permission control
   className?: string;
 }
 
 export const DocumentsList: React.FC<DocumentsListProps> = ({
   documents,
   onDocumentDeleted,
+  isAdmin = false,
   className = ''
 }) => {
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
@@ -121,18 +123,22 @@ export const DocumentsList: React.FC<DocumentsListProps> = ({
               >
                 <Download className="w-4 h-4" />
               </button>
-              <button
-                onClick={() => handleDelete(doc)}
-                disabled={deletingDocuments.has(doc.id)}
-                className="p-1.5 text-red-600 hover:text-red-800 hover:bg-red-100 rounded-md disabled:opacity-50"
-                title="Delete"
-              >
-                {deletingDocuments.has(doc.id) ? (
-                  <div className="w-4 h-4 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <Trash2 className="w-4 h-4" />
-                )}
-              </button>
+              
+              {/* Only show delete button for admin users */}
+              {isAdmin && (
+                <button
+                  onClick={() => handleDelete(doc)}
+                  disabled={deletingDocuments.has(doc.id)}
+                  className="p-1.5 text-red-600 hover:text-red-800 hover:bg-red-100 rounded-md disabled:opacity-50"
+                  title="Delete"
+                >
+                  {deletingDocuments.has(doc.id) ? (
+                    <div className="w-4 h-4 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <Trash2 className="w-4 h-4" />
+                  )}
+                </button>
+              )}
             </div>
           </div>
         ))}

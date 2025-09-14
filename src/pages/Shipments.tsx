@@ -16,7 +16,10 @@ import { AllShipmentFiles } from '../components/ui/all-shipment-files';
 import { supabase } from '../lib/supabase';
 
 function Shipments() {
-  const { isGmailSignedIn } = useAuth();
+  const { isGmailSignedIn, isAdmin } = useAuth();
+  
+  // Debug admin status
+  console.log('🎯 Shipments page - isAdmin:', isAdmin);
   const navigate = useNavigate();
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [shipmentDocuments, setShipmentDocuments] = useState<Record<number, ShipmentDocument[]>>({});
@@ -31,6 +34,7 @@ function Shipments() {
   const [bulkUploadModalOpen, setBulkUploadModalOpen] = useState(false);
   const [documentRefreshTrigger, setDocumentRefreshTrigger] = useState(0);
   const [selectedShipments, setSelectedShipments] = useState<Set<number>>(new Set());
+  
   const [selectedShipmentForUpload, setSelectedShipmentForUpload] = useState<{ id: number; containerNumber: string } | null>(null);
   const [selectedShipmentForDetails, setSelectedShipmentForDetails] = useState<Shipment | null>(null);
   const [isExitingButtons, setIsExitingButtons] = useState(false);
@@ -418,7 +422,8 @@ function Shipments() {
             Export All
           </button>
           
-          {(selectedShipments.size > 0 || isExitingButtons) && (
+          {/* Export Selected - Admin only */}
+          {isAdmin && (selectedShipments.size > 0 || isExitingButtons) && (
             <button
               onClick={() => exportToCSV(shipments.filter(s => selectedShipments.has(s.id)))}
               className={`px-3 py-1.5 text-sm border border-blue-300 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 flex items-center transition-all duration-300 ${
@@ -433,8 +438,8 @@ function Shipments() {
             </button>
           )}
 
-          {/* Delete Selected */}
-          {(selectedShipments.size > 0 || isExitingButtons) && (
+          {/* Delete Selected - Admin only */}
+          {isAdmin && (selectedShipments.size > 0 || isExitingButtons) && (
             <button
               onClick={handleBulkDelete}
               className={`px-3 py-1.5 text-sm border border-red-300 rounded-md bg-red-50 hover:bg-red-100 text-red-700 flex items-center transition-all duration-300 ${
@@ -450,27 +455,34 @@ function Shipments() {
               Delete Selected ({selectedShipments.size})
             </button>
           )}
-          <button
-            onClick={() => setAddShipmentModalOpen(true)}
-            className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md flex items-center"
-          >
-            <Plus size={14} className="mr-1.5" />
-            Add Shipment
-          </button>
-          <button
-            onClick={() => setBulkUploadModalOpen(true)}
-            className="px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-700 text-white rounded-md flex items-center"
-          >
-            <Upload size={14} className="mr-1.5" />
-            Bulk Upload
-          </button>
-          <button
-            onClick={() => setColumnManagerModalOpen(true)}
-            className="px-3 py-1.5 text-sm bg-gray-600 hover:bg-gray-700 text-white rounded-md flex items-center"
-          >
-            <Settings size={14} className="mr-1.5" />
-            Manage Columns
-          </button>
+          
+          {/* Admin-only buttons */}
+          {isAdmin && (
+            <>
+              <button
+                onClick={() => setAddShipmentModalOpen(true)}
+                className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md flex items-center"
+              >
+                <Plus size={14} className="mr-1.5" />
+                Add Shipment
+              </button>
+              <button
+                onClick={() => setBulkUploadModalOpen(true)}
+                className="px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-700 text-white rounded-md flex items-center"
+              >
+                <Upload size={14} className="mr-1.5" />
+                Bulk Upload
+              </button>
+              <button
+                onClick={() => setColumnManagerModalOpen(true)}
+                className="px-3 py-1.5 text-sm bg-gray-600 hover:bg-gray-700 text-white rounded-md flex items-center"
+              >
+                <Settings size={14} className="mr-1.5" />
+                Manage Columns
+              </button>
+            </>
+          )}
+          
           <button
             onClick={handleRefresh}
             className="px-3 py-1.5 text-sm bg-gray-600 hover:bg-gray-700 text-white rounded-md flex items-center"
@@ -511,12 +523,17 @@ function Shipments() {
               <thead className="bg-gray-50">
                 <tr>
                   <th className="w-8 px-2 py-3 text-left border-r border-gray-200">
-                    <input
-                      type="checkbox"
-                      checked={isAllSelected}
-                      onChange={(e) => handleSelectAll(e.target.checked)}
-                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                    />
+                    {/* Only show select all checkbox for admin users */}
+                    {isAdmin ? (
+                      <input
+                        type="checkbox"
+                        checked={isAllSelected}
+                        onChange={(e) => handleSelectAll(e.target.checked)}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                    ) : (
+                      <div className="w-4 h-4"></div> // Empty space to maintain column width
+                    )}
                   </th>
                   {visibleColumns.map((columnName, index) => (
                     <th key={columnName} className={`${getHeaderClasses(columnName)} ${
@@ -541,16 +558,21 @@ function Shipments() {
                     onClick={() => handleRowClick(shipment)}
                   >
                     <td className="w-8 px-2 py-3 border-r border-gray-200">
-                      <input
-                        type="checkbox"
-                        checked={selectedShipments.has(shipment.id)}
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => {
-                          e.stopPropagation();
-                          handleSelectShipment(shipment.id, e.target.checked);
-                        }}
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
+                      {/* Only show checkbox for admin users */}
+                      {isAdmin ? (
+                        <input
+                          type="checkbox"
+                          checked={selectedShipments.has(shipment.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            handleSelectShipment(shipment.id, e.target.checked);
+                          }}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                      ) : (
+                        <div className="w-4 h-4"></div> // Empty space to maintain column width
+                      )}
                     </td>
                     {visibleColumns.map((columnName, index) => (
                       <td key={columnName} className={`${getColumnClasses(columnName)} ${
@@ -569,16 +591,19 @@ function Shipments() {
                     ))}
                     <td className="w-32 px-3 py-3 whitespace-nowrap text-xs font-medium">
                       <div className="flex items-center justify-center space-x-1">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleUploadClick(shipment.id, shipment.ref);
-                          }}
-                          className="text-blue-600 hover:text-blue-900 p-1 rounded"
-                          title="Upload Documents"
-                        >
-                          <Upload className="w-4 h-4" />
-                        </button>
+                        {/* Only show upload button for admin users */}
+                        {isAdmin && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleUploadClick(shipment.id, shipment.ref);
+                            }}
+                            className="text-blue-600 hover:text-blue-900 p-1 rounded"
+                            title="Upload Documents"
+                          >
+                            <Upload className="w-4 h-4" />
+                          </button>
+                        )}
                         
                         {shipmentDocuments[shipment.id]?.length > 0 && (
                           <div className="relative group">
@@ -629,8 +654,8 @@ function Shipments() {
             </table>
           </div>
           
-          {/* Footer with selected count */}
-          {selectedShipments.size > 0 && (
+          {/* Footer with selected count - Admin only */}
+          {isAdmin && selectedShipments.size > 0 && (
             <div className="bg-gray-50 px-4 py-3 border-t">
               <p className="text-sm text-gray-700">
                 {selectedShipments.size} of {shipments.length} shipment(s) selected
@@ -644,6 +669,7 @@ function Shipments() {
       <AllShipmentFiles 
         onRefresh={() => fetchShipmentData(true)}
         refreshTrigger={documentRefreshTrigger}
+        isAdmin={isAdmin}
         className="mt-6"
       />
       

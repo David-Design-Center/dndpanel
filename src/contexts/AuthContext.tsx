@@ -419,8 +419,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             // profiles is an array, so we need to access the first element
             const profile = Array.isArray(roleData.profiles) ? roleData.profiles[0] : roleData.profiles;
             
+            console.log('🔍 Admin check - Profile data:', profile);
+            console.log('🔍 Admin check - is_admin:', profile.is_admin);
+            console.log('🔍 Admin check - name:', profile.name);
+            console.log('🔍 Admin check - email:', data.user.email);
+            
             // Only David should have admin privileges
             const isUserAdmin = (profile.is_admin || false) && profile.name === 'David';
+            console.log('🔍 Admin check - Final result:', isUserAdmin);
+            
             setIsAdmin(isUserAdmin);
             setUserProfileId(roleData.profile_id);
           }

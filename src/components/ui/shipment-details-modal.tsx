@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, FileText, Package, Truck, Edit2, Save, AlertTriangle } from 'lucide-react';
 import { Shipment, ShipmentDocument } from '../../types';
 import { DocumentsList } from './documents-list';
+import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 
 interface ShipmentDetailsModalProps {
@@ -18,6 +19,9 @@ export function ShipmentDetailsModal({ isOpen, onClose, shipment, documents, onU
   const [editedShipment, setEditedShipment] = useState<Shipment | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // Admin check
+  const { isAdmin } = useAuth();
 
   useEffect(() => {
     if (shipment) {
@@ -98,13 +102,16 @@ export function ShipmentDetailsModal({ isOpen, onClose, shipment, documents, onU
                 </button>
               </>
             ) : (
-              <button
-                onClick={() => setIsEditing(true)}
-                className="px-3 py-1.5 text-sm text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 flex items-center"
-              >
-                <Edit2 className="w-4 h-4 mr-1" />
-                Edit
-              </button>
+              /* Only show Edit button for admin users */
+              isAdmin && (
+                <button
+                  onClick={() => setIsEditing(true)}
+                  className="px-3 py-1.5 text-sm text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 flex items-center"
+                >
+                  <Edit2 className="w-4 h-4 mr-1" />
+                  Edit
+                </button>
+              )
             )}
             <button
               onClick={onClose}
@@ -163,6 +170,7 @@ export function ShipmentDetailsModal({ isOpen, onClose, shipment, documents, onU
               <DocumentsList
                 documents={documents}
                 onDocumentDeleted={onDocumentsUpdate}
+                isAdmin={isAdmin}
               />
             </div>
           </div>

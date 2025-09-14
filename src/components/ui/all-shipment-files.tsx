@@ -7,6 +7,7 @@ import { GoogleDriveService } from '../../services/googleDriveService';
 interface AllShipmentFilesProps {
   onRefresh?: () => void;
   refreshTrigger?: number; // Add this to force refresh from parent
+  isAdmin?: boolean; // Admin status for permission control
   className?: string;
 }
 
@@ -18,6 +19,7 @@ interface DocumentCardProps {
   isDeleting: boolean;
   isSelected: boolean;
   onSelect: (documentId: string, selected: boolean) => void;
+  isAdmin: boolean; // Admin status for permission control
 }
 
 const DocumentCard: React.FC<DocumentCardProps> = ({
@@ -27,7 +29,8 @@ const DocumentCard: React.FC<DocumentCardProps> = ({
   onDelete,
   isDeleting,
   isSelected,
-  onSelect
+  onSelect,
+  isAdmin
 }) => {
   const getFileIcon = (fileType?: string) => {
     if (!fileType) return <FileText className="w-4 h-4 text-gray-500" />;
@@ -69,16 +72,19 @@ const DocumentCard: React.FC<DocumentCardProps> = ({
   const status = getDocumentStatus(doc);
 
   return (
-    <div className={`border rounded-lg p-3 transition-colors ${isSelected ? 'bg-blue-50 border-blue-300' : 'bg-gray-50 hover:bg-gray-100'}`}>
+    <div className={`border rounded-lg p-3 transition-colors ${isSelected && isAdmin ? 'bg-blue-50 border-blue-300' : 'bg-gray-50 hover:bg-gray-100'}`}>
       {/* Selection checkbox and File Header */}
       <div className="flex items-start justify-between mb-2">
         <div className="flex items-center flex-1 min-w-0">
-          <input
-            type="checkbox"
-            checked={isSelected}
-            onChange={(e) => onSelect(doc.id, e.target.checked)}
-            className="mr-2 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-          />
+          {/* Only show checkbox for admin users */}
+          {isAdmin && (
+            <input
+              type="checkbox"
+              checked={isSelected}
+              onChange={(e) => onSelect(doc.id, e.target.checked)}
+              className="mr-2 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+          )}
           {getFileIcon(doc.file_type)}
           <div className="ml-2 flex-1 min-w-0">
             <p className="text-sm font-medium text-gray-900 truncate" title={doc.file_name}>
@@ -121,18 +127,22 @@ const DocumentCard: React.FC<DocumentCardProps> = ({
             <Download className="w-3 h-3" />
           </button>
         </div>
-        <button
-          onClick={() => onDelete(doc)}
-          disabled={isDeleting}
-          className="p-1.5 text-red-600 hover:text-red-800 hover:bg-red-100 rounded disabled:opacity-50"
-          title="Delete"
-        >
-          {isDeleting ? (
-            <div className="w-3 h-3 border border-red-600 border-t-transparent rounded-full animate-spin" />
-          ) : (
-            <Trash2 className="w-3 h-3" />
-          )}
-        </button>
+        
+        {/* Only show delete button for admin users */}
+        {isAdmin && (
+          <button
+            onClick={() => onDelete(doc)}
+            disabled={isDeleting}
+            className="p-1.5 text-red-600 hover:text-red-800 hover:bg-red-100 rounded disabled:opacity-50"
+            title="Delete"
+          >
+            {isDeleting ? (
+              <div className="w-3 h-3 border border-red-600 border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <Trash2 className="w-3 h-3" />
+            )}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -141,6 +151,7 @@ const DocumentCard: React.FC<DocumentCardProps> = ({
 export const AllShipmentFiles: React.FC<AllShipmentFilesProps> = ({
   onRefresh,
   refreshTrigger,
+  isAdmin = false,
   className = ''
 }) => {
   const [allDocuments, setAllDocuments] = useState<ShipmentDocument[]>([]);
@@ -318,15 +329,15 @@ export const AllShipmentFiles: React.FC<AllShipmentFilesProps> = ({
             <span className="ml-2 px-2 py-1 text-xs bg-gray-100 text-gray-600 rounded-full">
               {allDocuments.length} files
             </span>
-            {selectedDocuments.size > 0 && (
+            {selectedDocuments.size > 0 && isAdmin && (
               <span className="ml-2 px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded-full">
                 {selectedDocuments.size} selected
               </span>
             )}
           </div>
           <div className="flex items-center space-x-2">
-            {/* Bulk Actions */}
-            {selectedDocuments.size > 0 && (
+            {/* Bulk Actions - Only for admin */}
+            {selectedDocuments.size > 0 && isAdmin && (
               <>
                 <button
                   onClick={() => setSelectedDocuments(new Set())}
@@ -383,8 +394,8 @@ export const AllShipmentFiles: React.FC<AllShipmentFilesProps> = ({
             </div>
           </div>
           
-          {/* Select All Checkbox */}
-          {allDocuments.length > 0 && (
+          {/* Select All Checkbox - Only for admin */}
+          {allDocuments.length > 0 && isAdmin && (
             <div className="flex items-center">
               <input
                 type="checkbox"
@@ -431,6 +442,7 @@ export const AllShipmentFiles: React.FC<AllShipmentFilesProps> = ({
                         isDeleting={deletingDocuments.has(doc.id)}
                         isSelected={selectedDocuments.has(doc.id)}
                         onSelect={handleSelectDocument}
+                        isAdmin={isAdmin}
                       />
                     ))}
                   </div>
@@ -460,6 +472,7 @@ export const AllShipmentFiles: React.FC<AllShipmentFilesProps> = ({
                         isDeleting={deletingDocuments.has(doc.id)}
                         isSelected={selectedDocuments.has(doc.id)}
                         onSelect={handleSelectDocument}
+                        isAdmin={isAdmin}
                       />
                     ))}
                   </div>

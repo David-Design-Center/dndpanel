@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { Reply, ReplyAll, Forward, Paperclip, ChevronDown } from 'lucide-react';
+import { Reply, ReplyAll, Forward, Paperclip, ChevronDown, Download, Eye, AlertCircle } from 'lucide-react';
 import { format } from 'date-fns';
 import { Email } from '../../../types';
 import { getProfileInitial } from '../../../lib/utils';
 import { cleanEmailAddress } from '../../../utils/emailFormatting';
 import EmailIframe from './EmailIframe';
 import { processEmailContent, makeRowSnippet } from '../../../utils/emailContentProcessing';
+import { getAttachmentDownloadUrl } from '../../../services/emailService';
+import { useAuth } from '../../../contexts/AuthContext';
 
 interface MessageCardProps {
   message: Email;
@@ -85,18 +87,112 @@ function DropdownMenu({
   );
 }
 
-export const OutlookMessageCard: React.FC<MessageCardProps> = ({
-  message,
-  onReply,
-  onReplyAll,
-  onForward,
+export const OutlookMessageCard: React.FC<MessageCardProps> = ({ 
+  message, 
+  onReply, 
+  onReplyAll, 
+  onForward, 
   getSenderColor,
   loading = false,
-  isExpanded = true,
+  isExpanded = false,
   onToggleExpanded
 }) => {
-  const [showQuoted, setShowQuoted] = useState(false);
   const [showSignature, setShowSignature] = useState(false);
+  const [showQuoted, setShowQuoted] = useState(false);
+  const [downloadingAttachments, setDownloadingAttachments] = useState<Set<string>>(new Set());
+  
+  const { user } = useAuth();
+
+  // Helper function to check if file can be previewed
+  const isPreviewable = (mimeType?: string): boolean => {
+    if (!mimeType) return false;
+    const previewableTypes = [
+      'image/',
+      'application/pdf',
+      'text/',
+      'application/json',
+      'application/xml'
+    ];
+    return previewableTypes.some(type => mimeType.startsWith(type));
+  };
+
+  // Handle attachment preview
+  const handleAttachmentPreview = (attachment: any) => {
+    if (!attachment.url) {
+      console.error('No URL available for attachment preview');
+      return;
+    }
+    
+    try {
+      // Open in new tab for preview
+      window.open(attachment.url, '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      console.error('Failed to preview attachment:', error);
+    }
+  };
+
+  // Handle attachment download using Gmail API
+  const handleAttachmentDownload = async (attachment: any) => {
+    if (!attachment.attachmentId || !message.id || !user?.email) {
+      console.error('Missing required data for attachment download:', {
+        attachmentId: attachment.attachmentId,
+        messageId: message.id,
+        userEmail: user?.email
+      });
+      
+      // Fallback to direct URL if available
+      if (attachment.url) {
+        window.open(attachment.url, '_blank', 'noopener,noreferrer');
+      }
+      return;
+    }
+    
+    const attachmentKey = `${message.id}-${attachment.attachmentId}`;
+    setDownloadingAttachments(prev => new Set(prev).add(attachmentKey));
+    
+    try {
+      console.log('📎 Downloading attachment:', attachment.name);
+      
+      const downloadUrl = await getAttachmentDownloadUrl(
+        user.email,
+        message.id,
+        attachment.attachmentId,
+        attachment.name || 'attachment',
+        attachment.mimeType || 'application/octet-stream'
+      );
+      
+      // Create a temporary link element for download
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = attachment.name || 'attachment';
+      link.target = '_blank';
+      link.rel = 'noopener,noreferrer';
+      
+      // Append to body, click, then remove
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      console.log('✅ Attachment download initiated');
+      
+    } catch (error) {
+      console.error('❌ Failed to download attachment:', error);
+      
+      // Fallback to direct URL if available
+      if (attachment.url) {
+        console.log('🔄 Falling back to direct URL');
+        window.open(attachment.url, '_blank', 'noopener,noreferrer');
+      } else {
+        alert('Failed to download attachment. Please try again.');
+      }
+    } finally {
+      setDownloadingAttachments(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(attachmentKey);
+        return newSet;
+      });
+    }
+  };
 
   const fromData = message.from || { email: 'unknown@example.com', name: 'Unknown Sender' };
   const senderEmail = cleanEmailAddress(fromData.email || 'unknown@example.com');
@@ -235,31 +331,68 @@ export const OutlookMessageCard: React.FC<MessageCardProps> = ({
         {/* Attachments */}
         {realAttachments.length > 0 && (
           <div className="mt-3 pt-2 border-t border-gray-100">
-            <div className="text-xs font-medium text-gray-700 mb-1">
+            <div className="text-xs font-medium text-gray-700 mb-2">
               {realAttachments.length} attachment{realAttachments.length > 1 ? 's' : ''}
             </div>
-            <div className="flex flex-wrap gap-1">
-              {realAttachments.map((attachment, index) => (
-                <button
-                  key={index}
-                  className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded transition-colors"
-                  onClick={() => {
-                    if (attachment.url) {
-                      window.open(attachment.url, '_blank', 'noopener,noreferrer');
-                    }
-                  }}
-                >
-                  <Paperclip className="h-3 w-3" />
-                  <span className="truncate max-w-[150px]">
-                    {attachment.name || 'Attachment'}
-                  </span>
-                  {attachment.size && (
-                    <span className="text-gray-500">
-                      ({Math.round(attachment.size / 1024)}KB)
-                    </span>
-                  )}
-                </button>
-              ))}
+            <div className="space-y-2">
+              {realAttachments.map((attachment, index) => {
+                const attachmentKey = `${message.id}-${attachment.attachmentId}`;
+                const isDownloading = downloadingAttachments.has(attachmentKey);
+                
+                return (
+                  <div
+                    key={index}
+                    className="flex items-center justify-between p-2 bg-gray-50 hover:bg-gray-100 rounded-lg border transition-colors"
+                  >
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <Paperclip className="h-4 w-4 text-gray-500 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-gray-900 truncate">
+                          {attachment.name || 'Attachment'}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {attachment.size && `${Math.round(attachment.size / 1024)}KB`}
+                          {attachment.mimeType && ` • ${attachment.mimeType}`}
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center gap-1 ml-2">
+                      {/* Preview button for supported file types */}
+                      {isPreviewable(attachment.mimeType) && attachment.url && (
+                        <button
+                          className="p-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-100 rounded transition-colors"
+                          onClick={() => handleAttachmentPreview(attachment)}
+                          title="Preview attachment"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      
+                      {/* Download button */}
+                      <button
+                        className="p-1.5 text-gray-600 hover:text-gray-700 hover:bg-gray-200 rounded transition-colors disabled:opacity-50"
+                        onClick={() => handleAttachmentDownload(attachment)}
+                        disabled={isDownloading}
+                        title="Download attachment"
+                      >
+                        {isDownloading ? (
+                          <div className="h-3.5 w-3.5 border border-gray-600 border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <Download className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                      
+                      {/* Error indicator if no URL and no attachment ID */}
+                      {!attachment.url && !attachment.attachmentId && (
+                        <div className="p-1.5 text-red-500" title="Attachment not available">
+                          <AlertCircle className="h-3.5 w-3.5" />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
