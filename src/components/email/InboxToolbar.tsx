@@ -63,17 +63,19 @@ function UnderlineTab({
   disabled?: boolean;
   noTruncate?: boolean;
 }) {
+  const isDisabled = disabled || active; // prevent re-click on active tab
   return (
     <button
-      onClick={onClick}
-      disabled={disabled}
+      onClick={isDisabled ? undefined : onClick}
+      disabled={isDisabled}
       role="tab"
       aria-selected={!!active}
+      aria-disabled={isDisabled || undefined}
       className={cn(
         "relative shrink-0 h-7 px-1.5 text-xs font-medium transition-colors",
         "text-gray-500 hover:text-gray-900",
         active && "text-gray-900",
-        disabled && "opacity-50 cursor-not-allowed"
+        isDisabled && "opacity-50 cursor-default"
       )}
     >
       <span className="inline-flex items-center gap-1">
@@ -84,7 +86,6 @@ function UnderlineTab({
           </span>
         ) : null}
       </span>
-      {/* underline */}
       <span
         className={cn(
           "pointer-events-none absolute left-0.5 right-0.5 -bottom-1 h-0.5 rounded transition-colors",

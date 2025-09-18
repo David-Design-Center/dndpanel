@@ -1,9 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   RefreshCw, 
   Search, 
   ChevronDown, 
+  ChevronLeft,
+  ChevronRight,
   Settings, 
   X, 
   Trash2, 
@@ -405,27 +407,69 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   // STEP 1: Critical first paint - minimal calls for instant UI (2 API calls)
       const criticalData = await loadCriticalInboxData();
       
-      // Extract data from optimized structure
+      const now = Date.now();
+      const cutoffMs = now - 24 * 60 * 60 * 1000;
+
       const primaryUnread = criticalData.unreadList.emails;
       const primaryRecent = criticalData.recentList.emails;
-      const inboxUnreadCount = criticalData.inboxUnreadCount;
+
+      const uniqueAllMap = new Map<string, Email>();
+      const uniqueUnreadMap = new Map<string, Email>();
+
+      const addToMaps = (messages: Email[]) => {
+        for (const message of messages) {
+          if (!uniqueAllMap.has(message.id)) {
+            uniqueAllMap.set(message.id, message);
+          }
+          if (!message.isRead && !uniqueUnreadMap.has(message.id)) {
+            uniqueUnreadMap.set(message.id, message);
+          }
+        }
+      };
+
+      addToMaps(primaryRecent);
+      addToMaps(primaryUnread);
+
+      const countUnreadSinceCutoff = (): number => {
+        let count = 0;
+        uniqueUnreadMap.forEach(email => {
+          const receivedAt = email.internalDate ? Number(email.internalDate) : (email.date ? new Date(email.date).getTime() : NaN);
+          if (!Number.isNaN(receivedAt) && receivedAt >= cutoffMs) {
+            count += 1;
+          }
+        });
+        return count;
+      };
+
+      const unreadSinceCutoff = countUnreadSinceCutoff();
       
       // Load labels separately (1 API call)
       const labels = await loadLabelsBasic();
       
       // Show unread emails immediately - this is what users want to see first
-      console.log(`📧 Critical data loaded: ${primaryUnread.length} unread, ${primaryRecent.length} recent, unread count: ${inboxUnreadCount}, ${labels.length} labels`);
+      console.log(`📧 Critical data loaded: ${primaryUnread.length} unread, ${primaryRecent.length} recent, unread last 24h: ${unreadSinceCutoff}, ${labels.length} labels`);
+
+      // Dispatch event to signal unread metadata readiness for recent counts logic
+      try {
+        window.dispatchEvent(new CustomEvent('unread-metadata-ready', { detail: {
+          unreadIds: Array.from(uniqueUnreadMap.keys()),
+          unreadCount: unreadSinceCutoff,
+          inboxUnreadEstimate: unreadSinceCutoff
+        }}));
+      } catch (e) {
+        console.warn('Failed to dispatch unread-metadata-ready event', e);
+      }
       
   // Update UI immediately with critical data - user sees content instantly
       setAllTabEmails(prev => ({
         ...prev,
-        all: primaryRecent,
-        unread: primaryUnread
+        all: Array.from(uniqueAllMap.values()),
+        unread: Array.from(uniqueUnreadMap.values())
       }));
 
       // Update counts immediately using the API's resultSizeEstimate
       setEmailCounts({
-        unread: Math.min(inboxUnreadCount, 99),
+        unread: Math.min(unreadSinceCutoff, 99),
         drafts: 0, // Will be updated in step 2
         trash: 0   // Will be updated in step 2
       });
@@ -437,7 +481,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
 
       // Quick step: replace primary-only with unified inbox (All Mail except Sent/Trash/Spam) for accuracy
       try {
-        const unified = await getAllInboxEmails(true, 25);
+        const unified = await getAllInboxEmails(true, 100);
         setAllTabEmails(prev => ({
           ...prev,
           all: unified.emails || [],
@@ -475,14 +519,14 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
         // Update page tokens and has more flags
         setPageTokens(prev => ({
           ...prev,
-          all: primaryRecent.length === 25 ? 'has-more' : undefined,
+          all: primaryRecent.length === 100 ? 'has-more' : undefined,
           sent: sent.length === 15 ? 'has-more' : undefined,
           important: important.length === 15 ? 'has-more' : undefined
         }));
 
         setHasMoreForTabs(prev => ({
           ...prev,
-          all: primaryRecent.length === 25,
+          all: primaryRecent.length === 100,
           unread: primaryUnread.length >= 10,
           sent: sent.length === 15,
           drafts: drafts.length > 10,
@@ -696,34 +740,12 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     try {
       setLoadingMore(true);
 
-      if (tabType === 'all') {
-        // Load more inbox emails
-        const pageToken = pageTokens.all;
-  const response = await getAllInboxEmails(false, 20, pageToken);
+      if (tabType === 'all' || tabType === 'unread') {
+        // Load more inbox emails (shared for all/unread tabs)
+        const pageToken = pageTokens.all === 'has-more' ? undefined : pageTokens.all;
+        const response = await getAllInboxEmails(false, 100, pageToken);
         const newEmails = response.emails || [];
-        
-        setAllTabEmails(prev => ({
-          ...prev,
-          all: [...prev.all, ...newEmails],
-          unread: [...prev.unread, ...newEmails.filter(email => !email.isRead)]
-        }));
 
-        setPageTokens(prev => ({
-          ...prev,
-          all: response.nextPageToken
-        }));
-
-        setHasMoreForTabs(prev => ({
-          ...prev,
-          all: !!response.nextPageToken,
-          unread: !!response.nextPageToken
-        }));
-      } else if (tabType === 'unread') {
-        // Unread tab is filtered from "all", so load more from "all" and filter
-        const pageToken = pageTokens.all;
-  const response = await getAllInboxEmails(false, 20, pageToken);
-        const newEmails = response.emails || [];
-        
         setAllTabEmails(prev => ({
           ...prev,
           all: [...prev.all, ...newEmails],
@@ -1174,6 +1196,11 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
 
   // Fallback: when activeTab changes to sent/drafts and list is still empty after initial attempts, force a fetch
   useEffect(() => {
+    // Throttle repeated empty-drafts fallback fetches
+    const lastDraftFetchRef = (EmailPageLayout as any)._lastDraftFallbackRef || { current: 0 };
+    if (!(EmailPageLayout as any)._lastDraftFallbackRef) {
+      (EmailPageLayout as any)._lastDraftFallbackRef = lastDraftFetchRef;
+    }
     const run = async () => {
       if (pageType !== 'inbox' || labelName) return;
       if (activeTab === 'sent' && allTabEmails.sent.length === 0 && !tabLoading) {
@@ -1188,6 +1215,11 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
         }
       }
       if (activeTab === 'drafts' && allTabEmails.drafts.length === 0 && !tabLoading) {
+        const now = Date.now();
+        if (now - lastDraftFetchRef.current < 15000) { // 15s cooldown
+          return; // prevent rapid loop
+        }
+        lastDraftFetchRef.current = now;
         setTabLoading('drafts');
         try {
           const draftList = await getDraftEmails(true);
@@ -1220,12 +1252,9 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     
     const emailIds = Array.from(selectedEmails);
     const emailCount = emailIds.length;
-    
+    const loadingToastId = toast.loading(`Deleting ${emailCount} email${emailCount > 1 ? 's' : ''}...`);
+
     try {
-      // Show loading toast
-      toast.loading(`Deleting ${emailCount} email${emailCount > 1 ? 's' : ''}...`, {
-        duration: 2000
-      });
 
       // Delete all selected emails
       await Promise.all(emailIds.map(emailId => deleteEmail(emailId)));
@@ -1270,7 +1299,8 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       // Show success toast
       toast.success(`${emailCount} email${emailCount > 1 ? 's' : ''} deleted`, {
         description: `Moved to trash successfully`,
-        duration: 4000
+        duration: 4000,
+        id: loadingToastId
       });
       
     } catch (error) {
@@ -1279,7 +1309,8 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       // Show error toast
       toast.error('Failed to delete emails', {
         description: 'Please try again or check your connection',
-        duration: 4000
+        duration: 4000,
+        id: loadingToastId
       });
     }
   };
@@ -1289,12 +1320,9 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
 
     const emailIds = Array.from(selectedEmails);
     const emailCount = emailIds.length;
+    const loadingToastId = toast.loading(`Archiving ${emailCount} email${emailCount > 1 ? 's' : ''}...`);
 
     try {
-      // Show loading toast
-      toast.loading(`Archiving ${emailCount} email${emailCount > 1 ? 's' : ''}...`, {
-        duration: 2000
-      });
 
       // Archive all selected emails using Gmail API
       // For now, we'll simulate this by adding archive label and removing inbox
@@ -1349,7 +1377,8 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       // Show success toast
       toast.success(`${emailCount} email${emailCount > 1 ? 's' : ''} archived`, {
         description: `Moved to archive successfully`,
-        duration: 4000
+        duration: 4000,
+        id: loadingToastId
       });
 
     } catch (error) {
@@ -1358,7 +1387,8 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       // Show error toast
       toast.error('Failed to archive emails', {
         description: 'Please try again or check your connection',
-        duration: 4000
+        duration: 4000,
+        id: loadingToastId
       });
     }
   };
@@ -1368,12 +1398,9 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
 
     const emailIds = Array.from(selectedEmails);
     const emailCount = emailIds.length;
+    const loadingToastId = toast.loading(`Marking ${emailCount} email${emailCount > 1 ? 's' : ''} as read...`);
 
     try {
-      // Show loading toast
-      toast.loading(`Marking ${emailCount} email${emailCount > 1 ? 's' : ''} as read...`, {
-        duration: 2000
-      });
 
       // Mark all selected emails as read
       await Promise.all(emailIds.map(emailId => markAsRead(emailId)));
@@ -1420,7 +1447,8 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
 
       // Show success toast
       toast.success(`${emailCount} email${emailCount > 1 ? 's' : ''} marked as read`, {
-        duration: 4000
+        duration: 4000,
+        id: loadingToastId
       });
 
     } catch (error) {
@@ -1429,7 +1457,8 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       // Show error toast
       toast.error('Failed to mark emails as read', {
         description: 'Please try again or check your connection',
-        duration: 4000
+        duration: 4000,
+        id: loadingToastId
       });
     }
   };
@@ -1439,12 +1468,9 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
 
     const emailIds = Array.from(selectedEmails);
     const emailCount = emailIds.length;
+    const loadingToastId = toast.loading(`Marking ${emailCount} email${emailCount > 1 ? 's' : ''} as unread...`);
 
     try {
-      // Show loading toast
-      toast.loading(`Marking ${emailCount} email${emailCount > 1 ? 's' : ''} as unread...`, {
-        duration: 2000
-      });
 
       // Mark all selected emails as unread
       await Promise.all(emailIds.map(emailId => markAsUnread(emailId)));
@@ -1494,7 +1520,8 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
 
       // Show success toast
       toast.success(`${emailCount} email${emailCount > 1 ? 's' : ''} marked as unread`, {
-        duration: 4000
+        duration: 4000,
+        id: loadingToastId
       });
 
     } catch (error) {
@@ -1503,7 +1530,8 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       // Show error toast
       toast.error('Failed to mark emails as unread', {
         description: 'Please try again or check your connection',
-        duration: 4000
+        duration: 4000,
+        id: loadingToastId
       });
     }
   };
@@ -1553,10 +1581,39 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   // Focused mode toggle removed (feature disabled)
 
   // Pagination settings & state for toolbar chevrons
-  const PAGE_SIZE = 50;
+  const PAGE_SIZE = 25;
   const [pageIndex, setPageIndex] = useState(0);
 
   // Old handleLoadMore removed; pagination now via toolbar chevrons fetching more when needed.
+
+  const lastUnread24hRef = useRef<number>(-1);
+
+  const getEmailTimestampMs = useCallback((email: Email): number => {
+    const internal = (email as any)?.internalDate;
+    if (internal != null) {
+      const numeric = typeof internal === 'string' ? Number.parseInt(internal, 10) : Number(internal);
+      if (!Number.isNaN(numeric)) return numeric;
+    }
+    if (email.date) {
+      const parsed = new Date(email.date).getTime();
+      if (!Number.isNaN(parsed)) return parsed;
+    }
+    return NaN;
+  }, []);
+
+  const supportsCategoryTabs = CATEGORIES_ENABLED && ['all', 'archive', 'spam', 'trash'].includes(activeTab);
+  const folderContextForTab: 'all' | 'archive' | 'spam' | 'trash' = (() => {
+    switch (activeTab) {
+      case 'archive':
+        return 'archive';
+      case 'spam':
+        return 'spam';
+      case 'trash':
+        return 'trash';
+      default:
+        return 'all';
+    }
+  })();
 
   // Get current emails based on active tab and category selection
   const getCurrentEmails = (): Email[] => {
@@ -1565,25 +1622,9 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       return emails;
     }
 
-    // Determine which folder context we're in based on activeTab
-    let folderContext: 'all' | 'archive' | 'spam' | 'trash';
-    switch (activeTab) {
-      case 'archive':
-        folderContext = 'archive';
-        break;
-      case 'spam':
-        folderContext = 'spam';
-        break;
-      case 'trash':
-        folderContext = 'trash';
-        break;
-      default:
-        folderContext = 'all'; // inbox context
-        break;
-    }
+    const folderContext = folderContextForTab;
 
     // For category-enabled tabs (all/inbox, archive, spam, trash), show category emails if available
-  const supportsCategoryTabs = CATEGORIES_ENABLED && ['all', 'archive', 'spam', 'trash'].includes(activeTab);
     
     let currentEmails: Email[] = [];
     if (supportsCategoryTabs && categoryEmails[folderContext][activeCategory]?.length > 0) {
@@ -1624,7 +1665,96 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   useEffect(() => {
     if (pageIndex > maxPageIndex) setPageIndex(maxPageIndex);
   }, [pageIndex, maxPageIndex]);
+
+  useEffect(() => {
+    setPageIndex(0);
+  }, [pageType, labelName, activeTab, activeFilters.unread, activeFilters.attachments, activeFilters.starred, searchQuery, activeCategory]);
+
   const visibleEmails = baseVisible.slice(pageIndex * PAGE_SIZE, (pageIndex + 1) * PAGE_SIZE);
+
+  const isInboxContext = pageType === 'inbox' && !labelName;
+  const inboxTabHasMore = hasMoreForTabs[activeTab] || false;
+  const categoryHasMore = supportsCategoryTabs ? !!hasMoreCategoryEmails[folderContextForTab]?.[activeCategory] : false;
+  const currentHasMore = isInboxContext
+    ? (supportsCategoryTabs ? categoryHasMore : inboxTabHasMore)
+    : (labelName ? hasMoreEmails : false);
+  const hasNextLoaded = (pageIndex + 1) * PAGE_SIZE < totalLoadedEmails;
+  const canGoNext = hasNextLoaded || currentHasMore;
+  const canGoPrev = pageIndex > 0;
+  const rangeStart = totalLoadedEmails === 0 ? 0 : pageIndex * PAGE_SIZE + 1;
+  const rangeEnd = totalLoadedEmails === 0 ? 0 : Math.min(totalLoadedEmails, (pageIndex + 1) * PAGE_SIZE);
+  const totalDisplay = currentHasMore ? `${totalLoadedEmails}+` : `${totalLoadedEmails}`;
+  const disablePrev = !canGoPrev || loadingMore || !!tabLoading;
+  const disableNext = !canGoNext || loadingMore || !!tabLoading;
+
+  useEffect(() => {
+    if (!isInboxContext) return;
+
+    const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
+    const seenIds = new Set<string>();
+    let count = 0;
+
+    for (const email of allTabEmails.all) {
+      if (!email || !email.id) continue;
+      if (seenIds.has(email.id)) continue;
+      seenIds.add(email.id);
+      if (email.isRead) continue;
+      const timestamp = getEmailTimestampMs(email);
+      if (!Number.isNaN(timestamp) && timestamp >= cutoffMs) {
+        count += 1;
+      }
+    }
+
+    const limitedCount = Math.min(count, 99);
+
+    setEmailCounts(prev => {
+      if (prev.unread === limitedCount) return prev;
+      return { ...prev, unread: limitedCount };
+    });
+
+    if (lastUnread24hRef.current !== count) {
+      lastUnread24hRef.current = count;
+      try {
+        window.dispatchEvent(new CustomEvent('inbox-unread-24h', {
+          detail: {
+            count,
+            overLimit: count > 99
+          }
+        }));
+      } catch (error) {
+        console.warn('Failed to broadcast inbox-unread-24h event', error);
+      }
+    }
+  }, [allTabEmails.all, getEmailTimestampMs, isInboxContext]);
+
+  const handlePrevPage = () => {
+    setPageIndex(prev => (prev > 0 ? prev - 1 : prev));
+  };
+
+  const handleNextPage = async () => {
+    if (!canGoNext || loadingMore || tabLoading) return;
+    const nextIndex = pageIndex + 1;
+    const needsFetch = totalLoadedEmails <= nextIndex * PAGE_SIZE && currentHasMore;
+
+    if (needsFetch) {
+      try {
+        if (isInboxContext) {
+          if (supportsCategoryTabs) {
+            await loadMoreCategoryEmails(activeCategory, folderContextForTab);
+          } else {
+            await loadMoreForTab(activeTab);
+          }
+        } else if (labelName) {
+          await fetchLabelEmails(false, true);
+        }
+      } catch (error) {
+        console.error('Failed to load next page', error);
+        return;
+      }
+    }
+
+    setPageIndex(nextIndex);
+  };
 
   // Loading overlay conditions: when current tab has no items yet and a fetch is in flight
   const currentListEmpty = (pageType === 'inbox' && !labelName)
@@ -2332,29 +2462,60 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
             {/* Filter Chips (no categories, no Focused/Other) */}
             {pageType === 'inbox' && !labelName && (
               <div className="flex-shrink-0 border-b border-gray-200 px-4 py-3">
-                <div className="flex items-center space-x-2">
-                  <button
-                    onClick={() => toggleFilter('unread')}
-                    className={`flex items-center space-x-1 px-3 py-1.5 text-xs font-medium rounded-full border transition-colors ${
-                      activeFilters.unread
-                        ? 'bg-blue-100 text-blue-800 border-blue-300'
-                        : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
-                    }`}
-                  >
-                    <Mail size={12} />
-                    <span>Unread</span>
-                  </button>
-                  <button
-                    onClick={() => toggleFilter('attachments')}
-                    className={`flex items-center space-x-1 px-3 py-1.5 text-xs font-medium rounded-full border transition-colors ${
-                      activeFilters.attachments
-                        ? 'bg-green-100 text-green-800 border-green-300'
-                        : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
-                    }`}
-                  >
-                    <Paperclip size={12} />
-                    <span>Attachments</span>
-                  </button>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => toggleFilter('unread')}
+                      className={`flex items-center space-x-1 px-3 py-1.5 text-xs font-medium rounded-full border transition-colors ${
+                        activeFilters.unread
+                          ? 'bg-blue-100 text-blue-800 border-blue-300'
+                          : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      <Mail size={12} />
+                      <span>Unread</span>
+                    </button>
+                    <button
+                      onClick={() => toggleFilter('attachments')}
+                      className={`flex items-center space-x-1 px-3 py-1.5 text-xs font-medium rounded-full border transition-colors ${
+                        activeFilters.attachments
+                          ? 'bg-green-100 text-green-800 border-green-300'
+                          : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      <Paperclip size={12} />
+                      <span>Attachments</span>
+                    </button>
+                  </div>
+                  <div className="flex items-center space-x-3 text-xs text-gray-600">
+                    <span>
+                      {totalLoadedEmails === 0 ? '0-0 of 0' : `${rangeStart}-${rangeEnd} of ${totalDisplay}`}
+                    </span>
+                    <div className="flex items-center space-x-1">
+                      <button
+                        type="button"
+                        onClick={handlePrevPage}
+                        disabled={disablePrev}
+                        className={`p-1.5 rounded-full border border-gray-300 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors ${
+                          disablePrev ? 'opacity-40 cursor-not-allowed' : ''
+                        }`}
+                        aria-label="Previous page"
+                      >
+                        <ChevronLeft size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { void handleNextPage(); }}
+                        disabled={disableNext}
+                        className={`p-1.5 rounded-full border border-gray-300 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors ${
+                          disableNext ? 'opacity-40 cursor-not-allowed' : ''
+                        }`}
+                        aria-label="Next page"
+                      >
+                        <ChevronRight size={14} />
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}

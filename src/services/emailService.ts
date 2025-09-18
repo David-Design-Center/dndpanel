@@ -511,7 +511,7 @@ export const getUnreadEmails = async (forceRefresh = false): Promise<Email[]> =>
 
 export const getPrimaryEmails = async (
   forceRefresh = false, 
-  maxResults = 10, 
+  maxResults = 100, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
   return getEmailsByLabelIds(['INBOX'], forceRefresh, maxResults, pageToken);
@@ -543,7 +543,7 @@ export const getForumsEmails = async (
 
 export const getAllInboxEmails = async (
   forceRefresh = false, 
-  maxResults = 10, 
+  maxResults = 100, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
   // Unified inbox: include everything except Sent and Trash
@@ -553,7 +553,7 @@ export const getAllInboxEmails = async (
 
 export const getSentEmails = async (
   forceRefresh = false, 
-  maxResults = 20, 
+  maxResults = 100, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
   // Use labelIds for sent emails
@@ -703,7 +703,7 @@ export const getAllMailEmails = async (
 const getEmailsByLabelIds = async (
   labelIds: string[], 
   _forceRefresh = false, 
-  maxResults = 20, 
+  maxResults = 100, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
   try {
@@ -1096,6 +1096,14 @@ export const sendEmail = async (
 
 export const markAsRead = async (id: string): Promise<{success: boolean}> => {
   try {
+    // Capture pre-change state for optimistic adjustments
+    let wasUnreadAndRecent = false;
+    const cached = emailCache.details[id]?.email || emailCache.list?.emails.find(e => e.id === id);
+    if (cached) {
+      const dateMs = cached.date ? Date.parse(cached.date) : 0;
+      const isRecent = dateMs > 0 && (Date.now() - dateMs) < 24 * 60 * 60 * 1000;
+      wasUnreadAndRecent = !cached.isRead && isRecent && !!cached.labelIds?.includes('INBOX');
+    }
     // Try to mark as read via Gmail API first
     await markGmailMessageAsRead(id);
     
@@ -1110,6 +1118,11 @@ export const markAsRead = async (id: string): Promise<{success: boolean}> => {
       if (email) {
         email.isRead = true;
       }
+    }
+
+    // Optimistic decrement if eligible
+    if (wasUnreadAndRecent) {
+      window.dispatchEvent(new CustomEvent('recent-counts-adjust', { detail: { inboxUnread24hDelta: -1 } }));
     }
     
     return { success: true };
@@ -1189,6 +1202,15 @@ export const markEmailAsRead = async (messageId: string): Promise<void> => {
  */
 export const markAsUnread = async (id: string): Promise<{success: boolean}> => {
   try {
+    // Capture pre-change state for optimistic adjustments
+    let willBeUnreadAndRecent = false;
+    const cached = emailCache.details[id]?.email || emailCache.list?.emails.find(e => e.id === id);
+    if (cached) {
+      const dateMs = cached.date ? Date.parse(cached.date) : 0;
+      const isRecent = dateMs > 0 && (Date.now() - dateMs) < 24 * 60 * 60 * 1000;
+      // If currently read and will become unread
+      willBeUnreadAndRecent = cached.isRead && isRecent && !!cached.labelIds?.includes('INBOX');
+    }
     // Try to mark as unread via Gmail API first
     await markGmailMessageAsUnread(id);
     
@@ -1203,6 +1225,10 @@ export const markAsUnread = async (id: string): Promise<{success: boolean}> => {
       if (email) {
         email.isRead = false;
       }
+    }
+
+    if (willBeUnreadAndRecent) {
+      window.dispatchEvent(new CustomEvent('recent-counts-adjust', { detail: { inboxUnread24hDelta: 1 } }));
     }
     
     return { success: true };

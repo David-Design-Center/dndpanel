@@ -78,7 +78,7 @@ async function dedupeRequest<T>(
  */
 async function fetchMessagesByLabelIds(
   labelIds: string[],
-  maxResults: number = 25
+  maxResults: number = 100
 ): Promise<PaginatedEmailResponse> {
   // Validate label IDs to prevent 400 errors
   validateLabelIds(labelIds);
@@ -296,10 +296,10 @@ export async function loadCriticalInboxData(): Promise<CriticalInboxData> {
     // Parallel fetch of message lists (IDs only)
     const [unreadResponse, recentResponse] = await Promise.all([
       // ✅ Primary unread emails using correct CATEGORY_PERSONAL label
-      fetchMessagesByLabelIds([GMAIL_SYSTEM_LABELS.INBOX, GMAIL_SYSTEM_LABELS.CATEGORY.PRIMARY, GMAIL_SYSTEM_LABELS.UNREAD], 25),
+      fetchMessagesByLabelIds([GMAIL_SYSTEM_LABELS.INBOX, GMAIL_SYSTEM_LABELS.CATEGORY.PRIMARY, GMAIL_SYSTEM_LABELS.UNREAD], 100),
       
       // ✅ Recent primary emails using correct CATEGORY_PERSONAL label  
-      fetchMessagesByLabelIds([GMAIL_SYSTEM_LABELS.INBOX, GMAIL_SYSTEM_LABELS.CATEGORY.PRIMARY], 25)
+      fetchMessagesByLabelIds([GMAIL_SYSTEM_LABELS.INBOX, GMAIL_SYSTEM_LABELS.CATEGORY.PRIMARY], 100)
     ]);
 
     // Extract IDs from both lists

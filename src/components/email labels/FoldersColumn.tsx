@@ -69,7 +69,9 @@ interface FoldersColumnProps {
 }
 
 function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) {
-  const { labels, loadingLabels, deleteLabel, addLabel, isAddingLabel, systemCounts } = useLabel();
+  const { labels, loadingLabels, deleteLabel, addLabel, isAddingLabel, systemCounts, recentCounts } = useLabel();
+  // recentCounts.inboxUnreadToday -> unread INBOX messages received since today's New York midnight
+  // recentCounts.draftTotal -> total number of drafts (exact)
   const { onSystemFolderFilter } = useFoldersColumn();
   const { isGmailSignedIn } = useAuth();
   const { toast } = useToast();
@@ -80,7 +82,8 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
   const [nestUnder, setNestUnder] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   // Highlight selected system folder (visual state only)
-  const [selectedSystemFolder, setSelectedSystemFolder] = useState<string | null>(null);
+  // Default to 'inbox' so the Inbox button starts in an active/disabled state
+  const [selectedSystemFolder, setSelectedSystemFolder] = useState<string | null>('inbox');
   const navigate = useNavigate();
 
   // Build hierarchical tree structure from flat labels
@@ -227,7 +230,7 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
 
   // System folders configuration
   const systemFolders = useMemo(() => {
-    console.log('useMemo systemFolders - systemCounts:', systemCounts);
+  console.log('useMemo systemFolders - systemCounts:', systemCounts, 'recentCounts:', recentCounts);
     const systemFolderConfig = [
       { name: 'Inbox', icon: Inbox, folderType: 'inbox' },
       { name: 'Sent', icon: SendHorizontal, folderType: 'sent' },
@@ -251,6 +254,7 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
 
       // Use scanned unread counts for dynamic updates
       let unreadCount = 0;
+      let overLimit = false;
       
       // Map folder names to Gmail system label IDs used in scanning
       const systemLabelIdMap: Record<string, string> = {
@@ -264,9 +268,15 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
       
       const systemLabelId = systemLabelIdMap[folder.name];
       if (systemLabelId) {
-        unreadCount = systemCounts[systemLabelId] || 0;
+        // For Inbox we now use recent 24h unread count, fallback to static if missing
+        if (systemLabelId === 'INBOX') {
+          unreadCount = (recentCounts.inboxUnreadToday ?? systemCounts[systemLabelId]) || 0;
+          overLimit = recentCounts.inboxUnreadOverLimit;
+        } else {
+          unreadCount = systemCounts[systemLabelId] || 0;
+        }
       }
-      
+
       // Debug logging
       if (folder.name === 'Inbox') {
         console.log('Inbox unread count:', unreadCount, 'systemCounts:', systemCounts);
@@ -275,11 +285,16 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
       return {
         ...folder,
         unreadCount,
-        totalCount: matchingLabel?.messagesTotal || 0,
+        overLimit,
+        totalCount: folder.name === 'Drafts'
+          ? ((recentCounts.draftTotal ?? matchingLabel?.messagesTotal) || 0)
+          : (matchingLabel?.messagesTotal || 0),
         color: selectedSystemFolder === folder.folderType ? '#424242' : '#8f8f8fff'
       };
     });
-  }, [labels, systemCounts, selectedSystemFolder]); // Use systemCounts from labels
+  }, [labels, systemCounts, selectedSystemFolder, recentCounts]); // include recentCounts
+
+  // (Removed explicit refresh effect to avoid duplicate rapid refresh loops; context handles initial load)
 
   // Auto-expand all folders when labelTree changes
   useEffect(() => {
@@ -631,17 +646,20 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
                     <div className="space-y-1">
                       {systemFolders.map((folder) => {
                         const IconComponent = folder.icon;
+                        const isActive = selectedSystemFolder === folder.folderType;
                         return (
                           <button
                             key={folder.name}
-                            onClick={() => handleSystemFolderClick(folder.folderType)}
-                            className="w-full flex items-center justify-between px-2 py-1.5 text-sm hover:bg-gray-100 rounded-md transition-colors group"
+                            onClick={isActive ? undefined : () => handleSystemFolderClick(folder.folderType)}
+                            disabled={isActive}
+                            className={`w-full flex items-center justify-between px-2 py-1.5 text-sm rounded-md transition-colors group ${isActive ? 'bg-gray-200 cursor-default' : 'hover:bg-gray-100'}`}
+                            aria-disabled={isActive || undefined}
                           >
                             <div className="flex items-center space-x-2 min-w-0 flex-1">
                               <IconComponent
                                 size={18}
                                 className={`flex-shrink-0 transition-transform duration-200 group-hover:-rotate-12`}
-                                style={{ color: folder.color }}
+                                style={{ color: folder.color, opacity: isActive ? 0.8 : 1 }}
                               />
                               <span className="text-gray-700 truncate">{folder.name}</span>
                             </div>
@@ -655,8 +673,14 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
                             {(() => {
                               const isInbox = folder.name === 'Inbox';
                               const isDrafts = folder.name === 'Drafts';
-                              const isSent = folder.name === 'Sent';
-                              if (isSent) return null; // no badge for Sent
+                              if (isInbox) {
+                                const displayUnread = folder.unreadCount || 0;
+                                return (
+                                  <div className="bg-gray-100 text-gray-600 text-xs px-1.5 py-0.5 rounded-full min-w-[18px] text-center flex-shrink-0 ml-2 font-medium">
+                                    {folder.overLimit ? '99+' : (displayUnread > 99 ? '99+' : displayUnread)}
+                                  </div>
+                                );
+                              }
                               if (isDrafts) {
                                 const total = folder.totalCount || 0;
                                 if (total <= 0) return null;
@@ -666,15 +690,7 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
                                   </div>
                                 );
                               }
-                              const unread = folder.unreadCount || 0;
-                              if (isInbox || unread > 0) {
-                                return (
-                                  <div className="bg-gray-100 text-gray-600 text-xs px-1.5 py-0.5 rounded-full min-w-[18px] text-center flex-shrink-0 ml-2 font-medium">
-                                    {unread > 99 ? '99+' : unread}
-                                  </div>
-                                );
-                              }
-                              return null;
+                              return null; // suppress all others (Trash, Spam, Starred, etc.)
                             })()}
                           </button>
                         );
