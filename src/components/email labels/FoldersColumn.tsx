@@ -17,6 +17,7 @@ import {
   Trash,
   MailX,
   SquarePen,
+  Flag,
   Star,
   MailPlus
 } from 'lucide-react';
@@ -43,6 +44,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useToast } from '@/components/ui/use-toast';
 import { TreeView, TreeNode } from '@/components/ui/tree-view';
 import { useLabel } from '../../contexts/LabelContext';
@@ -53,13 +55,27 @@ import { GmailLabel } from '../../types';
 
 interface NestedLabel {
   id: string;
-  name: string;
+  name: string; // Normalized label path used for local lookups (INBOX/ prefix removed)
+  gmailName: string; // Canonical Gmail label name (exact value returned by the API)
   displayName: string;
   fullPath: string;
   children: NestedLabel[];
   messagesUnread?: number;
   isLeaf: boolean;
   labelObj?: GmailLabel | null;
+}
+
+interface LabelTreeNode {
+  name: string;
+  fullPath: string;
+  fullName: string;
+  labelObj: GmailLabel | null;
+  children: Map<string, LabelTreeNode>;
+  isFolder: boolean;
+  isLeaf: boolean;
+  id: string;
+  messagesUnread: number;
+  gmailName?: string;
 }
 
 interface FoldersColumnProps {
@@ -117,19 +133,18 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
     const processedLabels = userLabels
       .filter(label => label.name.toLowerCase() !== 'inbox') // Remove direct INBOX
       .map(label => {
-        // If label starts with "INBOX/", remove the INBOX/ prefix
-        if (label.name.startsWith('INBOX/')) {
-          return {
-            ...label,
-            name: label.name.substring(6) // Remove "INBOX/" prefix
-          };
-        }
-        return label;
+        const normalizedName = label.name.startsWith('INBOX/')
+          ? label.name.substring(6)
+          : label.name;
+        return {
+          label,
+          normalizedName,
+        };
       })
-      .filter(label => label.name.length > 0); // Remove any empty names
+      .filter(item => item.normalizedName.length > 0); // Remove any empty names
 
     // Step 1: Identify all parent paths dynamically
-    const allNames = processedLabels.map(l => l.name);
+    const allNames = processedLabels.map(l => l.normalizedName);
     const parentNames = new Set<string>();
     
     for (const fullName of allNames) {
@@ -140,11 +155,22 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
       }
     }
 
-    const root = { children: new Map(), messagesUnread: 0, labelObj: null as GmailLabel | null, id: '' };
+    const root: LabelTreeNode = {
+      name: '',
+      fullPath: '',
+      fullName: '',
+      labelObj: null,
+      children: new Map(),
+      isFolder: true,
+      isLeaf: false,
+      id: '',
+      messagesUnread: 0,
+      gmailName: undefined,
+    };
 
     // First pass: create all nodes
-    for (const label of processedLabels) {
-      const parts = label.name.split('/');
+    for (const { label, normalizedName } of processedLabels) {
+      const parts = normalizedName.split('/');
       let node = root;
       
       for (let i = 0; i < parts.length; i++) {
@@ -154,7 +180,7 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
         if (!node.children.has(key)) {
           const isParentFolder = parentNames.has(fullPath);
           
-          const newNode = {
+          const newNode: LabelTreeNode = {
             name: key,
             fullPath: fullPath,
             fullName: fullPath,
@@ -163,13 +189,14 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
             isFolder: isParentFolder,
             isLeaf: !isParentFolder,
             id: `temp-${fullPath}`,
-            messagesUnread: 0
+            messagesUnread: 0,
+            gmailName: undefined,
           };
           
           node.children.set(key, newNode);
         }
-        
-        node = node.children.get(key);
+
+        node = node.children.get(key)!;
       }
       
       // At the leaf: assign the actual label data
@@ -177,17 +204,19 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
         node.labelObj = label;
         node.messagesUnread = systemCounts[label.id] || label.messagesUnread || 0; // Use system counts from labels
         node.id = label.id;
+        node.gmailName = label.name;
       }
     }
 
     // Convert Map structure to NestedLabel array
-    const convertMapToArray = (nodeMap: Map<string, any>): NestedLabel[] => {
+    const convertMapToArray = (nodeMap: Map<string, LabelTreeNode>): NestedLabel[] => {
       const result: NestedLabel[] = [];
       
       for (const [, node] of nodeMap) {
         const nestedLabel: NestedLabel = {
           id: node.id,
-          name: node.labelObj ? node.labelObj.name : node.fullName,
+          name: node.fullName,
+          gmailName: node.gmailName || node.labelObj?.name || node.fullName,
           displayName: node.name,
           fullPath: node.fullPath,
           children: convertMapToArray(node.children),
@@ -237,7 +266,18 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
       { name: 'Drafts', icon: SquarePen, folderType: 'drafts' },
       { name: 'Trash', icon: Trash, folderType: 'trash' },
       { name: 'Spam', icon: MailX, folderType: 'spam' },
-      { name: 'Starred', icon: Star, folderType: 'starred' }
+      {
+        name: 'Important',
+        icon: Flag,
+        folderType: 'important',
+        tooltip: 'Important is a status automatically assigned by a machine learning algorithm to emails it predicts you\'ll care about.'
+      },
+      {
+        name: 'Starred',
+        icon: Star,
+        folderType: 'starred',
+        tooltip: 'Starred is a manual marker you apply to highlight specific emails you want to remember or act on later.'
+      }
     ];
 
     // Get unread counts for system folders from the scanned counts
@@ -249,6 +289,7 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
         (folder.name === 'Drafts' && (label.name.toLowerCase() === 'drafts' || label.name.toLowerCase() === 'draft')) ||
         (folder.name === 'Trash' && label.name.toLowerCase() === 'trash') ||
         (folder.name === 'Spam' && label.name.toLowerCase() === 'spam') ||
+        (folder.name === 'Important' && label.name.toLowerCase() === 'important') ||
         (folder.name === 'Starred' && label.name.toLowerCase() === 'starred')
       );
 
@@ -263,17 +304,22 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
         'Drafts': 'DRAFT',
         'Trash': 'TRASH',
         'Spam': 'SPAM',
+        'Important': 'IMPORTANT',
         'Starred': 'STARRED'
       };
       
       const systemLabelId = systemLabelIdMap[folder.name];
       if (systemLabelId) {
-        // For Inbox we now use recent 24h unread count, fallback to static if missing
-        if (systemLabelId === 'INBOX') {
-          unreadCount = (recentCounts.inboxUnreadToday ?? systemCounts[systemLabelId]) || 0;
+        const systemCount = systemCounts[systemLabelId];
+        const fallbackCount = matchingLabel?.messagesUnread ?? 0;
+
+        unreadCount = systemCount ?? fallbackCount;
+        overLimit = unreadCount > 99;
+
+        if (systemLabelId === 'INBOX' && unreadCount === 0) {
+          // As a last resort, reuse recent count snapshot
+          unreadCount = recentCounts.inboxUnreadToday || 0;
           overLimit = recentCounts.inboxUnreadOverLimit;
-        } else {
-          unreadCount = systemCounts[systemLabelId] || 0;
         }
       }
 
@@ -289,7 +335,7 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
         totalCount: folder.name === 'Drafts'
           ? ((recentCounts.draftTotal ?? matchingLabel?.messagesTotal) || 0)
           : (matchingLabel?.messagesTotal || 0),
-        color: selectedSystemFolder === folder.folderType ? '#424242' : '#8f8f8fff'
+        color: selectedSystemFolder === folder.folderType ? '#272727ff' : '#4d4d4dff'
       };
     });
   }, [labels, systemCounts, selectedSystemFolder, recentCounts]); // include recentCounts
@@ -338,6 +384,56 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
     return filterTree(labelTree);
   }, [labelTree, searchTerm]);
 
+  const handleLabelClick = (label: NestedLabel) => {
+    // Navigate for both leaf nodes and parent folders
+    // For parent folders, we'll show all messages in that folder and its subfolders
+    const displayName = label.fullPath || label.name;
+    const canonicalName = label.gmailName || label.name;
+    const baseUrl = `/inbox?labelName=${encodeURIComponent(displayName)}&labelQuery=${encodeURIComponent(canonicalName)}`;
+    const labelIdParam = label.id && !label.id.startsWith('temp-') ? `&labelId=${encodeURIComponent(label.id)}` : '';
+    navigate(`${baseUrl}${labelIdParam}`);
+  };
+
+  const handleOpenFilters = (label: NestedLabel) => {
+    if (!label.isLeaf) return;
+    navigate(`/settings?tab=filters&label=${encodeURIComponent(label.gmailName || label.name)}`);
+  };
+
+  const handleDeleteLabel = async (label: NestedLabel) => {
+    // Determine confirmation message based on label type
+    let confirmationMessage;
+    if (!label.isLeaf) {
+      // Parent label with potential children
+      const childCount = label.children?.length || 0;
+      if (childCount > 0) {
+        confirmationMessage = `Are you sure you want to delete the parent label "${label.displayName}" and all ${childCount} of its sub-labels? This action cannot be undone and will remove the labels from all associated emails.`;
+      } else {
+        confirmationMessage = `Are you sure you want to delete the parent label "${label.displayName}"? This action cannot be undone and will remove the label from all associated emails.`;
+      }
+    } else {
+      // Child/leaf label
+      confirmationMessage = `Are you sure you want to delete the label "${label.displayName}"? This action cannot be undone and will remove the label from all associated emails.`;
+    }
+    
+    if (window.confirm(confirmationMessage)) {
+      try {
+        await deleteLabel(label.id);
+        
+        toast({
+          title: "Label Deleted",
+          description: `Successfully deleted label "${label.displayName}"${!label.isLeaf && label.children?.length ? ' and its sub-labels' : ''}`,
+        });
+      } catch (error) {
+        console.error('Failed to delete label:', error);
+        toast({
+          title: "Error",
+          description: "Failed to delete label. Please try again.",
+          variant: "destructive",
+        });
+      }
+    }
+  };
+
   // Convert NestedLabel to TreeNode for TreeView component
   const convertToTreeNodes = (nodes: NestedLabel[]): TreeNode[] => {
     return nodes.map(node => {
@@ -350,29 +446,26 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
       };
 
       const getNodeLabel = () => {
+        const unreadCount = node.messagesUnread ?? 0;
+        const showUnread = unreadCount > 0;
+        const unreadBadgeText = unreadCount > 99 ? '99+' : unreadCount.toString();
+
         return (
           <div className="flex items-center justify-between w-full min-w-0 group">
             <span className={`text-xs font-medium truncate ${
               node.isLeaf 
                 ? 'text-gray-700' 
-                : 'text-gray-800 font-semibold'
+                : 'text-gray-900 font-semibold'
             }`}>
               {node.displayName}
             </span>
             
             <div className="flex items-center space-x-1 ml-2">
-              {/* Unread count badge - use scanned unread counts */}
-              {(node.messagesUnread || 0) > 0 && (
-                <div className="bg-blue-100 text-blue-700 text-xs px-1.5 py-0.5 rounded-full min-w-[18px] text-center flex-shrink-0">
-                  {(node.messagesUnread || 0) > 99 ? '99+' : (node.messagesUnread || 0)}
-                </div>
-              )}
-              
-              {/* Total messages count for leaf labels */}
-              {node.isLeaf && node.labelObj && (node.labelObj.messagesTotal || 0) > 0 && (
-                <div className="bg-gray-100 text-gray-600 text-xs px-1.5 py-0.5 rounded-full text-center flex-shrink-0">
-                  {(node.labelObj.messagesTotal || 0) > 999 ? `${Math.floor((node.labelObj.messagesTotal || 0) / 1000)}k` : (node.labelObj.messagesTotal || 0)}
-                </div>
+              {/* Unread count badge - render number only when greater than one */}
+              {showUnread && (
+                <span className="text-xs font-medium text-gray-600 flex-shrink-0 min-w-[18px] text-right">
+                  {unreadBadgeText}
+                </span>
               )}
 
               {/* Three dots menu for all labels (both parent and child) */}
@@ -455,12 +548,6 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
   // Memoize the defaultExpandedIds to prevent unnecessary re-renders
   const defaultExpandedIds = useMemo(() => Array.from(expandedFolders), [expandedFolders]);
 
-  const handleLabelClick = (label: NestedLabel) => {
-    // Navigate for both leaf nodes and parent folders
-    // For parent folders, we'll show all messages in that folder and its subfolders
-    navigate(`/inbox?labelName=${encodeURIComponent(label.name)}`);
-  };
-
   const handleCreateLabel = async () => {
     if (!newLabelName.trim()) return;
     
@@ -498,41 +585,6 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
     setNestUnder(false);
   };
 
-  const handleDeleteLabel = async (label: NestedLabel) => {
-    // Determine confirmation message based on label type
-    let confirmationMessage;
-    if (!label.isLeaf) {
-      // Parent label with potential children
-      const childCount = label.children?.length || 0;
-      if (childCount > 0) {
-        confirmationMessage = `Are you sure you want to delete the parent label "${label.displayName}" and all ${childCount} of its sub-labels? This action cannot be undone and will remove the labels from all associated emails.`;
-      } else {
-        confirmationMessage = `Are you sure you want to delete the parent label "${label.displayName}"? This action cannot be undone and will remove the label from all associated emails.`;
-      }
-    } else {
-      // Child/leaf label
-      confirmationMessage = `Are you sure you want to delete the label "${label.displayName}"? This action cannot be undone and will remove the label from all associated emails.`;
-    }
-    
-    if (window.confirm(confirmationMessage)) {
-      try {
-        await deleteLabel(label.id);
-        
-        toast({
-          title: "Label Deleted",
-          description: `Successfully deleted label "${label.displayName}"${!label.isLeaf && label.children?.length ? ' and its sub-labels' : ''}`,
-        });
-      } catch (error) {
-        console.error('Failed to delete label:', error);
-        toast({
-          title: "Error",
-          description: "Failed to delete label. Please try again.",
-          variant: "destructive",
-        });
-      }
-    }
-  };
-
   const handleCompose = () => {
     if (!isGmailSignedIn) {
       toast({
@@ -553,11 +605,6 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
     if (onSystemFolderFilter) {
       onSystemFolderFilter(folderType);
     }
-  };
-
-  const handleOpenFilters = (label: NestedLabel) => {
-    if (!label.isLeaf) return;
-    navigate(`/settings?tab=filters&label=${encodeURIComponent(label.name)}`);
   };
 
   return (
@@ -643,59 +690,69 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
                   {/* Categories Section */}
                   <div className="p-2">
 
-                    <div className="space-y-1">
-                      {systemFolders.map((folder) => {
-                        const IconComponent = folder.icon;
-                        const isActive = selectedSystemFolder === folder.folderType;
-                        return (
-                          <button
-                            key={folder.name}
-                            onClick={isActive ? undefined : () => handleSystemFolderClick(folder.folderType)}
-                            disabled={isActive}
-                            className={`w-full flex items-center justify-between px-2 py-1.5 text-sm rounded-md transition-colors group ${isActive ? 'bg-gray-200 cursor-default' : 'hover:bg-gray-100'}`}
-                            aria-disabled={isActive || undefined}
-                          >
-                            <div className="flex items-center space-x-2 min-w-0 flex-1">
-                              <IconComponent
-                                size={18}
-                                className={`flex-shrink-0 transition-transform duration-200 group-hover:-rotate-12`}
-                                style={{ color: folder.color, opacity: isActive ? 0.8 : 1 }}
-                              />
-                              <span className="text-gray-700 truncate">{folder.name}</span>
-                            </div>
-                            
-                            {/* Count badges logic: 
-                                - Inbox: always show unread (capped 99+)
-                                - Drafts: show TOTAL drafts (exact, no cap)
-                                - Sent: never show a badge
-                                - Others: show unread only if > 0 (capped 99+)
-                            */}
-                            {(() => {
-                              const isInbox = folder.name === 'Inbox';
-                              const isDrafts = folder.name === 'Drafts';
-                              if (isInbox) {
-                                const displayUnread = folder.unreadCount || 0;
-                                return (
-                                  <div className="bg-gray-100 text-gray-600 text-xs px-1.5 py-0.5 rounded-full min-w-[18px] text-center flex-shrink-0 ml-2 font-medium">
-                                    {folder.overLimit ? '99+' : (displayUnread > 99 ? '99+' : displayUnread)}
+                    <TooltipProvider delayDuration={200}>
+                      <div className="space-y-1">
+                        {systemFolders.map((folder) => {
+                          const IconComponent = folder.icon;
+                          const isActive = selectedSystemFolder === folder.folderType;
+                          return (
+                            <Tooltip key={folder.name}>
+                              <TooltipTrigger asChild>
+                                <button
+                                  onClick={isActive ? undefined : () => handleSystemFolderClick(folder.folderType)}
+                                  disabled={isActive}
+                                  className={`w-full flex items-center justify-between px-2 py-1.5 text-sm rounded-md transition-colors group ${isActive ? 'bg-gray-200 cursor-default' : 'hover:bg-gray-100'}`}
+                                  aria-disabled={isActive || undefined}
+                                >
+                                  <div className="flex items-center space-x-2 min-w-0 flex-1">
+                                    <IconComponent
+                                      size={18}
+                                      className={`flex-shrink-0 transition-transform duration-200 group-hover:-rotate-12`}
+                                      style={{ color: folder.color, opacity: isActive ? 0.8 : 1 }}
+                                    />
+                                    <span className="text-gray-900 truncate">{folder.name}</span>
                                   </div>
-                                );
-                              }
-                              if (isDrafts) {
-                                const total = folder.totalCount || 0;
-                                if (total <= 0) return null;
-                                return (
-                                  <div className="bg-gray-100 text-gray-700 text-xs px-1.5 py-0.5 rounded-full min-w-[20px] text-center flex-shrink-0 ml-2 font-medium">
-                                    {total}
-                                  </div>
-                                );
-                              }
-                              return null; // suppress all others (Trash, Spam, Starred, etc.)
-                            })()}
-                          </button>
-                        );
-                      })}
-                    </div>
+                                  
+                                    {/* Count badges logic: 
+                                      - Inbox: always show unread (capped 99+)
+                                      - Drafts: show TOTAL drafts (exact, no cap)
+                                      - Sent: never show a badge
+                                      - Others: show unread only if > 0 (capped 99+)
+                                  */}
+                                  {(() => {
+                                    const isInbox = folder.name === 'Inbox';
+                                    const isDrafts = folder.name === 'Drafts';
+                                    if (isInbox) {
+                                      const displayUnread = folder.unreadCount || 0;
+                                      return (
+                                        <div className="text-gray-700 text-xs px-1.5 py-0.5 rounded-full min-w-[18px] text-center flex-shrink-0 ml-2 font-medium">
+                                          {folder.overLimit ? '99+' : (displayUnread > 99 ? '99+' : displayUnread)}
+                                        </div>
+                                      );
+                                    }
+                                    if (isDrafts) {
+                                      const total = folder.totalCount || 0;
+                                      if (total <= 0) return null;
+                                      return (
+                                        <div className="text-gray-700 text-xs px-1.5 py-0.5 rounded-full min-w-[20px] text-center flex-shrink-0 ml-2 font-medium">
+                                          {total}
+                                        </div>
+                                      );
+                                    }
+                                    return null; // suppress all others (Trash, Spam, Important, etc.)
+                                  })()}
+                                </button>
+                              </TooltipTrigger>
+                              {folder.tooltip ? (
+                                <TooltipContent side="right" className="max-w-xs bg-gray-800 text-white border-gray-700">
+                                  <p className="text-xs leading-snug">{folder.tooltip}</p>
+                                </TooltipContent>
+                              ) : null}
+                            </Tooltip>
+                          );
+                        })}
+                      </div>
+                    </TooltipProvider>
                   </div>
 
               {/* Combined Search & Create Section */}

@@ -1,222 +1,243 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Plus, Search, AlertCircle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { supabase } from '@/lib/supabase';
+import { InvoiceCards } from '@/components/invoice/InvoiceCards';
 import { useProfile } from '../../contexts/ProfileContext';
 import { useAuth } from '../../contexts/AuthContext';
-import HeaderBar from './components/HeaderBar';
-import NewOrderButton from './components/NewOrderButton';
-import OrdersSpreadsheet from './components/OrdersSpreadsheet';
-import { RefreshCw, Search, AlertCircle } from 'lucide-react';
-import { Input } from '@/components/ui/input';
-import { createClient } from '@supabase/supabase-js';
-import { searchInvoices } from '../../utils/searchUtils';
+import { deleteOrder } from '../../services/ordersService';
+import { searchInvoicesForList } from '../../utils/searchUtils';
 
-// Initialize Supabase client
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseKey);
+// Using shared Supabase client
 
-interface Invoice {
+interface SupplierInvoice {
   id: string;
-  po_number: string;
-  invoice_date: string;
-  customer_name: string;
-  customer_address?: string;
-  customer_city?: string;
-  customer_state?: string;
-  customer_zip?: string;
-  customer_tel1?: string;
-  customer_tel2?: string;
-  customer_email?: string;
-  subtotal: number;
-  discount_amount?: number;
-  tax_amount: number;
-  total_amount: number;
-  deposit_amount?: number;
-  balance_due: number;
-  payments_history?: string | any[] | null;
-  is_edited?: boolean;
-  original_invoice_id?: string;
-  created_at: string;
+  supplierName: string;
+  companyName?: string;
+  orderNumber: string;
+  date: string;
+  status: 'received' | 'pending';
+  isEdited?: boolean;
+  originalInvoiceId?: string;
+  supplierAddress?: string;
+  supplierCity?: string;
+  supplierState?: string;
+  supplierZip?: string;
+  supplierEmail?: string;
+  supplierPhones: string[];
+  amount: number; // Keep for compatibility with shared utilities
+  balance: number;
+  customerName: string; // Alias used by shared search utility
 }
-
-// Cache duration: 12 hours in milliseconds
-const AUTO_REFRESH_INTERVAL = 12 * 60 * 60 * 1000;
 
 function Orders() {
   const navigate = useNavigate();
-  const location = useLocation();
   const { currentProfile } = useProfile();
   const { isGmailSignedIn } = useAuth();
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [filteredInvoices, setFilteredInvoices] = useState<Invoice[]>([]);
+  const [supplierInvoices, setSupplierInvoices] = useState<SupplierInvoice[]>([]);
+  const [filteredSupplierInvoices, setFilteredSupplierInvoices] = useState<SupplierInvoice[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearching, setIsSearching] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+  const [deletingInvoice, setDeletingInvoice] = useState<string | null>(null);
 
-  // Handle invoice editing from navigation state
   useEffect(() => {
-    if (location.state?.editInvoice) {
-      console.log('Navigating to edit invoice:', location.state.editInvoice);
-      navigate('/invoice-generator', { 
-        state: { 
-          editInvoice: location.state.editInvoice
-        },
-        replace: true 
-      });
-    }
-  }, [location.state, navigate]);
+    const loadSupplierInvoices = async () => {
+      try {
+        setLoading(true);
+        setError(null);
 
-  // Fetch invoices from database
-  const fetchInvoices = async () => {
-    try {
-      setIsRefreshing(true);
-      setError(null);
+        let query = supabase
+          .from('orders')
+          .select('*, suppliers(*)');
 
-      // Build query based on user role
-      let query = supabase
-        .from('invoices')
-        .select('*');
+        if (currentProfile?.name === 'David') {
+          query = query.order('created_at', { ascending: false });
+        } else if (currentProfile?.name && ['Marti', 'Natalia', 'Dimitry'].includes(currentProfile.name)) {
+          query = query
+            .eq('created_by', currentProfile.name)
+            .order('created_at', { ascending: false });
+        } else {
+          setSupplierInvoices([]);
+          setFilteredSupplierInvoices([]);
+          setLoading(false);
+          return;
+        }
 
-      // Role-based filtering
-      if (currentProfile?.name === 'David') {
-        // David (admin) can see all orders and invoices
-        query = query.order('created_at', { ascending: false });
-      } else if (currentProfile?.name && ['Marti', 'Natalia', 'Dimitry'].includes(currentProfile.name)) {
-        // Staff can only see their own orders and invoices
-        query = query
-          .eq('created_by', currentProfile.name)
-          .order('created_at', { ascending: false });
-      } else {
-        // If no valid profile, return empty array
-        setInvoices([]);
-        setFilteredInvoices([]);
-        setLastRefreshed(new Date());
-        return;
+  const { data: orderData, error: orderError } = await query;
+
+        if (orderError) {
+          throw orderError;
+        }
+
+        const ordersFromDb = orderData || [];
+
+        const transformed: SupplierInvoice[] = ordersFromDb.map((order: any) => {
+          const supplier = order.suppliers || {};
+          const supplierName = supplier.display_name || supplier.company_name || 'Unknown Supplier';
+          const phones = [supplier.phone_primary, supplier.phone_secondary].filter((p: string) => !!p && typeof p === 'string');
+          const email = supplier.email as string | undefined;
+
+          return {
+            id: order.id,
+            supplierName,
+            companyName: supplier.company_name || undefined,
+            orderNumber: order.order_number || 'N/A',
+            date: order.order_date || order.created_at,
+            status: (order.status === 'received' ? 'received' : 'pending') as 'received' | 'pending',
+            isEdited: false,
+            originalInvoiceId: undefined,
+            supplierAddress: supplier.address_line1 || undefined,
+            supplierCity: supplier.city || undefined,
+            supplierState: supplier.state || undefined,
+            supplierZip: supplier.postal_code || undefined,
+            supplierEmail: email,
+            supplierPhones: phones as string[],
+            amount: 0,
+            balance: 0,
+            customerName: supplierName,
+          };
+        });
+
+        setSupplierInvoices(transformed);
+        setFilteredSupplierInvoices(transformed);
+      } catch (err) {
+        console.error('Error loading supplier invoices:', err);
+        setError('Failed to load supplier invoices. Please try again.');
+      } finally {
+        setLoading(false);
       }
+    };
 
-      const { data: invoiceData, error: invoiceError } = await query;
+    loadSupplierInvoices();
+  }, [currentProfile?.name]);
 
-      if (invoiceError) {
-        throw invoiceError;
-      }
-
-      setInvoices(invoiceData || []);
-      setFilteredInvoices(invoiceData || []);
-      setLastRefreshed(new Date());
-      
-      console.log('Invoices refreshed successfully:', invoiceData);
-      
-    } catch (err) {
-      console.error('Error refreshing invoices:', err);
-      setError('Failed to refresh invoices. Please try again later.');
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
-  // Memoize the refresh function to avoid recreation on each render
-  const handleRefreshOrders = useCallback(async (forceRefresh: boolean = false) => {
-    console.log(`handleRefreshOrders starting, force refresh: ${forceRefresh}`);
-    await fetchInvoices();
-  }, [currentProfile?.name]); // Add currentProfile dependency
-
-  // Handle search functionality
-  const handleSearch = useCallback(async (term: string) => {
+  const handleSearch = async (term: string) => {
     setSearchTerm(term);
-    
+
     if (!term.trim()) {
-      setFilteredInvoices(invoices);
+      setFilteredSupplierInvoices(supplierInvoices);
       return;
     }
 
     setIsSearching(true);
     try {
-      const filtered = await searchInvoices(invoices, term);
-      setFilteredInvoices(filtered);
-    } catch (error) {
-      console.error('Error searching invoices:', error);
-      setFilteredInvoices(invoices); // Fallback to showing all invoices
+      const filtered = await searchInvoicesForList<SupplierInvoice>(supplierInvoices, term);
+      setFilteredSupplierInvoices(filtered);
+    } catch (err) {
+      console.error('Error searching supplier invoices:', err);
+      setFilteredSupplierInvoices(supplierInvoices);
     } finally {
       setIsSearching(false);
     }
-  }, [invoices]);
+  };
 
-  // Update filtered invoices when invoices change
   useEffect(() => {
     if (searchTerm.trim()) {
       handleSearch(searchTerm);
     } else {
-      setFilteredInvoices(invoices);
+      setFilteredSupplierInvoices(supplierInvoices);
     }
-  }, [invoices, searchTerm, handleSearch]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supplierInvoices]);
 
-  // Navigation handlers
-  const handleOrderUpdate = useCallback((updatedInvoice: Invoice) => {
-    setInvoices(prevInvoices => 
-      prevInvoices.map(invoice => 
-        invoice.id === updatedInvoice.id ? updatedInvoice : invoice
-      )
-    );
-  }, []);
+  const supplierInvoiceCards = useMemo(() => {
+    const invoiceGroups = new Map<string, { original: SupplierInvoice; edited?: SupplierInvoice }>();
 
-  const handleOrderDeleted = useCallback((deletedOrderId: string) => {
-    setInvoices(prevInvoices => 
-      prevInvoices.filter(invoice => invoice.id !== deletedOrderId)
-    );
-  }, []);
+    filteredSupplierInvoices.forEach(invoice => {
+      const groupKey = invoice.orderNumber || invoice.id;
 
-  const handleViewInvoices = (_invoiceId: string) => {
-    navigate('/invoices');
-  };
+      if (!invoiceGroups.has(groupKey)) {
+        if (invoice.originalInvoiceId) {
+          const originalInvoice = filteredSupplierInvoices.find(inv => inv.orderNumber === invoice.orderNumber && !inv.originalInvoiceId);
+          if (originalInvoice) {
+            invoiceGroups.set(groupKey, { original: originalInvoice, edited: invoice });
+          } else {
+            invoiceGroups.set(groupKey, { original: invoice });
+          }
+        } else {
+          invoiceGroups.set(groupKey, { original: invoice });
+        }
+      } else {
+        const existing = invoiceGroups.get(groupKey)!;
+        if (invoice.originalInvoiceId && !existing.edited) {
+          existing.edited = invoice;
+        } else if (!invoice.originalInvoiceId && existing.original.originalInvoiceId) {
+          existing.edited = existing.original;
+          existing.original = invoice;
+        }
+      }
+    });
 
-  // Manual refresh handler (always force refresh)
-  const handleManualRefresh = () => {
-    handleRefreshOrders(true);
-  };
+    const buildCardPayload = (invoice: SupplierInvoice) => {
+      const description = buildReadableAddress(invoice);
+      const contactItems = buildContactItems(invoice);
 
-  // Initial data load and auto-refresh setup
-  useEffect(() => {
-    handleRefreshOrders(false); // Initial load
-    
-    // Set up auto-refresh every 12 hours
-    const autoRefreshInterval = setInterval(() => {
-      handleRefreshOrders(true); // Force refresh on auto-refresh
-    }, AUTO_REFRESH_INTERVAL);
-    
-    // Clean up interval on component unmount
-    return () => {
-      console.log('Orders component unmounting, clearing interval');
-      clearInterval(autoRefreshInterval);
+      return {
+        id: invoice.id,
+        name: invoice.supplierName,
+        price: '',
+        date: new Date(invoice.date).toLocaleDateString(),
+        orderNumber: invoice.orderNumber,
+        description,
+        items: contactItems,
+      };
     };
-  }, [handleRefreshOrders]);
 
-  // Format the last refreshed time for display
-  const getLastRefreshedText = () => {
-    if (!lastRefreshed) return 'Never refreshed';
-    
-    const now = new Date();
-    const diffMs = now.getTime() - lastRefreshed.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    
-    if (diffMins < 1) return 'Just now';
-    if (diffMins === 1) return '1 minute ago';
-    if (diffMins < 60) return `${diffMins} minutes ago`;
-    
-    const diffHours = Math.floor(diffMins / 60);
-    if (diffHours === 1) return '1 hour ago';
-    if (diffHours < 24) return `${diffHours} hours ago`;
-    
-    const diffDays = Math.floor(diffHours / 24);
-    if (diffDays === 1) return '1 day ago';
-    return `${diffDays} days ago`;
+    return Array.from(invoiceGroups.entries()).map(([poNumber, group]) => ({
+      id: poNumber,
+      originalInvoice: buildCardPayload(group.original),
+      editedInvoice: group.edited ? buildCardPayload(group.edited) : undefined,
+      editReason: group.edited ? 'Supplier invoice was modified' : undefined,
+      editDate: group.edited ? new Date(group.edited.date).toLocaleDateString() : undefined,
+    }));
+  }, [filteredSupplierInvoices]);
+
+  const handleEditInvoice = (invoiceId: string) => {
+    // Navigate to supplier order generator with edit state
+    navigate('/supplier-order-generator', {
+      state: {
+        editOrder: {
+          orderId: invoiceId,
+        },
+      },
+    });
   };
 
-  // Check Gmail authentication
+  const handleDeleteInvoice = async (invoiceId: string, orderNumber: string) => {
+    if (!window.confirm(`Are you sure you want to delete supplier order ${orderNumber}? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      setDeletingInvoice(invoiceId);
+
+      const success = await deleteOrder(invoiceId);
+
+      if (success) {
+        setSupplierInvoices(prev => prev.filter(invoice => invoice.id !== invoiceId));
+        setFilteredSupplierInvoices(prev => prev.filter(invoice => invoice.id !== invoiceId));
+      } else {
+        alert('Failed to delete invoice. Please try again.');
+      }
+    } catch (err) {
+      console.error('Error deleting supplier invoice:', err);
+      alert('Failed to delete invoice. Please try again.');
+    } finally {
+      setDeletingInvoice(null);
+    }
+  };
+
+  const handleCreateSupplierInvoice = () => {
+    navigate('/supplier-order-generator');
+  };
+
   if (!isGmailSignedIn) {
     return (
-      <div className="fade-in h-full flex flex-col overflow-auto pb-10">
+      <div className="fade-in pb-6">
         <div className="text-center py-16">
           <div className="max-w-md mx-auto">
             <div className="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -224,7 +245,7 @@ function Orders() {
             </div>
             <h3 className="text-lg font-medium text-gray-900 mb-2">Gmail Connection Required</h3>
             <p className="text-gray-600 mb-6">
-              Please connect to Gmail to access Orders. This page requires Gmail integration to manage your orders and invoices.
+              Please connect to Gmail to access Supplier Invoices. This page requires Gmail integration to manage your vendor billing.
             </p>
             <button
               onClick={() => navigate('/inbox')}
@@ -238,100 +259,144 @@ function Orders() {
     );
   }
 
-  return (
-    <div className="fade-in h-full flex flex-col overflow-auto pb-10">
-      <div className="flex items-center justify-between mb-6">
-        <HeaderBar />
-        <div className="flex flex-col items-end">
-          <div className="flex space-x-2">
-            <button
-              onClick={handleManualRefresh}
-              disabled={isRefreshing}
-              className="btn btn-secondary flex items-center"
-            >
-              <RefreshCw size={18} className={`mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
-              {isRefreshing ? 'Refreshing...' : 'Refresh'}
-            </button>
-            <NewOrderButton />
-          </div>
-          {lastRefreshed && (
-            <span className="text-xs text-gray-500 mt-1">
-              Last refreshed: {getLastRefreshedText()}
-            </span>
-          )}
+  if (loading) {
+    return (
+      <div className="fade-in pb-6">
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-2xl font-semibold text-gray-800">Supplier Invoices</h1>
+        </div>
+        <div className="flex justify-center items-center h-64">
+          <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-primary-500"></div>
+          <span className="ml-3 text-gray-600">Loading supplier invoices...</span>
         </div>
       </div>
+    );
+  }
 
-      {isRefreshing && invoices.length === 0 ? (
-        <div className="flex justify-center items-center flex-grow">
-          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary-500"></div>
+  if (error) {
+    return (
+      <div className="fade-in pb-6">
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-2xl font-semibold text-gray-800">Supplier Invoices</h1>
         </div>
-      ) : error ? (
         <div className="bg-red-50 border border-red-200 rounded-md p-4 text-red-800">
           <p>{error}</p>
-          <button 
-            onClick={handleManualRefresh}
-            className="mt-2 px-3 py-1 bg-red-100 hover:bg-red-200 rounded text-sm"
+          <Button 
+            onClick={() => window.location.reload()}
+            className="mt-2"
+            variant="outline"
           >
-            Try Again
-          </button>
+            Retry
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fade-in pb-6">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-semibold text-gray-800">Supplier Invoices</h1>
+        <Button onClick={handleCreateSupplierInvoice}>
+          <Plus className="h-4 w-4 mr-2" />
+          Create Supplier Invoice
+        </Button>
+      </div>
+
+      <div className="mb-6">
+        <div className="relative max-w-md">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+          <Input
+            type="text"
+            placeholder="Search by supplier, PO #, date, or brand..."
+            value={searchTerm}
+            onChange={(e) => handleSearch(e.target.value)}
+            className="pl-10"
+          />
+          {isSearching && (
+            <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+              <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-primary-500"></div>
+            </div>
+          )}
+        </div>
+        {searchTerm && (
+          <p className="text-sm text-gray-500 mt-2">
+            Showing {filteredSupplierInvoices.length} of {supplierInvoices.length} supplier invoices
+          </p>
+        )}
+      </div>
+
+      {filteredSupplierInvoices.length === 0 ? (
+        <div className="text-center py-12">
+          <div className="mb-4">
+            <svg className="mx-auto h-16 w-16 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">
+            {searchTerm ? 'No supplier invoices found' : 'No supplier invoices yet'}
+          </h3>
+          <p className="text-gray-500 mb-4">
+            {searchTerm 
+              ? 'Try adjusting your search terms.' 
+              : 'Create your first supplier invoice to get started.'
+            }
+          </p>
+          {!searchTerm && (
+            <Button onClick={handleCreateSupplierInvoice}>
+              <Plus className="h-4 w-4 mr-2" />
+              Create Supplier Invoice
+            </Button>
+          )}
         </div>
       ) : (
-        <div className="flex-1">
-          {/* Search Bar */}
-          <div className="mb-6">
-            <div className="relative max-w-md">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-              <Input
-                type="text"
-                placeholder="Search by customer, order #, date, items, or brand..."
-                value={searchTerm}
-                onChange={(e) => handleSearch(e.target.value)}
-                className="pl-10"
-              />
-              {isSearching && (
-                <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                  <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-primary-500"></div>
-                </div>
-              )}
-            </div>
-            {searchTerm && (
-              <p className="text-sm text-gray-500 mt-2">
-                Showing {filteredInvoices.length} of {invoices.length} orders
-              </p>
-            )}
+        <>
+          <div className="mb-4 text-sm text-gray-500">
+            Showing {supplierInvoiceCards.length} supplier invoice{supplierInvoiceCards.length !== 1 ? 's' : ''}
           </div>
-          
-          {/* Invoices Table View */}
-          <div>
-            <h2 className="text-xl font-semibold mb-4">Orders</h2>
-            {filteredInvoices.length > 0 ? (
-              <OrdersSpreadsheet 
-                orders={filteredInvoices} 
-                onViewInvoices={handleViewInvoices}
-                onOrderUpdate={handleOrderUpdate}
-                onOrderDeleted={handleOrderDeleted}
-              />
-            ) : (
-              <div className="bg-white rounded-lg shadow-sm p-8 text-center">
-                {searchTerm ? (
-                  <>
-                    <p className="text-gray-500 mb-4">No orders found matching "{searchTerm}"</p>
-                    <p className="text-sm text-gray-400">Try adjusting your search terms or clearing the search.</p>
-                  </>
-                ) : (
-                  <>
-                    <p className="text-gray-500 mb-4">No orders to display</p>
-                    <p className="text-sm text-gray-400">Orders will appear here once they are created in the system.</p>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
+          <InvoiceCards
+            invoices={supplierInvoiceCards}
+            onEditInvoice={handleEditInvoice}
+            onDeleteInvoice={handleDeleteInvoice}
+            showDeleteButton={currentProfile?.name === 'David'}
+            deletingInvoice={deletingInvoice}
+            hidePrice
+            dataSource="orders"
+          />
+        </>
       )}
     </div>
   );
+}
+
+function buildReadableAddress(invoice: SupplierInvoice): string {
+  const parts = [invoice.supplierAddress, invoice.supplierCity, invoice.supplierState, invoice.supplierZip]
+    .map(part => part?.trim())
+    .filter(Boolean);
+
+  return parts.length > 0 ? parts.join(', ') : 'No supplier address provided';
+}
+
+function buildContactItems(invoice: SupplierInvoice): string[] {
+  const items: string[] = [];
+
+  if (invoice.companyName) {
+    items.push(invoice.companyName);
+  }
+
+  if (invoice.supplierEmail) {
+    items.push(`Email: ${invoice.supplierEmail}`);
+  }
+
+  invoice.supplierPhones.forEach((phone, index) => {
+    if (index === 0) {
+      items.push(`Phone: ${phone}`);
+    } else {
+      items.push(`Alt: ${phone}`);
+    }
+  });
+
+  return items;
 }
 
 export default Orders;

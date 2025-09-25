@@ -109,8 +109,8 @@ ${originalEmail.body}
 
       // Create the forward email object
       const forwardEmail: Omit<Email, 'id' | 'date' | 'isRead' | 'preview'> = {
-        from: { 
-          email: currentProfile?.userEmail || 'unknown@example.com', 
+        from: {
+          email: currentProfile?.userEmail || 'unknown@example.com',
           name: currentProfile?.name || 'Current User'
         },
         to: [{ email: toEmail, name: toEmail.split('@')[0] }],
@@ -120,6 +120,8 @@ ${originalEmail.body}
         isImportant: false,
         labelIds: [],
         attachments: originalEmail.attachments || [] // Include original attachments when forwarding
+        ,
+        internalDate: undefined
       };
 
       // Send the forward using the existing sendEmail function
@@ -163,29 +165,19 @@ ${originalEmail.body}
   // Optimized email fetching with fallback to standard method
   const fetchEmailOptimized = async (emailId: string): Promise<Email | undefined> => {
     console.log(`🔍 fetchEmailOptimized called for email ID: ${emailId}`);
-    
+
     try {
-      // Check if optimized service is available
       const isOptimizedAvailable = await optimizedEmailService.isAvailable();
-      
       if (!isOptimizedAvailable) {
         console.log('Optimized service not available, using fallback');
         throw new Error('Optimized service is not available');
       }
 
-      // Try to fetch as a thread first, then as single message
-      try {
-        const threadEmails = await optimizedEmailService.fetchEmailThread(emailId);
-        if (threadEmails.length > 0) {
-          return threadEmails[0]; // Return the main email
-        }
-      } catch (threadError) {
-        const singleEmail = await optimizedEmailService.fetchSingleEmail(emailId);
-        return singleEmail;
-      }
+      // Always fetch the single message first so we get the real threadId
+      const singleEmail = await optimizedEmailService.fetchSingleEmail(emailId);
+      return singleEmail;
     } catch (error) {
       console.error('Optimized fetch failed, falling back to standard method:', error);
-      // Fallback to standard method
       try {
         const fallbackEmail = await getEmailById(emailId);
         return fallbackEmail;
@@ -365,7 +357,8 @@ ${originalEmail.body}
         isImportant: false,
         labelIds: [],
         attachments: emailSnapshot.attachments || [],
-        threadId: emailSnapshot.threadId
+        threadId: emailSnapshot.threadId,
+        internalDate: undefined
       });
       toast({
         title: 'Draft restored',

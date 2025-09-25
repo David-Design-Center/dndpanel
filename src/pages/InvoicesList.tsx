@@ -273,7 +273,7 @@ function InvoicesList() {
     }
   };
 
-  const handleCreateOrder = () => {
+  const handleCreateInvoice = () => {
     navigate('/invoice-generator');
   };
 
@@ -343,7 +343,7 @@ function InvoicesList() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold text-gray-800">Invoices</h1>
-        <Button onClick={handleCreateOrder}>
+        <Button onClick={handleCreateInvoice}>
           <Plus className="h-4 w-4 mr-2" />
           Create Invoice
         </Button>
@@ -387,13 +387,13 @@ function InvoicesList() {
           <p className="text-gray-500 mb-4">
             {searchTerm 
               ? 'Try adjusting your search terms.' 
-              : 'Create your first order or invoice to get started.'
+              : 'Create your first invoice to get started.'
             }
           </p>
           {!searchTerm && (
-            <Button onClick={handleCreateOrder}>
+            <Button onClick={handleCreateInvoice}>
               <Plus className="h-4 w-4 mr-2" />
-              Create Invoice/Order
+              Create Invoice
             </Button>
           )}
         </div>

@@ -168,7 +168,7 @@ function decodeRfc2047(headerValue: string): string {
         const qp = data.replace(/_/g, ' ');
         bytes = decodeQuotedPrintableToBytes(qp);
       }
-      return new TextDecoder(normalizeCharset(charset)).decode(bytes);
+      return decodeBytes(bytes, normalizeCharset(charset));
     } catch {
       return headerValue; // fallback: return original token if decode fails
     }
@@ -177,12 +177,105 @@ function decodeRfc2047(headerValue: string): string {
 
 function normalizeCharset(cs: string): string {
   const m = cs.trim().toLowerCase();
-  if (m === 'utf8') return 'utf-8';
+  if (!m) return 'utf-8';
+  if (m === 'utf8' || m === 'utf-8') return 'utf-8';
+  if (m === 'us-ascii' || m === 'ascii') return 'utf-8';
+  if (m.includes('1252') || m.includes('cp1252')) return 'windows-1252';
+  if (m.includes('1251')) return 'windows-1251';
+  if (m.includes('1250')) return 'windows-1250';
+  if (m.includes('1254')) return 'windows-1254';
   if (m.includes('1257')) return 'windows-1257';
-  if (m.includes('1252')) return 'windows-1252';
   if (m.includes('iso-8859-13')) return 'iso-8859-13';
-  if (m.includes('iso-8859-1')) return 'iso-8859-1';
+  if (m.includes('iso-8859-15')) return 'iso-8859-15';
+  if (m.includes('iso-8859-1') || m.includes('latin1')) return 'iso-8859-1';
   return m;
+}
+
+function decodeBytes(bytes: Uint8Array, preferredCharset: string): string {
+  const tried = new Set<string>();
+  const candidates: Array<{ charset: string; fatal?: boolean }> = [];
+
+  const normalized = normalizeCharset(preferredCharset);
+
+  // Many mis-labelled messages are actually UTF-8, so try that first when not already requested
+  if (normalized !== 'utf-8') {
+    candidates.push({ charset: 'utf-8', fatal: true });
+  }
+
+  candidates.push({ charset: normalized, fatal: false });
+
+  // Fallback to windows-1252 which covers most Western encodings
+  if (normalized !== 'windows-1252') {
+    candidates.push({ charset: 'windows-1252', fatal: false });
+  }
+
+  // Always ensure utf-8 is attempted without fatal flag before giving up
+  candidates.push({ charset: 'utf-8', fatal: false });
+
+  for (const { charset, fatal } of candidates) {
+    if (tried.has(charset)) continue;
+    tried.add(charset);
+    try {
+      return new TextDecoder(charset, fatal ? { fatal } : undefined).decode(bytes);
+    } catch (_err) {
+      // continue to next candidate
+    }
+  }
+
+  // Manual Windows-1252 fallback (for runtimes without encoding tables)
+  if (bytes.some(b => b >= 0x80 && b <= 0x9F)) {
+    try {
+      return decodeWindows1252(bytes);
+    } catch (_err) {
+      // ignore and continue
+    }
+  }
+
+  // Final fallback: default decoder without explicit charset
+  return new TextDecoder().decode(bytes);
+}
+
+const WINDOWS_1252_TABLE: Record<number, number> = {
+  0x80: 0x20AC,
+  0x82: 0x201A,
+  0x83: 0x0192,
+  0x84: 0x201E,
+  0x85: 0x2026,
+  0x86: 0x2020,
+  0x87: 0x2021,
+  0x88: 0x02C6,
+  0x89: 0x2030,
+  0x8A: 0x0160,
+  0x8B: 0x2039,
+  0x8C: 0x0152,
+  0x8E: 0x017D,
+  0x91: 0x2018,
+  0x92: 0x2019,
+  0x93: 0x201C,
+  0x94: 0x201D,
+  0x95: 0x2022,
+  0x96: 0x2013,
+  0x97: 0x2014,
+  0x98: 0x02DC,
+  0x99: 0x2122,
+  0x9A: 0x0161,
+  0x9B: 0x203A,
+  0x9C: 0x0153,
+  0x9E: 0x017E,
+  0x9F: 0x0178
+};
+
+function decodeWindows1252(bytes: Uint8Array): string {
+  let result = '';
+  for (const byte of bytes) {
+    if (byte >= 0x80 && byte <= 0x9F) {
+      const mapped = WINDOWS_1252_TABLE[byte];
+      result += mapped ? String.fromCharCode(mapped) : String.fromCharCode(byte);
+    } else {
+      result += String.fromCharCode(byte);
+    }
+  }
+  return result;
 }
 
 // Choose charset from headers
@@ -208,7 +301,7 @@ function decodeGmailPart(part: EmailPart): { text: string; mimeType: string } | 
       bytes = decodeQuotedPrintableToBytes(asAscii);
     }
 
-    const text = new TextDecoder(charset).decode(bytes);
+    const text = decodeBytes(bytes, charset);
     return { text, mimeType };
   }
 
@@ -444,6 +537,17 @@ async function processGmailMessage(message: GmailMessage, accessToken: string): 
     .replace(/<blockquote[\s\S]*?<\/blockquote>/gi, '')
     .replace(/On\s+[^<]*wrote:\s*<br[^>]*>/gi, '');
 
+  const snippetFromBody = cleanedBody
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 180);
+
+  const finalSnippet = snippetFromBody || decodeRfc2047(message.snippet);
+
   return {
     id: message.id,
     threadId: message.threadId,
@@ -453,11 +557,77 @@ async function processGmailMessage(message: GmailMessage, accessToken: string): 
     cc: ccAddresses.length > 0 ? ccAddresses : undefined,
     date,
     body: cleanedBody,
-    snippet: decodeRfc2047(message.snippet), // Decode snippet too
+    snippet: finalSnippet,
     labels: message.labelIds || [],
     attachments,
     hasInlineImages
   };
+}
+
+async function fetchThreadMessages(accessToken: string, threadId: string): Promise<GmailMessage[]> {
+  console.log(`Making Gmail API call for thread: ${threadId}`);
+  const response = await fetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}?format=full`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    }
+  );
+
+  console.log(`Gmail API response status: ${response.status}`);
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error(`Gmail API error response: ${errorText}`);
+    throw new Response(
+      JSON.stringify({
+        error: `Failed to fetch thread: ${response.status}`,
+        details: errorText
+      }),
+      {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: response.status,
+      }
+    );
+  }
+
+  const threadData = await response.json();
+  const messages = threadData.messages || [];
+  console.log(`Fetched ${messages.length} messages from thread ${threadId}`);
+  return messages;
+}
+
+async function fetchSingleMessage(accessToken: string, messageId: string): Promise<GmailMessage | null> {
+  console.log(`Making Gmail API call for message: ${messageId}`);
+  const msgResponse = await fetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    }
+  );
+
+  if (msgResponse.status === 404) {
+    console.warn(`Message ${messageId} not found (404).`);
+    return null;
+  }
+
+  if (!msgResponse.ok) {
+    const errorText = await msgResponse.text();
+    console.error(`Failed to fetch message ${messageId}:`, errorText);
+    throw new Response(
+      JSON.stringify({
+        error: `Failed to fetch message: ${msgResponse.status}`,
+        details: errorText
+      }),
+      {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: msgResponse.status,
+      }
+    );
+  }
+
+  const messageData = await msgResponse.json();
+  console.log(`Fetched single message ${messageId}`);
+  return messageData;
 }
 
 serve(async (req) => {
@@ -524,52 +694,21 @@ serve(async (req) => {
 
     let messages: GmailMessage[] = [];
 
+    const loadThread = async (id: string, reason: string) => {
+      console.log(`Attempting to fetch thread ${id} (${reason})`);
+      messages = await fetchThreadMessages(accessToken, id);
+    };
+
     if (threadId) {
-      // Fetch the entire thread
-      console.log(`Making Gmail API call for thread: ${threadId}`);
-      const threadResponse = await fetch(
-        `https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}?format=full`,
-        {
-          headers: { Authorization: `Bearer ${accessToken}` }
-        }
-      );
-
-      console.log(`Gmail API response status: ${threadResponse.status}`);
-      
-      if (!threadResponse.ok) {
-        const errorText = await threadResponse.text();
-        console.error(`Gmail API error response: ${errorText}`);
-        return new Response(
-          JSON.stringify({ 
-            error: `Failed to fetch thread: ${threadResponse.status}`,
-            details: errorText 
-          }), 
-          {
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            status: threadResponse.status,
-          }
-        );
-      }
-
-      const threadData = await threadResponse.json();
-      messages = threadData.messages || [];
-      console.log(`Fetched ${messages.length} messages from thread ${threadId}`);
+      await loadThread(threadId, 'direct request');
     } else if (messageId) {
-      // Fetch a single message
-      const msgResponse = await fetch(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`,
-        {
-          headers: { Authorization: `Bearer ${accessToken}` }
-        }
-      );
-
-      if (!msgResponse.ok) {
-        throw new Error(`Failed to fetch message: ${msgResponse.status}`);
+      const singleMessage = await fetchSingleMessage(accessToken, messageId);
+      if (singleMessage) {
+        messages = [singleMessage];
+      } else {
+        console.warn(`Falling back to thread fetch using ID ${messageId}`);
+        await loadThread(messageId, 'fallback from missing message');
       }
-
-      const messageData = await msgResponse.json();
-      messages = [messageData];
-      console.log(`Fetched single message ${messageId}`);
     }
 
     // Process all messages in parallel (but limit concurrency to avoid rate limits)
@@ -596,6 +735,9 @@ serve(async (req) => {
     });
 
   } catch (error) {
+    if (error instanceof Response) {
+      return error;
+    }
     console.error('Error in fetch-gmail-thread function:', error);
     return new Response(
       JSON.stringify({ 

@@ -3,6 +3,7 @@ import { X, Printer } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useReactToPrint } from 'react-to-print';
 import InvoicePrintView from './InvoicePrintView';
+import SupplierOrderPrintView from './SupplierOrderPrintView';
 import { BrandProvider } from '../../contexts/BrandContext';
 import { createClient } from '@supabase/supabase-js';
 
@@ -50,13 +51,15 @@ interface InvoicePreviewModalProps {
   onClose: () => void;
   invoice: Invoice;
   lineItems: InvoiceLineItem[];
+  dataSource?: 'invoices' | 'orders';
 }
 
 export const InvoicePreviewModal: React.FC<InvoicePreviewModalProps> = ({
   isOpen,
   onClose,
   invoice,
-  lineItems
+  lineItems,
+  dataSource = 'invoices'
 }) => {
   const invoiceDocumentRef = useRef<HTMLDivElement>(null);
   const [originalInvoice, setOriginalInvoice] = useState<Invoice | null>(null);
@@ -300,11 +303,36 @@ export const InvoicePreviewModal: React.FC<InvoicePreviewModalProps> = ({
           <div className="overflow-y-auto max-h-[calc(90vh-80px)]">
             <BrandProvider>
               <div className="relative transform scale-75 origin-top-left">
-                <InvoicePrintView
-                  invoice={transformedInvoice}
-                  innerRef={invoiceDocumentRef}
-                  showInternalView={true}
-                />
+                {dataSource === 'orders' ? (
+                  <SupplierOrderPrintView
+                    order={{
+                      poNumber: (invoice as any).order_number || '',
+                      date: (invoice as any).order_date || '',
+                      supplierName: (invoice as any).suppliers?.display_name || '',
+                      address: (invoice as any).suppliers?.address_line1 || '',
+                      city: (invoice as any).suppliers?.city || '',
+                      state: (invoice as any).suppliers?.state || '',
+                      zip: (invoice as any).suppliers?.postal_code || '',
+                      tel1: (invoice as any).suppliers?.phone_primary || '',
+                      tel2: (invoice as any).suppliers?.phone_secondary || '',
+                      email: (invoice as any).suppliers?.email || '',
+                      lineItems: lineItems.map((item, index) => ({
+                        id: item.id || crypto.randomUUID(),
+                        item: (index + 1).toString(),
+                        description: item.description || '',
+                        brand: item.brand || '',
+                        quantity: item.quantity || 1
+                      }))
+                    }}
+                    innerRef={invoiceDocumentRef}
+                  />
+                ) : (
+                  <InvoicePrintView
+                    invoice={transformedInvoice}
+                    innerRef={invoiceDocumentRef}
+                    showInternalView={true}
+                  />
+                )}
                 
                 {/* Overlay change indicators ONLY for edited invoices (those with original_invoice_id) */}
                 {invoice.original_invoice_id && originalInvoice && (

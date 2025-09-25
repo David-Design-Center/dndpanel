@@ -11,6 +11,7 @@ import { GooeyFilter } from './components/ui/liquid-toggle';
 import { hasPasswordResetTokens, isPasswordResetFlow } from './utils/authFlowUtils';
 import { logUnauthorizedAccess } from './utils/securityLogging';
 import { Toaster } from './components/ui/sonner';
+import { LoadingProgressToast } from './components/common/LoadingProgressToast';
 
 // Lazy load non-critical components only
 const Auth = lazy(() => import('./pages/Auth'));
@@ -21,6 +22,7 @@ const Compose = lazy(() => import('./pages/Compose'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Orders = lazy(() => import('./pages/Orders'));
 const InvoiceGenerator = lazy(() => import('./pages/InvoiceGenerator'));
+const SupplierOrderGenerator = lazy(() => import('./pages/SupplierOrderGenerator'));
 const InvoicesList = lazy(() => import('./pages/InvoicesList'));
 const InvoiceView = lazy(() => import('./pages/InvoiceView'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -136,6 +138,7 @@ function App() {
   return (
     <>
       <GooeyFilter />
+      <LoadingProgressToast />
       <Toaster 
         position="bottom-right" 
         richColors
@@ -212,6 +215,16 @@ function App() {
             <Route path="orders" element={
               <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
                 <Orders />
+              </Suspense>
+            } />
+            <Route path="supplier-order-generator" element={
+              <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
+                <SupplierOrderGenerator />
+              </Suspense>
+            } />
+            <Route path="supplier-order-generator/:orderId" element={
+              <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
+                <SupplierOrderGenerator />
               </Suspense>
             } />
             <Route path="orders/create-customer-order" element={

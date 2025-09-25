@@ -10,6 +10,7 @@ export interface Session {
 }
 
 export interface Email {
+  internalDate: any;
   id: string;
   from: {
     name: string;
@@ -28,6 +29,7 @@ export interface Email {
   preview: string;
   isRead: boolean;
   isImportant?: boolean;
+  isStarred?: boolean;
   date: string;
   labelIds?: string[]; // Gmail label IDs assigned to this email
   attachments?: {
@@ -196,6 +198,68 @@ export interface SupabaseInvoiceLineItem {
   quantity: number;
   unit_price: number;
   line_total: number;
+  created_at?: string;
+}
+
+export interface SupabaseSupplier {
+  id?: string;
+  display_name: string;
+  company_name?: string;
+  email?: string;
+  phone_primary?: string;
+  phone_secondary?: string;
+  address_line1?: string;
+  address_line2?: string;
+  city?: string;
+  state?: string;
+  postal_code?: string;
+  country?: string;
+  notes?: string;
+  contact_id?: string;
+  created_by?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SupabaseOrder {
+  id?: string;
+  order_number?: string;
+  order_date: string;
+  due_date?: string;
+  supplier_id: string;
+  external_ref?: string;
+  status?: string;
+  terms?: string;
+  currency?: string;
+  subtotal?: number;
+  discount_amount?: number;
+  tax_amount?: number;
+  shipping_amount?: number;
+  total_amount?: number;
+  deposit_amount?: number;
+  balance_due?: number;
+  notes?: string;
+  attachments?: any;
+  payments_history?: PaymentEntry[];
+  created_by?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SupabaseOrderWithSupplier extends SupabaseOrder {
+  suppliers?: SupabaseSupplier;
+}
+
+export interface SupabaseOrderLineItem {
+  id?: string;
+  order_id: string;
+  line_index?: number;
+  item_code?: string;
+  description: string;
+  quantity: number;
+  unit_price?: number;
+  line_total?: number;
+  brand?: string;
   created_at?: string;
 }
 

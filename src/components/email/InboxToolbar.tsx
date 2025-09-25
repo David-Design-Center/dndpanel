@@ -238,12 +238,6 @@ function ToolbarRow2({ state, setState, counts, onEmptyTrash, isRefreshing, isEm
           >
             Unread
           </ToggleChip>
-          <ToggleChip 
-            active={!!f.attachments} 
-            onClick={()=>setState({ filters:{ ...f, attachments: !f.attachments } })}
-          >
-            Attachments
-          </ToggleChip>
           {/* Pagination Controls */}
           <div className="hidden sm:flex items-center ml-2 pl-2 border-l border-gray-200 gap-1">
             <span className="text-[11px] text-gray-500 font-medium">

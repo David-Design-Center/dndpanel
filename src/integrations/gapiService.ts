@@ -837,6 +837,7 @@ export const fetchGmailMessages = async (
           preview: preview,
           isRead: !msg.result.labelIds?.includes('UNREAD'),
           isImportant: msg.result.labelIds?.includes('IMPORTANT'),
+          isStarred: msg.result.labelIds?.includes('STARRED'),
           date: format(new Date(dateHeader), "yyyy-MM-dd'T'HH:mm:ss"),
           labelIds: msg.result.labelIds || [],
           attachments: attachments.length > 0 ? attachments : undefined,
@@ -1035,6 +1036,7 @@ export const fetchGmailMessageById = async (id: string): Promise<Email | undefin
       preview: preview,
       isRead: !msg.result.labelIds?.includes('UNREAD'),
       isImportant: msg.result.labelIds?.includes('IMPORTANT'),
+      isStarred: msg.result.labelIds?.includes('STARRED'),
       date: format(new Date(dateHeader), "yyyy-MM-dd'T'HH:mm:ss"),
       labelIds: msg.result.labelIds || [],
       attachments: attachments.length > 0 ? attachments : undefined,
@@ -2512,7 +2514,7 @@ export const markGmailMessageAsUnread = async (messageId: string): Promise<void>
 };
 
 /**
- * Mark a Gmail message as starred (important)
+ * Mark a Gmail message as starred
  */
 export const markGmailMessageAsStarred = async (messageId: string): Promise<void> => {
   try {
@@ -2520,25 +2522,23 @@ export const markGmailMessageAsStarred = async (messageId: string): Promise<void
       throw new Error('Not signed in to Gmail');
     }
 
-    console.log(`Marking message ${messageId} as starred`);
+  console.log(`Marking message ${messageId} as STARRED`);
 
     await window.gapi.client.gmail.users.messages.modify({
       userId: 'me',
       id: messageId,
-      resource: {
-        addLabelIds: ['IMPORTANT']
-      }
+      resource: { addLabelIds: ['STARRED'] }
     });
 
-    console.log(`Successfully marked message ${messageId} as starred`);
+    console.log(`Successfully marked message ${messageId} as STARRED`);
   } catch (error) {
-    console.error('Error marking message as starred:', error);
+    console.error('Error marking message as STARRED:', error);
     throw error;
   }
 };
 
 /**
- * Mark a Gmail message as unstarred (not important)
+ * Mark a Gmail message as unstarred
  */
 export const markGmailMessageAsUnstarred = async (messageId: string): Promise<void> => {
   try {
@@ -2546,19 +2546,59 @@ export const markGmailMessageAsUnstarred = async (messageId: string): Promise<vo
       throw new Error('Not signed in to Gmail');
     }
 
-    console.log(`Marking message ${messageId} as unstarred`);
+  console.log(`Marking message ${messageId} as UNSTARRED`);
 
     await window.gapi.client.gmail.users.messages.modify({
       userId: 'me',
       id: messageId,
-      resource: {
-        removeLabelIds: ['IMPORTANT']
-      }
+      resource: { removeLabelIds: ['STARRED'] }
     });
 
-    console.log(`Successfully marked message ${messageId} as unstarred`);
+    console.log(`Successfully marked message ${messageId} as UNSTARRED`);
   } catch (error) {
-    console.error('Error marking message as unstarred:', error);
+    console.error('Error marking message as UNSTARRED:', error);
+    throw error;
+  }
+};
+
+/**
+ * Mark a Gmail message as IMPORTANT
+ */
+export const markGmailMessageAsImportant = async (messageId: string): Promise<void> => {
+  try {
+    if (!isGmailSignedIn()) {
+      throw new Error('Not signed in to Gmail');
+    }
+    console.log(`Marking message ${messageId} as IMPORTANT`);
+    await window.gapi.client.gmail.users.messages.modify({
+      userId: 'me',
+      id: messageId,
+      resource: { addLabelIds: ['IMPORTANT'] }
+    });
+    console.log(`Successfully marked message ${messageId} as IMPORTANT`);
+  } catch (error) {
+    console.error('Error marking message as IMPORTANT:', error);
+    throw error;
+  }
+};
+
+/**
+ * Remove IMPORTANT label
+ */
+export const markGmailMessageAsUnimportant = async (messageId: string): Promise<void> => {
+  try {
+    if (!isGmailSignedIn()) {
+      throw new Error('Not signed in to Gmail');
+    }
+    console.log(`Marking message ${messageId} as NOT IMPORTANT`);
+    await window.gapi.client.gmail.users.messages.modify({
+      userId: 'me',
+      id: messageId,
+      resource: { removeLabelIds: ['IMPORTANT'] }
+    });
+    console.log(`Successfully removed IMPORTANT from ${messageId}`);
+  } catch (error) {
+    console.error('Error removing IMPORTANT label:', error);
     throw error;
   }
 };

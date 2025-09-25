@@ -63,7 +63,23 @@ class EmailSearchService {
   /**
    * Perform the actual search using Google Cloud Search API
    */
-  private async performSearch(query: string): Promise<SearchSuggestion[]> {
+  private normalizeQuery(rawQuery: string): string {
+    let query = rawQuery.trim();
+
+    const replacements: Array<{ pattern: RegExp; replace: string }> = [
+      { pattern: /\bis:important\b/gi, replace: 'label:IMPORTANT' },
+      { pattern: /\bis:starred\b/gi, replace: 'label:STARRED' },
+    ];
+
+    replacements.forEach(({ pattern, replace }) => {
+      query = query.replace(pattern, replace);
+    });
+
+    return query;
+  }
+
+  private async performSearch(rawQuery: string): Promise<SearchSuggestion[]> {
+    const query = this.normalizeQuery(rawQuery);
     console.log(`🔍 Performing Cloud Search for: "${query}"`);
 
     try {

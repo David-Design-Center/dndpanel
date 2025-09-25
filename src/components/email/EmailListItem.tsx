@@ -1,18 +1,19 @@
 import { format, parseISO, isToday, isThisYear } from 'date-fns';
 import { Email } from '@/types';
-import { Paperclip, Mail, MailOpen, Star, Trash2, Tag, Filter, ChevronRight, Search, Settings, X, Plus } from 'lucide-react';
+import { Paperclip, Mail, MailOpen, Star, Trash2, Tag, Filter, ChevronRight, Search, Settings, X, Plus, Flag } from 'lucide-react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { markAsRead, markAsUnread, markAsImportant, markAsUnimportant, deleteDraft, deleteEmail, applyLabelsToEmail } from '@/services/emailService';
+import { markAsRead, markAsUnread, markAsImportant, markAsUnimportant, deleteDraft, deleteEmail, applyLabelsToEmail, markAsStarred, markAsUnstarred } from '@/services/emailService';
 import { toast } from 'sonner';
 import { emitLabelUpdateEvent } from '@/utils/labelUpdateEvents';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { useLabel } from '@/contexts/LabelContext';
 import { useFilterCreation } from '@/contexts/FilterCreationContext';
 import { cleanEmailSubject, cleanEncodingIssues } from '@/utils/textEncoding';
 import { formatRecipients, cleanEmailAddress } from '@/utils/emailFormatting';
+import { parseEmailAddress, formatDisplayName } from '@/utils/emailAddress';
 
 interface EmailListItemProps {
   email: Email;
@@ -32,6 +33,7 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
   const { startFilterCreation } = useFilterCreation();
   const [isToggling, setIsToggling] = useState(false);
   const [isTogglingImportance, setIsTogglingImportance] = useState(false);
+  const [isTogglingStar, setIsTogglingStar] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; show: boolean }>({ x: 0, y: 0, show: false });
   const [showLabelSubmenu, setShowLabelSubmenu] = useState(false);
   const [showFilterSubmenu, setShowFilterSubmenu] = useState(false);
@@ -66,23 +68,7 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
     label.name.toLowerCase().includes(filterLabelQuery.toLowerCase())
   );
 
-  // Get user-visible labels for this email (excluding system labels)
-  const getUserVisibleLabels = () => {
-    if (!email.labelIds || email.labelIds.length === 0) return [];
-    
-    const systemLabels = ['INBOX', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'IMPORTANT', 'STARRED', 'UNREAD'];
-    
-    return email.labelIds
-      .filter(labelId => !systemLabels.includes(labelId))
-      .map(labelId => {
-        // Find the label name from the labels context
-        const labelInfo = labels.find(label => label.id === labelId);
-        return labelInfo ? { id: labelId, name: labelInfo.name } : null;
-      })
-      .filter(Boolean) as { id: string; name: string }[];
-  };
-
-  const visibleLabels = getUserVisibleLabels();
+  // We intentionally do not render user-visible label chips in the row to keep single-line layout
   
   const {
     attributes,
@@ -100,6 +86,8 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
     transform: CSS.Transform.toString(transform),
     transition
   };
+
+  // Clean Gmail-style layout without preview text for better readability
 
   const handleToggleReadStatus = (e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent email click
@@ -180,6 +168,21 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
       onEmailUpdate?.(revertedEmail);
     } finally {
       setIsTogglingImportance(false);
+    }
+  };
+
+  const handleToggleStar = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsTogglingStar(true);
+    const current = email.isStarred ?? false;
+    const updated = { ...email, isStarred: !current };
+    onEmailUpdate?.(updated);
+    try {
+      if (current) await markAsUnstarred(email.id); else await markAsStarred(email.id);
+    } catch (err) {
+      onEmailUpdate?.({ ...email, isStarred: current });
+    } finally {
+      setIsTogglingStar(false);
     }
   };
 
@@ -469,12 +472,12 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
     <>
       <div
         ref={setNodeRef}
-        style={style}
+        style={{ ...style, maxHeight: '32px', height: '32px', lineHeight: '32px' }}
         {...attributes}
         {...listeners}
         onClick={handleEmailClick}
         onContextMenu={handleContextMenu}
-        className={`group flex items-center px-4 py-2 border-b border-gray-200 cursor-pointer select-none transition-colors ${
+        className={`group flex items-center px-4 pr-4 overflow-hidden border-b border-gray-100 cursor-pointer select-none transition-colors ${
           !email.isRead ? 'bg-blue-50 hover:bg-blue-100/60' : 'bg-white hover:bg-gray-50'
         } ${isDragging ? 'opacity-50 z-10' : ''} ${isSelected ? 'bg-blue-100' : ''}`}
         data-dragging={isDragging}
@@ -493,65 +496,88 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
           />
         )}
 
-        {/* Star (always visible like Gmail) */}
+        {/* Star (STARRED) */}
         <button
-          onClick={handleToggleImportance}
-          disabled={isTogglingImportance}
-          className={`mr-3 p-1 rounded transition-colors ${isTogglingImportance ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-200'}`}
-          title={email.isImportant ? 'Unstar' : 'Star'}
+          onClick={handleToggleStar}
+          disabled={isTogglingStar}
+          className={`mr-3 p-1 rounded transition-colors ${isTogglingStar ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-200'}`}
+          title={email.isStarred ? 'Remove star' : 'Add star'}
         >
-          {email.isImportant ? (
+          {email.isStarred ? (
             <Star size={16} className="text-yellow-500 fill-yellow-500" />
           ) : (
             <Star size={16} className="text-gray-400 group-hover:text-yellow-400" />
           )}
         </button>
 
+        {/* Important (IMPORTANT) */}
+        <button
+          onClick={handleToggleImportance}
+          disabled={isTogglingImportance}
+          className={`mr-3 p-1 rounded transition-colors ${isTogglingImportance ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-200'}`}
+          title={email.isImportant ? 'Mark not important' : 'Mark important'}
+        >
+          {email.isImportant ? (
+            <Flag size={16} className="text-orange-500 fill-orange-500" />
+          ) : (
+            <Flag size={16} className="text-gray-400 group-hover:text-orange-400" />
+          )}
+        </button>
+
         {/* Content */}
         <div className="flex-1 min-w-0 flex items-center gap-4">
           {/* Sender */}
-          <span className={`text-sm truncate w-48 flex-shrink-0 ${!email.isRead ? 'font-bold text-gray-900' : 'text-gray-800'}`}>
+          <span 
+            className={`block text-sm truncate w-44 flex-shrink-0 whitespace-nowrap overflow-hidden leading-5 ${!email.isRead ? 'font-medium text-gray-900' : 'text-gray-700'}`}
+            style={{ maxHeight: '20px', lineHeight: '20px', height: '20px' }}
+          >
             {currentTab === 'sent'
               ? formatRecipients(email.to || [], 35)
               : (() => {
                   const rawName = cleanEncodingIssues(email.from?.name) || '';
                   const rawEmail = cleanEmailAddress(email.from?.email) || '';
-                  const meAddresses = ['david.v@dnddesigncenter.com','marti@dnddesigncenter.com','martisuvorov12@gmail.com'];
+                  const parsedFrom = parseEmailAddress(rawName || rawEmail);
+                  const displayFrom = formatDisplayName(parsedFrom);
+                  const meAddresses = ['david.v@dnddesigncenter.com','',''];
                   const isFromMe = rawEmail && meAddresses.includes(rawEmail.toLowerCase());
                   // If the message is a draft authored by me, prefer first non-me recipient's display name
                   if (isFromMe && (email.labelIds || []).includes('DRAFT')) {
                     const primaryRecipient = (email.to || []).find(r => r.email && !meAddresses.includes(r.email.toLowerCase()));
                     if (primaryRecipient) {
-                      const recipName = primaryRecipient.name?.trim();
-                      if (recipName && recipName.toLowerCase() !== primaryRecipient.email.toLowerCase()) return recipName;
+                      const recipParsed = parseEmailAddress(cleanEncodingIssues(primaryRecipient.name) || cleanEmailAddress(primaryRecipient.email));
+                      const recipDisplay = formatDisplayName(recipParsed);
+                      if (recipDisplay) return recipDisplay;
                       if (primaryRecipient.email) return primaryRecipient.email.split('@')[0];
                     }
                     return 'Me';
                   }
                   if (isFromMe) return 'Me';
-                  if (rawName && rawName.toLowerCase() !== rawEmail.toLowerCase()) return rawName;
-                  if (rawEmail) {
-                    const local = rawEmail.split('@')[0];
-                    return local || rawEmail;
+                  if (displayFrom) return displayFrom;
+                  if (parsedFrom?.email) {
+                    const local = parsedFrom.email.split('@')[0];
+                    return local || parsedFrom.email;
                   }
                   return 'Me';
                 })()}
           </span>
 
-          {/* Subject + preview */}
-          <div className="flex-1 min-w-0 text-sm truncate">
-            <span className={`${!email.isRead ? 'font-bold text-gray-900' : 'text-gray-800'}`}>
-              {cleanEmailSubject(email.subject || 'No Subject')}
+          {/* Gmail-style row: sender + subject + snippet */}
+          <div className="flex flex-1 min-w-0 items-center gap-2 text-sm overflow-hidden">
+            {/* Subject */}
+            <span
+              className={`${!email.isRead ? "font-medium text-gray-900" : "text-gray-700"} truncate whitespace-nowrap`}
+              style={{ lineHeight: "20px", maxHeight: "20px" }}
+            >
+              {cleanEmailSubject(email.subject || "No Subject")}
             </span>
-            <span className={`ml-1 ${!email.isRead ? 'text-gray-700' : 'text-gray-500'}`}>
-              {email.preview}
+
+            {/* Snippet */}
+            <span
+              className="text-gray-500 truncate whitespace-nowrap"
+              style={{ lineHeight: "20px", maxHeight: "20px" }}
+            >
+              {email.body}
             </span>
-            {/* First user label (optional) */}
-            {visibleLabels.length > 0 && (
-              <span className="ml-2 px-1.5 py-0.5 bg-gray-100 text-gray-600 border border-gray-200 rounded text-[10px] font-medium uppercase tracking-wide">
-                {visibleLabels[0].name}
-              </span>
-            )}
           </div>
 
           {/* Attachment icon */}
@@ -560,9 +586,9 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
           )}
         </div>
 
-        {/* Right side actions */}
-        <div className="flex items-center gap-2 ml-4">
-          <span className="text-xs text-gray-500 whitespace-nowrap w-16 text-right">
+  {/* Right side actions (fixed width to avoid overlap) */}
+  <div className="flex items-center gap-2 ml-4 w-20 justify-end flex-shrink-0">
+          <span className="text-xs text-gray-500 whitespace-nowrap text-right">
             {formattedDate}
           </span>
           <div className="hidden group-hover:flex items-center gap-1">

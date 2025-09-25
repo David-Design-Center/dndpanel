@@ -37,6 +37,8 @@ interface InvoiceCardsProps {
   onDeleteInvoice?: (invoiceId: string, orderNumber: string) => void;
   showDeleteButton?: boolean;
   deletingInvoice?: string | null;
+  hidePrice?: boolean;
+  dataSource?: 'invoices' | 'orders'; // Specify which tables to query
 }
 
 interface MousePos {
@@ -142,6 +144,20 @@ const InvoiceSlot: React.FC<{
           <div className="flex items-center space-x-1">
             <span className="text-xs truncate">{invoice.date}</span>
           </div>
+          {invoice.description && (
+            <p className="text-[11px] leading-tight text-white/80 line-clamp-3">
+              {invoice.description}
+            </p>
+          )}
+          {invoice.items && invoice.items.length > 0 && (
+            <ul className="space-y-1 text-[10px] text-white/80">
+              {invoice.items.slice(0, 3).map((item, idx) => (
+                <li key={idx} className="truncate">
+                  {item}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
 
         {/* Footer */}
@@ -170,7 +186,8 @@ const InvoiceCard: React.FC<{
   onDeleteInvoice?: (invoiceId: string, orderNumber: string) => void;
   showDeleteButton?: boolean;
   deletingInvoice?: string | null;
-}> = ({ invoiceEdit, onEditInvoice, onPreviewInvoice, onDeleteInvoice, showDeleteButton = false, deletingInvoice }) => {
+  hidePrice?: boolean;
+}> = ({ invoiceEdit, onEditInvoice, onPreviewInvoice, onDeleteInvoice, showDeleteButton = false, deletingInvoice, hidePrice = false }) => {
   const [mousePos, setMousePos] = useState<MousePos>({ x: 0, y: 0 });
   const [hovered, setHovered] = useState(false);
 
@@ -218,10 +235,14 @@ const InvoiceCard: React.FC<{
                 {invoiceEdit.originalInvoice.name}
               </h3>
               <div className="flex items-center space-x-2 text-xs text-slate-300 mt-1">
-                <span className="flex items-center space-x-1">
-                  <span>{invoiceEdit.originalInvoice.price}</span>
-                </span>
-                <span className="font-mono">#{invoiceEdit.originalInvoice.orderNumber}</span>
+                {!hidePrice && (
+                  <span className="flex items-center space-x-1">
+                    <span>{invoiceEdit.originalInvoice.price}</span>
+                  </span>
+                )}
+                {invoiceEdit.originalInvoice.orderNumber && (
+                  <span className="font-mono">#{invoiceEdit.originalInvoice.orderNumber}</span>
+                )}
               </div>
             </div>
           </div>
@@ -294,7 +315,9 @@ export function InvoiceCards({
   onEditInvoice, 
   onDeleteInvoice, 
   showDeleteButton = false, 
-  deletingInvoice 
+  deletingInvoice,
+  hidePrice = false,
+  dataSource = 'invoices'
 }: InvoiceCardsProps) {
   const [previewModal, setPreviewModal] = useState<{
     isOpen: boolean;
@@ -308,24 +331,45 @@ export function InvoiceCards({
 
   const fetchInvoiceDetails = async (invoiceId: string) => {
     try {
-      // Fetch invoice details
-      const { data: invoiceData, error: invoiceError } = await supabase
-        .from('invoices')
-        .select('*')
-        .eq('id', invoiceId)
-        .single();
+      if (dataSource === 'orders') {
+        // Fetch order details with supplier info
+        const { data: orderData, error: orderError } = await supabase
+          .from('orders')
+          .select('*, suppliers(*)')
+          .eq('id', invoiceId)
+          .single();
 
-      if (invoiceError) throw invoiceError;
+        if (orderError) throw orderError;
 
-      // Fetch line items
-      const { data: lineItemsData, error: lineItemsError } = await supabase
-        .from('invoice_line_items')
-        .select('*')
-        .eq('invoice_id', invoiceId);
+        // Fetch order line items
+        const { data: lineItemsData, error: lineItemsError } = await supabase
+          .from('orders_line_items')
+          .select('*')
+          .eq('order_id', invoiceId);
 
-      if (lineItemsError) throw lineItemsError;
+        if (lineItemsError) throw lineItemsError;
 
-      return { invoice: invoiceData, lineItems: lineItemsData || [] };
+        return { invoice: orderData, lineItems: lineItemsData || [] };
+      } else {
+        // Fetch invoice details (default behavior)
+        const { data: invoiceData, error: invoiceError } = await supabase
+          .from('invoices')
+          .select('*')
+          .eq('id', invoiceId)
+          .single();
+
+        if (invoiceError) throw invoiceError;
+
+        // Fetch line items
+        const { data: lineItemsData, error: lineItemsError } = await supabase
+          .from('invoice_line_items')
+          .select('*')
+          .eq('invoice_id', invoiceId);
+
+        if (lineItemsError) throw lineItemsError;
+
+        return { invoice: invoiceData, lineItems: lineItemsData || [] };
+      }
     } catch (error) {
       console.error('Error fetching invoice details:', error);
       return null;
@@ -371,6 +415,7 @@ export function InvoiceCards({
               onDeleteInvoice={onDeleteInvoice}
               showDeleteButton={showDeleteButton}
               deletingInvoice={deletingInvoice}
+              hidePrice={hidePrice}
             />
           </motion.div>
         ))}
@@ -383,6 +428,7 @@ export function InvoiceCards({
           onClose={closePreviewModal}
           invoice={previewModal.invoice}
           lineItems={previewModal.lineItems}
+          dataSource={dataSource}
         />
       )}
     </div>

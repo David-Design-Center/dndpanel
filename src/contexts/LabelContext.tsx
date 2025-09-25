@@ -7,6 +7,8 @@ import { useProfile } from './ProfileContext';
 import { useSecurity } from './SecurityContext';
 import { devLog } from '../utils/logging';
 import { shouldBlockDataFetches } from '../utils/authFlowUtils';
+import { emitLoadingProgress } from '@/utils/loadingProgress';
+import { subscribeLabelUpdateEvent } from '../utils/labelUpdateEvents';
 
 interface LabelContextType {
   labels: GmailLabel[];
@@ -42,6 +44,29 @@ const INBOX_UNREAD_HARD_LIMIT = 100;
 const UNREAD_BATCH_SIZE = 100;
 const MAX_UNREAD_PAGES = 10; // safety guard to avoid runaway pagination
 const DRAFT_BATCH_SIZE = 100;
+const USER_LABEL_BATCH_SIZE = 10;
+const USER_LABEL_DETAIL_DELAY_MS = 150;
+const USER_LABEL_RETRY_LIMIT = 2;
+
+const SYSTEM_LABEL_IDS = new Set([
+  'INBOX',
+  'DRAFT',
+  'DRAFTS',
+  'SENT',
+  'TRASH',
+  'SPAM',
+  'STARRED',
+  'IMPORTANT',
+  'UNREAD',
+  'CATEGORY_PERSONAL',
+  'CATEGORY_SOCIAL',
+  'CATEGORY_PROMOTIONS',
+  'CATEGORY_UPDATES',
+  'CATEGORY_FORUMS',
+  'CHAT'
+]);
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 const getRolling24hCutoffUnixSeconds = (): number => Math.floor((Date.now() - 24 * 60 * 60 * 1000) / 1000);
 
@@ -112,6 +137,8 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
   // Request coalescing to prevent duplicate label fetches
   const inFlightRequest = useRef<Promise<GmailLabel[]> | null>(null);
   const lastLoadedAt = useRef<number>(0);
+  const userLabelDetailsInFlight = useRef<{ cacheKey: string | null; promise: Promise<void> | null }>({ cacheKey: null, promise: null });
+  const hydratedLabelIdsRef = useRef<Set<string>>(new Set());
   
   const [isAddingLabel, setIsAddingLabel] = useState(false);
   const [addLabelError, setAddLabelError] = useState<string | null>(null);
@@ -144,6 +171,16 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
   const RECENT_MIN_INTERVAL = 15 * 1000; // throttle repeated refreshes (15s)
   // Separate ref for lastUpdated to avoid recreating callback & causing loops
   const recentLastUpdatedRef = useRef<number | null>(null);
+  const countersProgressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (countersProgressTimerRef.current) {
+        clearTimeout(countersProgressTimerRef.current);
+        countersProgressTimerRef.current = null;
+      }
+    };
+  }, []);
 
   /**
    * Refresh recent dynamic counts.
@@ -163,6 +200,7 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     if (!force && last && (now - last) < RECENT_MIN_INTERVAL) return;
     if (recentInFlight.current) return;
 
+    emitLoadingProgress('counters', 'start');
     setRecentCounts(rc => ({ ...rc, isRefreshing: true }));
 
     recentInFlight.current = (async () => {
@@ -198,9 +236,22 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
 
           return next;
         });
+
+        if (countersProgressTimerRef.current) {
+          clearTimeout(countersProgressTimerRef.current);
+        }
+        countersProgressTimerRef.current = setTimeout(() => {
+          emitLoadingProgress('counters', 'success');
+          countersProgressTimerRef.current = null;
+        }, 10000);
       } catch (error) {
         console.error('⚠️ Recent counts refresh failed', error);
         setRecentCounts(prev => ({ ...prev, isRefreshing: false }));
+        if (countersProgressTimerRef.current) {
+          clearTimeout(countersProgressTimerRef.current);
+          countersProgressTimerRef.current = null;
+        }
+        emitLoadingProgress('counters', 'error');
       } finally {
         recentInFlight.current = null;
       }
@@ -282,6 +333,154 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const hydrateUserLabelCounts = useCallback((baseLabels: GmailLabel[], cacheKey: string) => {
+    if (!isGmailSignedIn || !isGmailApiReady) return;
+    if (!baseLabels?.length) return;
+    if (typeof window === 'undefined' || !(window as any)?.gapi?.client?.gmail?.users?.labels?.get) return;
+
+    const labelsNeedingDetails = baseLabels.filter(label => {
+      if (!label.id) return false;
+      if (hydratedLabelIdsRef.current.has(label.id)) return false;
+      const idUpper = label.id.toUpperCase();
+      const isSystem = label.type === 'system' || SYSTEM_LABEL_IDS.has(idUpper);
+      return !isSystem;
+    });
+
+    if (labelsNeedingDetails.length === 0) return;
+
+    if (
+      userLabelDetailsInFlight.current.promise &&
+      userLabelDetailsInFlight.current.cacheKey === cacheKey
+    ) {
+      return;
+    }
+
+    const fetchDetailWithRetry = async (labelId: string, attempt = 0): Promise<any | null> => {
+      try {
+        return await (window as any).gapi.client.gmail.users.labels.get({
+          userId: 'me',
+          id: labelId
+        });
+      } catch (error: any) {
+        if (error?.status === 429 && attempt < USER_LABEL_RETRY_LIMIT) {
+          const backoff = 400 * (attempt + 1);
+          console.warn(`⚠️ Rate limited fetching label ${labelId}, retrying in ${backoff}ms`);
+          await sleep(backoff);
+          return fetchDetailWithRetry(labelId, attempt + 1);
+        }
+        console.warn(`⚠️ Failed to fetch label detail for ${labelId}:`, error);
+        return null;
+      }
+    };
+
+    const promise = (async () => {
+      console.log(`📬 Hydrating unread counts for ${labelsNeedingDetails.length} user labels...`);
+      for (let start = 0; start < labelsNeedingDetails.length; start += USER_LABEL_BATCH_SIZE) {
+        const batch = labelsNeedingDetails.slice(start, start + USER_LABEL_BATCH_SIZE);
+        const responses = await Promise.all(
+          batch.map(label => fetchDetailWithRetry(label.id))
+        );
+
+        const updates: Record<string, Partial<GmailLabel>> = {};
+        responses.forEach((response, idx) => {
+          const detail = response?.result;
+          const original = batch[idx];
+          if (!detail?.id || !original) return;
+          hydratedLabelIdsRef.current.add(detail.id);
+          updates[detail.id] = {
+            messagesUnread: detail.messagesUnread ?? 0,
+            messagesTotal: detail.messagesTotal ?? 0,
+            threadsUnread: detail.threadsUnread ?? 0,
+            threadsTotal: detail.threadsTotal ?? 0,
+            messageListVisibility: detail.messageListVisibility ?? original.messageListVisibility,
+            labelListVisibility: detail.labelListVisibility ?? original.labelListVisibility,
+            type: detail.type ?? original.type
+          };
+        });
+
+        if (Object.keys(updates).length > 0) {
+          let nextSnapshot: GmailLabel[] | null = null;
+          setLabels(prev => {
+            let mutated = false;
+            const next = prev.map(label => {
+              const update = updates[label.id];
+              if (update) {
+                mutated = true;
+                return {
+                  ...label,
+                  ...update
+                };
+              }
+              return label;
+            });
+            if (mutated) {
+              nextSnapshot = next;
+              return next;
+            }
+            return prev;
+          });
+
+          if (nextSnapshot && labelsCache.current[cacheKey]) {
+            labelsCache.current[cacheKey] = {
+              labels: nextSnapshot,
+              timestamp: Date.now()
+            };
+          }
+        }
+
+        if (start + USER_LABEL_BATCH_SIZE < labelsNeedingDetails.length) {
+          await sleep(USER_LABEL_DETAIL_DELAY_MS);
+        }
+      }
+      console.log('✅ Finished hydrating user label counts');
+    })();
+
+    userLabelDetailsInFlight.current = { cacheKey, promise };
+    promise.finally(() => {
+      if (userLabelDetailsInFlight.current.promise === promise) {
+        userLabelDetailsInFlight.current = { cacheKey: null, promise: null };
+      }
+    });
+  }, [isGmailSignedIn, isGmailApiReady, setLabels]);
+
+  useEffect(() => {
+    if (!isGmailSignedIn) return;
+
+    const unsubscribe = subscribeLabelUpdateEvent(detail => {
+      const delta = detail.action === 'mark-unread' ? 1 : -1;
+      if (!delta) return;
+
+      setLabels(prev => {
+        if (!prev.length) return prev;
+        let changed = false;
+
+        const next = prev.map(label => {
+          if (!label.id || !detail.labelIds.includes(label.id)) {
+            return label;
+          }
+
+          const currentUnread = label.messagesUnread ?? 0;
+          const updatedUnread = Math.max(0, currentUnread + delta);
+          if (updatedUnread === currentUnread) {
+            return label;
+          }
+
+          changed = true;
+          return {
+            ...label,
+            messagesUnread: updatedUnread
+          };
+        });
+
+        return changed ? next : prev;
+      });
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [isGmailSignedIn]);
+
   const refreshLabels = useCallback(async () => {
     // Security check: Block all data fetches during auth flow
     if (shouldBlockDataFetches(location.pathname)) {
@@ -307,6 +506,9 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    const startProgress = () => emitLoadingProgress('labels', 'start');
+    const finishProgress = (status: 'success' | 'error') => emitLoadingProgress('labels', status);
+
     // Check cache first to prevent unnecessary API calls
     // Use profile userEmail + ID for cache key to ensure separation between different profiles
     const cacheKey = `${currentProfile.id}-${currentProfile.userEmail || 'no-email'}`;
@@ -314,7 +516,10 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     const cached = labelsCache.current[cacheKey];
     if (cached && (Date.now() - cached.timestamp) < CACHE_DURATION) {
       console.log('📦 Using cached labels for profile:', currentProfile.name);
+      startProgress();
       setLabels(cached.labels);
+      hydrateUserLabelCounts(cached.labels, cacheKey);
+      finishProgress('success');
       return;
     }
 
@@ -334,6 +539,7 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
+      startProgress();
       setLoadingLabels(true);
       setError(null);
       
@@ -353,27 +559,40 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       setLabels(gmailLabels);
       
       // Cache the result with the same key format
-      const cacheKey = `${currentProfile.id}-${currentProfile.userEmail || 'no-email'}`;
       labelsCache.current[cacheKey] = {
         labels: gmailLabels,
         timestamp: Date.now()
       };
+
+      hydrateUserLabelCounts(gmailLabels, cacheKey);
+      finishProgress('success');
       
     } catch (err) {
       console.error('Error fetching Gmail labels:', err);
       const errorMessage = err instanceof Error ? err.message : 'Failed to fetch labels';
       setError(errorMessage);
+      finishProgress('error');
       
       // Don't clear existing labels on error, keep showing what we have
       // This prevents the UI from going blank during rate limit errors
     } finally {
       setLoadingLabels(false);
     }
-  }, [isGmailSignedIn, isGmailApiReady, currentProfile?.id, isDataLoadingAllowed, authFlowCompleted]); // Removed location.pathname to prevent unnecessary refreshes on navigation
+  }, [
+    isGmailSignedIn,
+    isGmailApiReady,
+    currentProfile?.id,
+    currentProfile?.userEmail,
+    isDataLoadingAllowed,
+    authFlowCompleted,
+    hydrateUserLabelCounts
+  ]); // Removed location.pathname to prevent unnecessary refreshes on navigation
 
   const clearLabelsCache = () => {
     console.log('🗑️ Clearing labels cache');
     labelsCache.current = {};
+    hydratedLabelIdsRef.current.clear();
+    userLabelDetailsInFlight.current = { cacheKey: null, promise: null };
     setLabels([]);
     setError(null);
     setLoadingLabels(false);

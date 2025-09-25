@@ -15,6 +15,8 @@ import {
   markGmailMessageAsUnread,
   markGmailMessageAsStarred,
   markGmailMessageAsUnstarred,
+  markGmailMessageAsImportant,
+  markGmailMessageAsUnimportant,
   applyGmailLabels,
   getGmailUserProfile,
   saveGmailDraft,
@@ -626,6 +628,7 @@ export const getDraftEmails = async (_forceRefresh = false): Promise<Email[]> =>
           // Preserve unread status if Gmail marks draft with UNREAD label
           isRead: !(message.labelIds || []).includes('UNREAD'),
           isImportant: message.labelIds?.includes('IMPORTANT'),
+          isStarred: message.labelIds?.includes('STARRED'),
           date: format(new Date(dateHeader), "yyyy-MM-dd'T'HH:mm:ss"),
           labelIds: message.labelIds || [],
           attachments: undefined,
@@ -659,7 +662,6 @@ export const getImportantEmails = async (
   maxResults = 20, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
-  // Use labelIds for better performance
   return getEmailsByLabelIds(['IMPORTANT'], forceRefresh, maxResults, pageToken);
 };
 
@@ -668,7 +670,6 @@ export const getStarredEmails = async (
   maxResults = 20, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
-  // Use labelIds for starred emails
   return getEmailsByLabelIds(['STARRED'], forceRefresh, maxResults, pageToken);
 };
 
@@ -782,6 +783,7 @@ const getEmailsByLabelIds = async (
           preview: preview,
           isRead: !msg.result.labelIds?.includes('UNREAD'),
           isImportant: msg.result.labelIds?.includes('IMPORTANT'),
+          isStarred: msg.result.labelIds?.includes('STARRED'),
           date: format(new Date(dateHeader), "yyyy-MM-dd'T'HH:mm:ss"),
           labelIds: msg.result.labelIds || [],
           attachments: undefined,
@@ -1034,7 +1036,7 @@ export const sendReply = async (
 
     // Create the reply email object
     const replyEmail: Omit<Email, 'id' | 'date' | 'isRead' | 'preview'> = {
-      from: { 
+      from: {
         email: userProfile.email, // Use actual current user's email
         name: userProfile.name // Use actual current user's name
       },
@@ -1045,6 +1047,8 @@ export const sendReply = async (
       isImportant: false,
       labelIds: [],
       attachments: [] // Replies typically don't include original attachments
+      ,
+      internalDate: undefined
     };
 
     // Send the reply using the existing sendEmail function
@@ -1294,8 +1298,8 @@ export const getUserProfile = async (): Promise<{ name: string; email: string; p
  */
 export const markAsImportant = async (id: string): Promise<{success: boolean}> => {
   try {
-    // Try to mark as important via Gmail API first
-    await markGmailMessageAsStarred(id);
+    // Apply Gmail IMPORTANT label
+    await markGmailMessageAsImportant(id);
     
     // Only update cache after successful API call
     if (emailCache.details[id]) {
@@ -1322,8 +1326,8 @@ export const markAsImportant = async (id: string): Promise<{success: boolean}> =
  */
 export const markAsUnimportant = async (id: string): Promise<{success: boolean}> => {
   try {
-    // Try to mark as unimportant via Gmail API first
-    await markGmailMessageAsUnstarred(id);
+    // Remove Gmail IMPORTANT label
+    await markGmailMessageAsUnimportant(id);
     
     // Only update cache after successful API call
     if (emailCache.details[id]) {
@@ -1341,6 +1345,43 @@ export const markAsUnimportant = async (id: string): Promise<{success: boolean}>
     return { success: true };
   } catch (error) {
     console.error('Error marking email as unimportant:', error);
+    return { success: false };
+  }
+};
+
+/**
+ * Star / Unstar (STARRED label)
+ */
+export const markAsStarred = async (id: string): Promise<{success: boolean}> => {
+  try {
+    await markGmailMessageAsStarred(id);
+    if (emailCache.details[id]) {
+      emailCache.details[id].email.isStarred = true;
+    }
+    if (emailCache.list) {
+      const email = emailCache.list.emails.find(e => e.id === id);
+      if (email) email.isStarred = true;
+    }
+    return { success: true };
+  } catch (error) {
+    console.error('Error starring email:', error);
+    return { success: false };
+  }
+};
+
+export const markAsUnstarred = async (id: string): Promise<{success: boolean}> => {
+  try {
+    await markGmailMessageAsUnstarred(id);
+    if (emailCache.details[id]) {
+      emailCache.details[id].email.isStarred = false;
+    }
+    if (emailCache.list) {
+      const email = emailCache.list.emails.find(e => e.id === id);
+      if (email) email.isStarred = false;
+    }
+    return { success: true };
+  } catch (error) {
+    console.error('Error unstarring email:', error);
     return { success: false };
   }
 };

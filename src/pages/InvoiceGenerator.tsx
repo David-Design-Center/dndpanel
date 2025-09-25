@@ -590,7 +590,7 @@ function InvoiceGenerator({ orderId: propOrderId, onClose, isModal = false }: In
     if (onClose) {
       onClose();
     } else {
-      navigate('/orders');
+      navigate('/invoices');
     }
   };
 
