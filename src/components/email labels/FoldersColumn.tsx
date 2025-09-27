@@ -480,7 +480,13 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
                     <MoreVertical size={10} className="text-gray-400" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuContent
+                  side="right"
+                  align="start"
+                  sideOffset={8}
+                  collisionPadding={12}
+                  className="w-48"
+                >
                   <DropdownMenuItem onClick={() => handleOpenFilters(node)}>
                     <Filter size={14} className="mr-2" />
                     Filters
@@ -685,7 +691,7 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
               </div>
 
                             {/* Folders List */}
-              <div className="flex-1 overflow-y-auto custom-scrollbar">
+              <div className="flex-1 overflow-y-auto custom-scrollbar pb-32">
                 <div className="space-y-4">
                   {/* Categories Section */}
                   <div className="p-2">
@@ -707,18 +713,13 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
                                   <div className="flex items-center space-x-2 min-w-0 flex-1">
                                     <IconComponent
                                       size={18}
-                                      className={`flex-shrink-0 transition-transform duration-200 group-hover:-rotate-12`}
+                                      className="flex-shrink-0 transition-transform duration-200 group-hover:-rotate-12"
                                       style={{ color: folder.color, opacity: isActive ? 0.8 : 1 }}
                                     />
                                     <span className="text-gray-900 truncate">{folder.name}</span>
                                   </div>
-                                  
-                                    {/* Count badges logic: 
-                                      - Inbox: always show unread (capped 99+)
-                                      - Drafts: show TOTAL drafts (exact, no cap)
-                                      - Sent: never show a badge
-                                      - Others: show unread only if > 0 (capped 99+)
-                                  */}
+
+                                  {/* Count badges logic: Inbox (unread), Drafts (total), others suppressed */}
                                   {(() => {
                                     const isInbox = folder.name === 'Inbox';
                                     const isDrafts = folder.name === 'Drafts';

@@ -6,14 +6,19 @@ import { CSS } from '@dnd-kit/utilities';
 import { markAsRead, markAsUnread, markAsImportant, markAsUnimportant, deleteDraft, deleteEmail, applyLabelsToEmail, markAsStarred, markAsUnstarred } from '@/services/emailService';
 import { toast } from 'sonner';
 import { emitLabelUpdateEvent } from '@/utils/labelUpdateEvents';
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { useLabel } from '@/contexts/LabelContext';
+import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Button } from '@/components/ui/button';
+import { TableRow, TableCell } from '@/components/ui/table';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { createGmailFilter, fetchGmailLabels } from '@/integrations/gapiService';
 import { useFilterCreation } from '@/contexts/FilterCreationContext';
 import { cleanEmailSubject, cleanEncodingIssues } from '@/utils/textEncoding';
-import { formatRecipients, cleanEmailAddress } from '@/utils/emailFormatting';
-import { parseEmailAddress, formatDisplayName } from '@/utils/emailAddress';
+import { cleanEmailAddress } from '@/utils/emailFormatting';
 
 interface EmailListItemProps {
   email: Email;
@@ -26,9 +31,10 @@ interface EmailListItemProps {
   onCreateFilter?: (email: Email) => void;
   isSelected?: boolean;
   onToggleSelect?: (emailId: string) => void;
+  renderAsTableRow?: boolean; // when true, render shadcn TableRow; fallback to div for drag overlay
 }
 
-function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEmailDelete, isDraft = false, currentTab, onCreateFilter, isSelected = false, onToggleSelect }: EmailListItemProps) {
+function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEmailDelete, isDraft = false, onCreateFilter, isSelected = false, onToggleSelect, renderAsTableRow = true }: EmailListItemProps) {
   const navigate = useNavigate();
   const { startFilterCreation } = useFilterCreation();
   const [isToggling, setIsToggling] = useState(false);
@@ -36,6 +42,7 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
   const [isTogglingStar, setIsTogglingStar] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; show: boolean }>({ x: 0, y: 0, show: false });
   const [showLabelSubmenu, setShowLabelSubmenu] = useState(false);
+  const hideLabelTimerRef = useRef<number | null>(null);
   const [showFilterSubmenu, setShowFilterSubmenu] = useState(false);
   const [showCreateFilterModal, setShowCreateFilterModal] = useState(false);
   const [isApplyingLabel, setIsApplyingLabel] = useState<string | null>(null);
@@ -45,7 +52,13 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const labelSearchRef = useRef<HTMLInputElement>(null);
   const filterModalRef = useRef<HTMLDivElement>(null);
-  const { labels } = useLabel();
+  const createLabelModalRef = useRef<HTMLDivElement>(null);
+  const [showCreateLabelModal, setShowCreateLabelModal] = useState(false);
+  const [newLabelName, setNewLabelName] = useState('');
+  const [nestUnder, setNestUnder] = useState(false);
+  const [parentLabel, setParentLabel] = useState('');
+  const [autoFilterFuture, setAutoFilterFuture] = useState(false);
+  const { labels, addLabel } = useLabel();
   // Gmail-style date/time display
   const formattedDate = (() => {
     try {
@@ -57,11 +70,61 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
       return email.date;
     }
   })();
+
+  // Format sender text for display
+  const senderText = (() => {
+    if (email.from?.name) {
+      return cleanEncodingIssues(email.from.name);
+    }
+    if (email.from?.email) {
+      return cleanEmailAddress(email.from.email);
+    }
+    return 'Unknown Sender';
+  })();
   
-  // Filter labels based on search query
-  const filteredLabels = labels.filter(label => 
-    label.name.toLowerCase().includes(labelSearchQuery.toLowerCase())
-  );
+  // Filter labels based on FoldersColumn rules and search query
+  const filteredLabels = labels
+    // 1) Remove system and special labels (match FoldersColumn.tsx)
+    .filter(label => {
+      const name = (label.name || '').toLowerCase();
+      return name !== 'sent' &&
+             name !== 'drafts' &&
+             name !== 'draft' &&
+             name !== 'spam' &&
+             name !== 'trash' &&
+             name !== 'important' &&
+             name !== 'starred' &&
+             name !== 'unread' &&
+             name !== 'yellow_star' &&
+             name !== 'deleted messages' &&
+             name !== 'chat' &&
+             name !== 'blocked' &&
+             name !== '[imap]' &&
+             name !== 'junk e-mail' &&
+             name !== 'notes' &&
+             !name.startsWith('category_') &&
+             !name.startsWith('label_') &&
+             !name.startsWith('[imap');
+    })
+    // 2) Remove direct INBOX label and normalize INBOX/ children
+    .filter(label => (label.name || '').toLowerCase() !== 'inbox')
+    .map(label => {
+      const rawName = label.name || '';
+      const displayName = rawName.startsWith('INBOX/') ? rawName.substring(6) : rawName;
+      return { ...label, displayName } as typeof label & { displayName: string };
+    })
+    // 3) Drop any empties after normalization
+    .filter(label => label.displayName.length > 0)
+    // 4) Search on the display name
+    .filter(label => label.displayName.toLowerCase().includes(labelSearchQuery.toLowerCase()))
+    // 5) Sort alphabetically by display name
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+  const hasExactLabelMatch = (() => {
+    const q = labelSearchQuery.trim().toLowerCase();
+    if (!q) return false;
+    return filteredLabels.some(l => (l as any).displayName.toLowerCase() === q);
+  })();
   
   // Filter labels for the filter modal
   const filteredFilterLabels = labels.filter(label => 
@@ -320,6 +383,11 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
   // Handle clicking outside context menu
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
+      // While the Create Label modal is open, don't auto-close anything via outside clicks.
+      // This prevents the Select's portal clicks from collapsing the menus.
+      if (showCreateLabelModal) {
+        return;
+      }
       if (contextMenuRef.current && !contextMenuRef.current.contains(event.target as Node)) {
         setContextMenu({ x: 0, y: 0, show: false });
         setShowLabelSubmenu(false);
@@ -331,10 +399,21 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
       if (filterModalRef.current && !filterModalRef.current.contains(event.target as Node) && showCreateFilterModal) {
         handleCloseCreateFilterModal();
       }
+
+      // Handle clicking outside create label modal
+      if (createLabelModalRef.current && !createLabelModalRef.current.contains(event.target as Node) && showCreateLabelModal) {
+        setShowCreateLabelModal(false);
+      }
     };
 
-    const handleScroll = () => {
-      // Close context menu on scroll to avoid positioning issues
+    const handleScroll = (event: Event) => {
+      if (showCreateLabelModal) return; // don't close while creating a label
+      // Allow scrolling inside the context menu/submenus without closing
+      const target = event.target as Node | null;
+      if (contextMenuRef.current && target && contextMenuRef.current.contains(target)) {
+        return; // Ignore internal scrolls
+      }
+      // Close on page/outer container scrolls
       if (contextMenu.show) {
         setContextMenu({ x: 0, y: 0, show: false });
         setShowLabelSubmenu(false);
@@ -344,6 +423,7 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
     };
 
     const handleResize = () => {
+      if (showCreateLabelModal) return; // don't close while creating a label
       // Close context menu on window resize
       if (contextMenu.show) {
         setContextMenu({ x: 0, y: 0, show: false });
@@ -353,7 +433,7 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
       }
     };
 
-    if (contextMenu.show || showCreateFilterModal) {
+    if (contextMenu.show || showCreateFilterModal || showCreateLabelModal) {
       document.addEventListener('mousedown', handleClickOutside);
       document.addEventListener('scroll', handleScroll, true); // Use capture to catch all scroll events
       window.addEventListener('resize', handleResize);
@@ -364,7 +444,56 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
         window.removeEventListener('resize', handleResize);
       };
     }
-  }, [contextMenu.show]);
+  }, [contextMenu.show, showCreateFilterModal, showCreateLabelModal]);
+
+  const openCreateLabelModal = () => {
+    setNewLabelName(labelSearchQuery.trim());
+    setNestUnder(false);
+    setParentLabel('');
+    setShowCreateLabelModal(true);
+  };
+
+  const handleCreateLabelSubmit = async () => {
+    const base = newLabelName.trim();
+    if (!base) return;
+    const fullName = nestUnder && parentLabel ? `${parentLabel}/${base}` : base;
+    try {
+      await addLabel(fullName);
+      // Close modal and keep submenu open, set search to created label
+      setShowCreateLabelModal(false);
+      setLabelSearchQuery(fullName);
+      setShowLabelSubmenu(true);
+      // focus search input to show the result
+      setTimeout(() => labelSearchRef.current?.focus(), 0);
+      toast.success(`Label "${fullName}" created`);
+
+      // Optionally create a Gmail filter to auto-apply this label for future emails from this sender
+      if (autoFilterFuture) {
+        const sender = cleanEmailAddress(email.from?.email || '');
+        if (sender) {
+          try {
+            // Fetch latest labels to get the new label's ID reliably
+            const freshLabels = await fetchGmailLabels();
+            const created = freshLabels.find(l => l.name === fullName);
+            if (created?.id) {
+              await createGmailFilter(
+                { from: sender },
+                { addLabelIds: [created.id] }
+              );
+              toast.success('Filter created: future emails will be labeled automatically');
+            } else {
+              console.warn('Created label not found after refresh:', fullName);
+            }
+          } catch (err) {
+            console.error('Failed to create Gmail filter:', err);
+            toast.error('Could not create filter. You can add it later in Settings > Filters.');
+          }
+        }
+      }
+    } catch (err) {
+      toast.error('Failed to create label');
+    }
+  };
 
   // Handle applying label to email
   const handleApplyLabel = async (labelId: string) => {
@@ -456,19 +585,46 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
 
   // Handle label submenu show/hide
   const handleShowLabelSubmenu = () => {
+    // Cancel any pending hide and open immediately
+    if (hideLabelTimerRef.current) {
+      clearTimeout(hideLabelTimerRef.current);
+      hideLabelTimerRef.current = null;
+    }
     setShowLabelSubmenu(true);
     // Focus search input after submenu is shown
-    setTimeout(() => {
+    requestAnimationFrame(() => {
       labelSearchRef.current?.focus();
-    }, 50);
+    });
   };
 
   const handleHideLabelSubmenu = () => {
-    setShowLabelSubmenu(false);
-    setLabelSearchQuery(''); // Clear search when hiding submenu
+    // Add a small grace period for hover intent to avoid zero-zone issues
+    if (hideLabelTimerRef.current) return;
+    hideLabelTimerRef.current = window.setTimeout(() => {
+      setShowLabelSubmenu(false);
+      setLabelSearchQuery(''); // Clear search when hiding submenu
+      hideLabelTimerRef.current = null;
+    }, 200);
   };
 
-  return (
+  const cancelHideLabelSubmenu = () => {
+    if (hideLabelTimerRef.current) {
+      clearTimeout(hideLabelTimerRef.current);
+      hideLabelTimerRef.current = null;
+    }
+    setShowLabelSubmenu(true);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (hideLabelTimerRef.current) {
+        clearTimeout(hideLabelTimerRef.current);
+        hideLabelTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const RowInner = (
     <>
       <div
         ref={setNodeRef}
@@ -524,107 +680,81 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
           )}
         </button>
 
-        {/* Content */}
-        <div className="flex-1 min-w-0 flex items-center gap-4">
-          {/* Sender */}
-          <span 
-            className={`block text-sm truncate w-44 flex-shrink-0 whitespace-nowrap overflow-hidden leading-5 ${!email.isRead ? 'font-medium text-gray-900' : 'text-gray-700'}`}
-            style={{ maxHeight: '20px', lineHeight: '20px', height: '20px' }}
-          >
-            {currentTab === 'sent'
-              ? formatRecipients(email.to || [], 35)
-              : (() => {
-                  const rawName = cleanEncodingIssues(email.from?.name) || '';
-                  const rawEmail = cleanEmailAddress(email.from?.email) || '';
-                  const parsedFrom = parseEmailAddress(rawName || rawEmail);
-                  const displayFrom = formatDisplayName(parsedFrom);
-                  const meAddresses = ['david.v@dnddesigncenter.com','',''];
-                  const isFromMe = rawEmail && meAddresses.includes(rawEmail.toLowerCase());
-                  // If the message is a draft authored by me, prefer first non-me recipient's display name
-                  if (isFromMe && (email.labelIds || []).includes('DRAFT')) {
-                    const primaryRecipient = (email.to || []).find(r => r.email && !meAddresses.includes(r.email.toLowerCase()));
-                    if (primaryRecipient) {
-                      const recipParsed = parseEmailAddress(cleanEncodingIssues(primaryRecipient.name) || cleanEmailAddress(primaryRecipient.email));
-                      const recipDisplay = formatDisplayName(recipParsed);
-                      if (recipDisplay) return recipDisplay;
-                      if (primaryRecipient.email) return primaryRecipient.email.split('@')[0];
-                    }
-                    return 'Me';
-                  }
-                  if (isFromMe) return 'Me';
-                  if (displayFrom) return displayFrom;
-                  if (parsedFrom?.email) {
-                    const local = parsedFrom.email.split('@')[0];
-                    return local || parsedFrom.email;
-                  }
-                  return 'Me';
-                })()}
-          </span>
+{/* Content + Timestamp: left grows, right is a fixed wall; no absolute anywhere */}
+<div className="email-row grid grid-cols-[minmax(0,1fr)_9rem] flex-1 min-w-0 items-center gap-3">
+  {/* LEFT cell */}
+  <div className="min-w-0 overflow-hidden flex items-center gap-2 text-sm">
+    {/* Sender */}
+    <span
+      className={`sender w-44 shrink-0 truncate whitespace-nowrap leading-5 ${!email.isRead ? "font-medium text-gray-900" : "text-gray-700"}`}
+      title={senderText}
+    >
+      {senderText}
+    </span>
 
-          {/* Gmail-style row: sender + subject + snippet */}
-          <div className="flex flex-1 min-w-0 items-center gap-2 text-sm overflow-hidden">
-            {/* Subject */}
-            <span
-              className={`${!email.isRead ? "font-medium text-gray-900" : "text-gray-700"} truncate whitespace-nowrap`}
-              style={{ lineHeight: "20px", maxHeight: "20px" }}
-            >
-              {cleanEmailSubject(email.subject || "No Subject")}
-            </span>
+    {/* Subject caps its greed so it can't eat the row */}
+    <span
+      className={`subject ${!email.isRead ? "font-medium text-gray-900" : "text-gray-700"} shrink-0 max-w-[45%] truncate whitespace-nowrap leading-5`}
+      title={email.subject || "No Subject"}
+    >
+      {cleanEmailSubject(email.subject || "No Subject")}
+    </span>
 
-            {/* Snippet */}
-            <span
-              className="text-gray-500 truncate whitespace-nowrap"
-              style={{ lineHeight: "20px", maxHeight: "20px" }}
-            >
-              {email.body}
-            </span>
-          </div>
+    {/* Snippet expands until it hits the wall, then ellipsizes */}
+    <span
+      className="snippet min-w-0 flex-1 truncate whitespace-nowrap text-gray-500 leading-5"
+      title={email.body}
+    >
+      {email.body}
+    </span>
 
-          {/* Attachment icon */}
-          {email.attachments && email.attachments.length > 0 && (
-            <Paperclip size={14} className="text-gray-400 flex-shrink-0" />
-          )}
-        </div>
+    {(email.attachments?.length ?? 0) > 0 && (
+      <Paperclip size={14} className="text-gray-400 shrink-0" />
+    )}
+  </div>
 
-  {/* Right side actions (fixed width to avoid overlap) */}
-  <div className="flex items-center gap-2 ml-4 w-20 justify-end flex-shrink-0">
-          <span className="text-xs text-gray-500 whitespace-nowrap text-right">
-            {formattedDate}
-          </span>
-          <div className="hidden group-hover:flex items-center gap-1">
-            <button
-              onClick={handleToggleReadStatus}
-              disabled={isToggling}
-              className={`p-1 rounded hover:bg-gray-200 transition-colors ${isToggling ? 'opacity-50 cursor-not-allowed' : ''}`}
-              title={email.isRead ? 'Mark as unread' : 'Mark as read'}
-            >
-              {email.isRead ? (
-                <MailOpen size={14} className="text-gray-500" />
-              ) : (
-                <Mail size={14} className="text-blue-600" />
-              )}
-            </button>
-            <button
-              onClick={handleDeleteEmail}
-              className="p-1 rounded hover:bg-red-100 transition-colors"
-              title="Delete email"
-            >
-              <Trash2 size={14} className="text-gray-500 hover:text-gray-700" />
-            </button>
-            {isDraft && (
-              <button
-                onClick={handleDelete}
-                className="p-1 rounded hover:bg-red-100 transition-colors"
-                title="Delete draft"
-              >
-                <Trash2 size={14} className="text-red-500 hover:text-red-700" />
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
+  {/* RIGHT cell: fixed-width wall; swap content by visibility, not position */}
+  <div className="w-36 flex items-center justify-end gap-1">
+    <span className="text-xs text-gray-500 whitespace-nowrap tabular-nums group-hover:hidden">
+      {formattedDate}
+    </span>
 
-      {/* Context Menu - Rendered in Portal */}
+    <div className="hidden group-hover:flex items-center gap-1">
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={handleToggleReadStatus}
+        disabled={isToggling}
+        title={email.isRead ? "Mark as unread" : "Mark as read"}
+      >
+        {email.isRead ? <MailOpen size={14} className="text-gray-500" /> : <Mail size={14} className="text-blue-600" />}
+      </Button>
+
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={handleDeleteEmail}
+        title="Delete email"
+      >
+        <Trash2 size={14} className="text-gray-500" />
+      </Button>
+
+      {isDraft && (
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={handleDelete}
+          title="Delete draft"
+        >
+          <Trash2 size={14} className="text-red-500" />
+        </Button>
+      )}
+    </div>
+  </div>
+</div>
+  </div>
+
+  {/* Context Menu - Rendered in Portal */}
       {contextMenu.show && createPortal(
         <div
           ref={contextMenuRef}
@@ -652,10 +782,15 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
             {/* Enhanced Label Submenu with Search */}
             {showLabelSubmenu && (
               <div
-                className="absolute left-full top-0 ml-1 bg-white border border-gray-200 rounded-lg shadow-lg min-w-56 max-h-80 overflow-hidden"
-                onMouseEnter={() => setShowLabelSubmenu(true)}
+                className="absolute left-full -top-2 ml-0 bg-white border border-gray-200 rounded-lg shadow-lg w-80 h-80 flex flex-col overflow-hidden"
+                onMouseEnter={cancelHideLabelSubmenu}
                 onMouseLeave={handleHideLabelSubmenu}
               >
+                {/* Hover bridge to eliminate dead zone between menu and submenu */}
+                <div
+                  className="absolute top-0 right-full w-2 h-full"
+                  onMouseEnter={cancelHideLabelSubmenu}
+                />
                 {/* Search Bar */}
                 <div className="p-2 border-b border-gray-100">
                   <div className="relative">
@@ -673,7 +808,7 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
                 </div>
                 
                 {/* Scrollable Labels List */}
-                <div className="max-h-48 overflow-y-auto">
+                <div className="flex-1 overflow-y-auto overscroll-contain pr-1" onWheelCapture={(e) => e.stopPropagation()}>
                   {filteredLabels.length > 0 ? (
                     filteredLabels.map(label => (
                       <button
@@ -684,7 +819,7 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
                       >
                         <div className="w-2 h-2 rounded-full mr-2 bg-blue-500 flex-shrink-0"></div>
                         <span className="truncate">
-                          {isApplyingLabel === label.id ? 'Applying...' : label.name}
+                          {isApplyingLabel === label.id ? 'Applying...' : (label as any).displayName}
                         </span>
                       </button>
                     ))
@@ -694,6 +829,18 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
                     </div>
                   ) : (
                     <div className="px-3 py-2 text-xs text-gray-500">No labels available</div>
+                  )}
+
+                  {/* Create new label CTA as the last option (sticky footer) */}
+                  {labelSearchQuery.trim() && !hasExactLabelMatch && (
+                    <div className="sticky bottom-0 bg-white border-t border-gray-100 p-2 mt-2">
+                      <button
+                        className="w-full text-left text-xs text-blue-600 hover:text-blue-700 font-medium px-1 py-1 rounded hover:bg-blue-50"
+                        onClick={(e) => { e.stopPropagation(); openCreateLabelModal(); }}
+                      >
+                        Create label "{labelSearchQuery.trim()}"
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -717,7 +864,7 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
             {/* Filter Submenu */}
             {showFilterSubmenu && (
               <div
-                className="absolute left-full top-0 ml-1 bg-white border border-gray-200 rounded-lg shadow-lg py-2 min-w-48"
+                className="absolute left-full -top-2 ml-0 bg-white border border-gray-200 rounded-lg shadow-lg min-w-56 max-h-80 overflow-hidden"
                 onMouseEnter={() => setShowFilterSubmenu(true)}
                 onMouseLeave={handleHideFilterSubmenu}
               >
@@ -866,8 +1013,238 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
         </div>,
         document.body
       )}
+
+      {/* Create Label Modal */}
+      {showCreateLabelModal && createPortal(
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[10000]">
+          <div
+            ref={createLabelModalRef}
+            className="bg-white rounded-lg shadow-xl w-96 max-w-[90vw] max-h-[90vh] overflow-hidden"
+          >
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-gray-900">New label</h2>
+                <button
+                  onClick={() => setShowCreateLabelModal(false)}
+                  className="p-1 hover:bg-gray-100 rounded transition-colors"
+                >
+                  <X size={16} className="text-gray-500" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div className="px-6 py-4">
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-sm text-gray-600">Please enter a new label name:</label>
+                  <Input
+                    placeholder="Enter label name"
+                    value={newLabelName}
+                    onChange={(e) => setNewLabelName(e.target.value)}
+                    className="w-full"
+                    autoFocus
+                  />
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <Checkbox 
+                    id="nest-under-create"
+                    checked={nestUnder}
+                    onCheckedChange={(checked) => setNestUnder(!!checked)}
+                  />
+                  <label htmlFor="nest-under-create" className="text-sm text-gray-600">
+                    Nest label under:
+                  </label>
+                </div>
+
+                {nestUnder && (
+                  <Select value={parentLabel} onValueChange={setParentLabel}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Choose parent label..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {filteredLabels.map((label: any) => (
+                        <SelectItem key={label.id} value={label.displayName}>
+                          {label.displayName}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+
+                {/* Auto-filter future emails */}
+                <div className="flex items-start space-x-2">
+                  <Checkbox
+                    id="auto-filter-future"
+                    checked={autoFilterFuture}
+                    onCheckedChange={(checked) => setAutoFilterFuture(!!checked)}
+                  />
+                  <label htmlFor="auto-filter-future" className="text-sm text-gray-600">
+                    Also auto-label future emails from {cleanEmailAddress(email.from?.email) || 'this sender'}
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
+              <Button
+                variant="outline"
+                onClick={() => setShowCreateLabelModal(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleCreateLabelSubmit}
+                disabled={!newLabelName.trim()}
+              >
+                Create
+              </Button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </>
   );
+
+  if (renderAsTableRow) {
+    return (
+      <TableRow
+        ref={setNodeRef as unknown as React.Ref<HTMLTableRowElement>}
+        {...attributes}
+        {...listeners}
+        onClick={handleEmailClick}
+        onContextMenu={handleContextMenu}
+        className={`group cursor-pointer select-none transition-colors ${
+          !email.isRead ? 'bg-blue-50 hover:bg-blue-100/60' : ''
+        } ${isDragging ? 'opacity-50 z-10' : ''} ${isSelected ? 'bg-blue-100' : ''}`}
+        data-dragging={isDragging}
+        style={{ height: '32px' }}
+      >
+        {/* LEFT cell: controls + sender + subject + snippet */}
+        <TableCell className="p-0">
+          <div className="flex items-center px-4 pr-4 overflow-hidden" style={{ height: '32px', lineHeight: '32px' }}>
+            {/* Selection Checkbox */}
+            {onToggleSelect && (
+              <input
+                type="checkbox"
+                checked={isSelected}
+                onChange={(e) => {
+                  e.stopPropagation();
+                  onToggleSelect(email.id);
+                }}
+                onClick={(e) => e.stopPropagation()}
+                className="mr-3 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+            )}
+
+            {/* Star */}
+            <button
+              onClick={handleToggleStar}
+              disabled={isTogglingStar}
+              className={`mr-3 p-1 rounded transition-colors ${isTogglingStar ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-200'}`}
+              title={email.isStarred ? 'Remove star' : 'Add star'}
+            >
+              {email.isStarred ? (
+                <Star size={16} className="text-yellow-500 fill-yellow-500" />
+              ) : (
+                <Star size={16} className="text-gray-400 group-hover:text-yellow-400" />
+              )}
+            </button>
+
+            {/* Important */}
+            <button
+              onClick={handleToggleImportance}
+              disabled={isTogglingImportance}
+              className={`mr-3 p-1 rounded transition-colors ${isTogglingImportance ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-200'}`}
+              title={email.isImportant ? 'Mark not important' : 'Mark important'}
+            >
+              {email.isImportant ? (
+                <Flag size={16} className="text-orange-500 fill-orange-500" />
+              ) : (
+                <Flag size={16} className="text-gray-400 group-hover:text-orange-400" />
+              )}
+            </button>
+
+            {/* Left content with a local grid for text alignment; ensure truncation */}
+            <div className="email-row grid grid-cols-[auto_minmax(0,1fr)] min-w-0 flex-1 items-center gap-2 text-sm">
+              {/* Sender */}
+              <span
+                className={`sender block w-44 shrink-0 truncate whitespace-nowrap leading-5 ${!email.isRead ? 'font-medium text-gray-900' : 'text-gray-700'}`}
+                title={senderText}
+              >
+                {senderText}
+              </span>
+
+              {/* Subject + Snippet row */}
+              <div className="min-w-0 flex items-center gap-2">
+                <span
+                  className={`subject block ${!email.isRead ? 'font-medium text-gray-900' : 'text-gray-700'} shrink-0 max-w-[45%] truncate whitespace-nowrap leading-5`}
+                  title={email.subject || 'No Subject'}
+                >
+                  {cleanEmailSubject(email.subject || 'No Subject')}
+                </span>
+                <span
+                  className="snippet block min-w-0 flex-1 truncate whitespace-nowrap text-gray-500 leading-5"
+                  title={email.body}
+                >
+                  {email.body}
+                </span>
+                {(email.attachments?.length ?? 0) > 0 && (
+                  <Paperclip size={14} className="text-gray-400 shrink-0" />
+                )}
+              </div>
+            </div>
+          </div>
+        </TableCell>
+
+        {/* RIGHT cell: fixed width wall */}
+  <TableCell className="p-0 w-40 sm:w-44 align-middle">
+          <div className="flex items-center justify-end gap-1 pr-2" style={{ height: '32px' }}>
+            <span className="text-xs text-gray-500 whitespace-nowrap tabular-nums group-hover:hidden">
+              {formattedDate}
+            </span>
+            <div className="hidden group-hover:flex items-center gap-1">
+              <button
+                onClick={handleToggleReadStatus}
+                disabled={isToggling}
+                className={`p-1 rounded hover:bg-gray-200 transition-colors ${isToggling ? 'opacity-50 cursor-not-allowed' : ''}`}
+                title={email.isRead ? 'Mark as unread' : 'Mark as read'}
+              >
+                {email.isRead ? (
+                  <MailOpen size={14} className="text-gray-500" />
+                ) : (
+                  <Mail size={14} className="text-blue-600" />
+                )}
+              </button>
+              <button
+                onClick={handleDeleteEmail}
+                className="p-1 rounded hover:bg-red-100 transition-colors"
+                title="Delete email"
+              >
+                <Trash2 size={14} className="text-gray-500" />
+              </button>
+              {isDraft && (
+                <button
+                  onClick={handleDelete}
+                  className="p-1 rounded hover:bg-red-100 transition-colors"
+                  title="Delete draft"
+                >
+                  <Trash2 size={14} className="text-red-500" />
+                </button>
+              )}
+            </div>
+          </div>
+        </TableCell>
+      </TableRow>
+    );
+  }
+
+  // Fallback div structure (e.g., drag overlay)
+  return RowInner as unknown as JSX.Element;
 }
 
 export default EmailListItem;

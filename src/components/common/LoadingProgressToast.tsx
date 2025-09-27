@@ -5,13 +5,13 @@ import {
   LoadingProgressEventDetail,
   LoadingProgressSource
 } from '@/utils/loadingProgress';
-import { toast as showToast } from '@/components/ui/use-toast';
+import { toast } from 'sonner';
 
 const ORDER: LoadingProgressSource[] = ['inbox', 'labels', 'counters'];
 const TITLES: Record<LoadingProgressSource, string> = {
-  inbox: 'Inbox emails',
-  labels: 'Labels',
-  counters: 'Counters'
+  inbox: 'Inbox emails (10s)',
+  labels: 'Labels (10s)',
+  counters: 'Counters (30s)'
 };
 
 type StatusState = 'idle' | 'loading' | 'success' | 'error';
@@ -41,11 +41,9 @@ const iconForStatus = (status: StatusState) => {
   }
 };
 
-type ToastController = ReturnType<typeof showToast> | null;
-
 export function LoadingProgressToast() {
   const [statuses, setStatuses] = useState(INITIAL_STATUS);
-  const toastControllerRef = useRef<ToastController>(null);
+  const toastIdRef = useRef<string | number | null>(null);
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -75,53 +73,61 @@ export function LoadingProgressToast() {
     const hasStarted = ORDER.some(key => statuses[key] !== 'idle');
     if (!hasStarted) return;
 
-    const description = (
-      <div className="mt-2 space-y-3">
-        {ORDER.map(key => {
-          const status = statuses[key];
-          return (
-            <div
-              key={key}
-              className="flex items-center gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 shadow-sm"
-            >
-              <div>{iconForStatus(status)}</div>
-              <div className="flex-1">
-                <p className="text-sm font-medium text-slate-900">{TITLES[key]}</p>
-                <p className="text-xs text-slate-500">{STATUS_SUBTEXT[status]}</p>
+    const CustomContent = (
+      <div className="relative w-[380px] max-w-[85vw] rounded-xl border border-slate-200 shadow-xl overflow-hidden bg-white">
+        {/* Gradient overlay for stronger visibility */}
+        <div className="pointer-events-none absolute inset-0 bg-white" />
+                <div className="px-4 pt-4 pb-2">
+          <p className="text-base font-semibold text-black">Preparing workspace</p>
+        </div>
+        <div className="relative px-3 pb-3 space-y-3">
+          {ORDER.map(key => {
+            const status = statuses[key];
+            return (
+              <div
+                key={key}
+                className="flex items-center gap-3 rounded-lg border border-slate-100 bg-white/70 backdrop-blur-[1px] px-3 py-2 shadow-sm"
+              >
+                <div>{iconForStatus(status)}</div>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-slate-900">{TITLES[key]}</p>
+                  <p className="text-xs text-slate-500">{STATUS_SUBTEXT[status]}</p>
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     );
 
-    const toastPayload = {
-      id: 'loading-progress',
-      duration: Infinity,
-      title: 'Preparing workspace',
-      description,
-    } as const;
-
-    if (!toastControllerRef.current) {
-      toastControllerRef.current = showToast(toastPayload);
+    if (!toastIdRef.current) {
+      toastIdRef.current = toast.custom(() => CustomContent, {
+        id: 'loading-progress',
+        duration: Infinity,
+        // Force Sonner wrapper to be transparent and padding-less
+        className: 'p-0 !bg-transparent !shadow-none !border-0',
+        style: { padding: 0, background: 'transparent', boxShadow: 'none', border: 'none' },
+      });
     } else {
-      toastControllerRef.current.update({
-        ...toastPayload,
-        id: toastControllerRef.current.id,
+      toast.custom(() => CustomContent, {
+        id: 'loading-progress',
+        duration: Infinity,
+        className: 'p-0 !bg-transparent !shadow-none !border-0',
+        style: { padding: 0, background: 'transparent', boxShadow: 'none', border: 'none' },
       });
     }
 
     const allSuccess = ORDER.every(key => statuses[key] === 'success');
     const anyError = ORDER.some(key => statuses[key] === 'error');
 
-    if ((allSuccess || anyError) && toastControllerRef.current !== null) {
+    if ((allSuccess || anyError) && toastIdRef.current !== null) {
       if (dismissTimerRef.current) {
         clearTimeout(dismissTimerRef.current);
       }
       dismissTimerRef.current = setTimeout(() => {
-        if (toastControllerRef.current !== null) {
-          toastControllerRef.current.dismiss();
-          toastControllerRef.current = null;
+        if (toastIdRef.current !== null) {
+          toast.dismiss(toastIdRef.current);
+          toastIdRef.current = null;
           setStatuses(INITIAL_STATUS);
         }
       }, 5000);
@@ -136,8 +142,8 @@ export function LoadingProgressToast() {
       if (dismissTimerRef.current) {
         clearTimeout(dismissTimerRef.current);
       }
-      if (toastControllerRef.current !== null) {
-        toastControllerRef.current.dismiss();
+      if (toastIdRef.current !== null) {
+        toast.dismiss(toastIdRef.current);
       }
     };
   }, []);

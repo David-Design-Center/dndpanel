@@ -1388,6 +1388,22 @@ div[class*="flex"][class*="min-h-full"] {
   /* Children of scrollable containers should not be truncated */
 }
 
+/* Exception fix: Email list table rows must stay single-line and truncate */
+[data-panel] :is(.overflow-y-auto, .flex-1.overflow-y-auto, [class*="overflow-y-auto"]) .email-row {
+  overflow: hidden !important;
+  min-width: 0 !important;
+}
+
+[data-panel] :is(.overflow-y-auto, .flex-1.overflow-y-auto, [class*="overflow-y-auto"]) .email-row :is(.truncate, [data-email-text], .subject, .snippet, .sender) {
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  min-width: 0 !important;
+  word-break: normal !important;
+  overflow-wrap: normal !important;
+  hyphens: none !important;
+}
+
 /* CRITICAL: Force email list scrolling to work properly */
 .email-list-container {
   height: 0 !important;

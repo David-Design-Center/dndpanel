@@ -341,7 +341,7 @@ function Sidebar({ }: SidebarProps) {
         {/* Out of Office Toggle - For all users */}
         {(currentProfile?.name === 'David' || currentProfile?.name === 'Marti' || currentProfile?.name === 'Natalia' || currentProfile?.name === 'Dimitry') && (
           isSidebarCollapsed ? (
-            <div className="p-4">
+            <div className="p-4 pb-16">
               <Tooltip delayDuration={300}>
                 <TooltipTrigger asChild>
                   <div className="flex items-center justify-center">

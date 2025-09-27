@@ -33,7 +33,7 @@ const InboxLayoutContext = createContext<InboxLayoutContextType | undefined>(und
 // Internal provider that has access to all specialized contexts
 function InboxLayoutProviderInternal({ children }: { children: ReactNode }) {
   const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   
   // Get context hooks
   const { isFoldersColumnExpanded, toggleFoldersColumn } = useFoldersColumn();

@@ -140,7 +140,7 @@ function App() {
       <GooeyFilter />
       <LoadingProgressToast />
       <Toaster 
-        position="bottom-right" 
+        position="top-right" 
         richColors
         expand={true}
         closeButton

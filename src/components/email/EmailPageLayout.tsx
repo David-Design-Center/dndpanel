@@ -3,7 +3,6 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   RefreshCw, 
   Search, 
-  ChevronDown, 
   ChevronLeft,
   ChevronRight,
   Maximize2,
@@ -12,9 +11,7 @@ import {
   X, 
   Trash2, 
   Mail, 
-  MailOpen, 
-  Filter, 
-  Paperclip} from 'lucide-react';
+  MailOpen} from 'lucide-react';
 import { type SearchSuggestion } from '../../services/searchService';
 import EmailListItem from './EmailListItem';
 import ThreeColumnLayout from '../layout/ThreeColumnLayout';
@@ -66,6 +63,7 @@ import {
 } from '@dnd-kit/core';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { createPortal } from 'react-dom';
+import { Table, TableBody } from '@/components/ui/table';
 
 type EmailPageType = 'inbox' | 'unread' | 'sent' | 'drafts' | 'trash';
 
@@ -100,7 +98,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   const [searchSuggestions, setSearchSuggestions] = useState<SearchSuggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
-  const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'sent' | 'drafts' | 'trash' | 'important' | 'starred' | 'spam' | 'archive' | 'allmail'>('unread');
+  const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'sent' | 'drafts' | 'trash' | 'important' | 'starred' | 'spam' | 'archive' | 'allmail'>('all');
   const [hasEverLoaded, setHasEverLoaded] = useState(false); // Track if we've ever successfully loaded
   // Inbox split view mode: show Unread and Everything Else side-by-side vertically, or expand one
   const [inboxViewMode, setInboxViewMode] = useState<'split' | 'unread' | 'read'>('split');
@@ -108,9 +106,9 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   const [recentlyReadIds, setRecentlyReadIds] = useState<Set<string>>(new Set());
   
   // Toolbar filter state
-  const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const [] = useState(false);
   const [selectedEmails, setSelectedEmails] = useState<Set<string>>(new Set());
-  const [filterCriteria, setFilterCriteria] = useState({
+  const [] = useState({
     from: '',
     hasAttachment: false,
     dateRange: { start: '', end: '' }
@@ -118,7 +116,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   
   // Gmail category tabs and filter chips state (categories disabled by client request)
   const [activeCategory] = useState<'primary' | 'updates' | 'promotions' | 'social'>('primary');
-  const [activeFilters, setActiveFilters] = useState({
+  const [activeFilters] = useState({
     unread: false,
     starred: false,
     attachments: false
@@ -1523,50 +1521,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     }
   };
 
-
-  const applyFilters = () => {
-    let query = searchQuery;
-    
-    if (filterCriteria.from) {
-      query += ` from:${filterCriteria.from}`;
-    }
-    
-    if (filterCriteria.hasAttachment) {
-      query += ` has:attachment`;
-    }
-    
-    if (filterCriteria.dateRange.start) {
-      query += ` after:${filterCriteria.dateRange.start}`;
-    }
-    
-    if (filterCriteria.dateRange.end) {
-      query += ` before:${filterCriteria.dateRange.end}`;
-    }
-    
-    setSearchQuery(query);
-    const fakeEvent = { preventDefault: () => {} } as React.FormEvent;
-    handleSearchSubmit(fakeEvent);
-    setShowFilterDropdown(false);
-  };
-
-  // Category tabs removed – no handler needed
-
-  // Filter chip handlers
-  const toggleFilter = (filterType: 'unread' | 'attachments') => {
-    setActiveFilters(prev => ({
-      ...prev,
-      [filterType]: !prev[filterType]
-    }));
-    console.log('Toggled filter:', filterType);
-    
-    // Only refetch when attachment filter changes; unread is handled locally
-    if (filterType === 'attachments' && pageType === 'inbox' && !labelName) {
-      fetchCategoryEmails(true);
-    }
-  };
-
-  // Focused mode toggle removed (feature disabled)
-
   // Pagination settings & state for toolbar chevrons
   const PAGE_SIZE = 25;
   const [pageIndex, setPageIndex] = useState(0);
@@ -1611,7 +1565,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
 
     const folderContext = folderContextForTab;
 
-    // For category-enabled tabs (all/inbox, archive, spam, trash), show category emails if available
+  // For category-enabled tabs (all/inbox, archive, spam, trash), show category emails if available
     
     let currentEmails: Email[] = [];
     if (supportsCategoryTabs && categoryEmails[folderContext][activeCategory]?.length > 0) {
@@ -1620,6 +1574,40 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     } else {
       // Fall back to folder emails
       currentEmails = allTabEmails[activeTab];
+    }
+
+    // Defensive gating: ensure each tab only renders items matching its semantics
+    const hasLabel = (e: Email, label: string) => (e.labelIds || []).includes(label);
+    switch (activeTab) {
+      case 'all':
+        // Inbox All should never show Sent/Spam/Trash even if arrays mixed
+        currentEmails = currentEmails.filter(e => !hasLabel(e, 'SENT') && !hasLabel(e, 'SPAM') && !hasLabel(e, 'TRASH'));
+        break;
+      case 'important':
+        currentEmails = currentEmails.filter(e => e.isImportant || hasLabel(e, 'IMPORTANT'));
+        break;
+      case 'starred':
+        currentEmails = currentEmails.filter(e => e.isStarred || hasLabel(e, 'STARRED'));
+        break;
+      case 'sent':
+        currentEmails = currentEmails.filter(e => hasLabel(e, 'SENT'));
+        break;
+      case 'trash':
+        currentEmails = currentEmails.filter(e => hasLabel(e, 'TRASH'));
+        break;
+      case 'spam':
+        currentEmails = currentEmails.filter(e => hasLabel(e, 'SPAM'));
+        break;
+      case 'archive':
+        // Archive = not in Inbox/Spam/Trash
+        currentEmails = currentEmails.filter(e => !hasLabel(e, 'INBOX') && !hasLabel(e, 'SPAM') && !hasLabel(e, 'TRASH'));
+        break;
+      case 'allmail':
+        // All Mail = exclude Spam/Trash
+        currentEmails = currentEmails.filter(e => !hasLabel(e, 'SPAM') && !hasLabel(e, 'TRASH'));
+        break;
+      default:
+        break;
     }
 
     // Apply focused/other partitioning if category tabs are supported
@@ -1644,9 +1632,8 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
 
   const chipFilteredEmails = applyChipFilters(filteredEmails);
   // Only apply chips in Inbox "all" tab; show raw lists for other tabs
-  const baseVisible = (pageType === 'inbox' && !labelName && activeTab === 'all')
-    ? chipFilteredEmails
-    : filteredEmails;
+  const isSplitInbox = pageType === 'inbox' && !labelName && activeTab === 'all';
+  const baseVisible = isSplitInbox ? chipFilteredEmails : filteredEmails;
 
   // Helpers for split view
   const getReceivedAtMs = useCallback((email: Email): number => {
@@ -1661,7 +1648,11 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     return 0;
   }, []);
 
-  const splitSource = (pageType === 'inbox' && !labelName) ? (allTabEmails.all || []) : baseVisible;
+  // Split source should only be used for Inbox > All; other tabs should not use inbox "all" data
+  const splitSourceRaw = isSplitInbox ? (allTabEmails.all || []) : baseVisible;
+  const splitSource = isSplitInbox
+    ? splitSourceRaw.filter(e => !(e.labelIds || []).some(id => id === 'SENT' || id === 'SPAM' || id === 'TRASH'))
+    : splitSourceRaw;
   const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
 
   // Split inbox lists for split view (Unread vs Everything else), with Everything else limited to last 24h
@@ -2466,11 +2457,11 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
               <div className="flex-shrink-0 border-b border-gray-200 px-4 py-3 flex justify-between items-center">
                 {labelName ? (
                   <div className="flex items-center space-x-3">
-                    <h2 className="text-lg font-semibold text-gray-800">Label: {labelName}</h2>
+                    <h2 className="text-lg font-semibold text-gray-800">Folder: {labelName}</h2>
                     <button
                       onClick={() => navigate('/inbox')}
                       className="p-1 hover:bg-gray-100 rounded-md transition-colors flex items-center justify-center"
-                      title="Close label view"
+                      title="Close folder view"
                     >
                       <X size={16} className="text-gray-500 hover:text-gray-700" />
                     </button>
@@ -2532,7 +2523,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                   </p>
                 </div>
               </div>
-            ) : (pageType === 'inbox' && !labelName) ? (
+            ) : (isSplitInbox) ? (
               // Split Inbox view: Unread vs Everything else with expand/collapse
               <div className="flex-1 flex flex-col min-h-0">
                 {inboxViewMode === 'split' && (
@@ -2550,19 +2541,23 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                         </button>
                       </div>
                       <div className="flex-1 min-h-0 overflow-y-auto" ref={emailListRef}>
-                        {splitUnread.map(email => (
-                          <EmailListItem
-                            key={email.id}
-                            email={email}
-                            onClick={handleEmailClick}
-                            onEmailUpdate={handleEmailUpdate}
-                            onEmailDelete={handleEmailDelete}
-                            onCreateFilter={handleCreateFilter}
-                            currentTab={'unread'}
-                            isSelected={selectedEmails.has(email.id)}
-                            onToggleSelect={handleToggleSelectEmail}
-                          />
-                        ))}
+                        <Table>
+                          <TableBody>
+                            {splitUnread.map(email => (
+                              <EmailListItem
+                                key={email.id}
+                                email={email}
+                                onClick={handleEmailClick}
+                                onEmailUpdate={handleEmailUpdate}
+                                onEmailDelete={handleEmailDelete}
+                                onCreateFilter={handleCreateFilter}
+                                isSelected={selectedEmails.has(email.id)}
+                                onToggleSelect={handleToggleSelectEmail}
+                                renderAsTableRow
+                              />
+                            ))}
+                          </TableBody>
+                        </Table>
                         {splitUnread.length === 0 && (
                           <div className="p-6 text-center text-gray-500 text-sm">No unread emails</div>
                         )}
@@ -2582,19 +2577,23 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                         </button>
                       </div>
                       <div className="flex-1 min-h-0 overflow-y-auto">
-                        {splitRead.map(email => (
-                          <EmailListItem
-                            key={email.id}
-                            email={email}
-                            onClick={handleEmailClick}
-                            onEmailUpdate={handleEmailUpdate}
-                            onEmailDelete={handleEmailDelete}
-                            onCreateFilter={handleCreateFilter}
-                            currentTab={'all'}
-                            isSelected={selectedEmails.has(email.id)}
-                            onToggleSelect={handleToggleSelectEmail}
-                          />
-                        ))}
+                        <Table>
+                          <TableBody>
+                            {splitRead.map(email => (
+                              <EmailListItem
+                                key={email.id}
+                                email={email}
+                                onClick={handleEmailClick}
+                                onEmailUpdate={handleEmailUpdate}
+                                onEmailDelete={handleEmailDelete}
+                                onCreateFilter={handleCreateFilter}
+                                isSelected={selectedEmails.has(email.id)}
+                                onToggleSelect={handleToggleSelectEmail}
+                                renderAsTableRow
+                              />
+                            ))}
+                          </TableBody>
+                        </Table>
                         {splitRead.length === 0 && (
                           <div className="p-6 text-center text-gray-500 text-sm">No read emails</div>
                         )}
@@ -2614,19 +2613,23 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                       </div>
                     </div>
                     <div className="flex-1 min-h-0 overflow-y-auto" ref={emailListRef}>
-                      {splitUnread.map(email => (
-                        <EmailListItem
-                          key={email.id}
-                          email={email}
-                          onClick={handleEmailClick}
-                          onEmailUpdate={handleEmailUpdate}
-                          onEmailDelete={handleEmailDelete}
-                          onCreateFilter={handleCreateFilter}
-                          currentTab={'unread'}
-                          isSelected={selectedEmails.has(email.id)}
-                          onToggleSelect={handleToggleSelectEmail}
-                        />
-                      ))}
+                      <Table>
+                        <TableBody>
+                          {splitUnread.map(email => (
+                            <EmailListItem
+                              key={email.id}
+                              email={email}
+                              onClick={handleEmailClick}
+                              onEmailUpdate={handleEmailUpdate}
+                              onEmailDelete={handleEmailDelete}
+                              onCreateFilter={handleCreateFilter}
+                              isSelected={selectedEmails.has(email.id)}
+                              onToggleSelect={handleToggleSelectEmail}
+                              renderAsTableRow
+                            />
+                          ))}
+                        </TableBody>
+                      </Table>
                       {splitUnread.length === 0 && (
                         <div className="p-8 text-center text-gray-500 text-sm">No unread emails</div>
                       )}
@@ -2645,19 +2648,23 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                       </div>
                     </div>
                     <div className="flex-1 min-h-0 overflow-y-auto">
-                      {splitRead.map(email => (
-                        <EmailListItem
-                          key={email.id}
-                          email={email}
-                          onClick={handleEmailClick}
-                          onEmailUpdate={handleEmailUpdate}
-                          onEmailDelete={handleEmailDelete}
-                          onCreateFilter={handleCreateFilter}
-                          currentTab={'all'}
-                          isSelected={selectedEmails.has(email.id)}
-                          onToggleSelect={handleToggleSelectEmail}
-                        />
-                      ))}
+                      <Table>
+                        <TableBody>
+                          {splitRead.map(email => (
+                            <EmailListItem
+                              key={email.id}
+                              email={email}
+                              onClick={handleEmailClick}
+                              onEmailUpdate={handleEmailUpdate}
+                              onEmailDelete={handleEmailDelete}
+                              onCreateFilter={handleCreateFilter}
+                              isSelected={selectedEmails.has(email.id)}
+                              onToggleSelect={handleToggleSelectEmail}
+                              renderAsTableRow
+                            />
+                          ))}
+                        </TableBody>
+                      </Table>
                       {splitRead.length === 0 && (
                         <div className="p-8 text-center text-gray-500 text-sm">No read emails</div>
                       )}
@@ -2667,25 +2674,29 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
               </div>
             ) : filteredEmails.length > 0 ? (
               <div ref={emailListRef} className="flex-1 overflow-y-auto max-w-full min-h-0" style={{ height: '0' }}>
-                {visibleEmails.map((email) => (
-                  <EmailListItem 
-                    key={email.id} 
-                    email={email} 
-                    onClick={handleEmailClick}
-                    onEmailUpdate={handleEmailUpdate}
-                    onEmailDelete={handleEmailDelete}
-                    onCreateFilter={handleCreateFilter}
-                    currentTab={pageType === 'inbox' && !labelName ? activeTab : undefined}
-                    isSelected={selectedEmails.has(email.id)}
-                    onToggleSelect={handleToggleSelectEmail}
-                  />
-                ))}
+                <Table>
+                  <TableBody>
+                    {visibleEmails.map((email) => (
+                      <EmailListItem 
+                        key={email.id} 
+                        email={email} 
+                        onClick={handleEmailClick}
+                        onEmailUpdate={handleEmailUpdate}
+                        onEmailDelete={handleEmailDelete}
+                        onCreateFilter={handleCreateFilter}
+                        isSelected={selectedEmails.has(email.id)}
+                        onToggleSelect={handleToggleSelectEmail}
+                        renderAsTableRow
+                      />
+                    ))}
+                  </TableBody>
+                </Table>
                 {/* Pagination controls moved to toolbar; load more button removed */}
               </div>
             ) : (
               <div className="p-8 text-center">
                 <p className="text-gray-500">
-                  {labelName ? `No emails found for label "${labelName}"` :
+                  {labelName ? `No emails found for folder "${labelName}"` :
                    pageType === 'drafts' ? 'No drafts' : 
                    pageType === 'sent' ? 'No sent emails' : 
                    pageType === 'trash' ? 'Trash is empty' : 
@@ -2708,6 +2719,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                     email={activeEmail} 
                     onClick={() => {}}
                     isDraggable={false}
+                    renderAsTableRow={false}
                     onEmailUpdate={() => {}}
                     onEmailDelete={() => {}}
                     onCreateFilter={() => {}}
