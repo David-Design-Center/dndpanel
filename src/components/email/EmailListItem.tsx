@@ -5,6 +5,7 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { markAsRead, markAsUnread, markAsImportant, markAsUnimportant, deleteDraft, deleteEmail, applyLabelsToEmail, markAsStarred, markAsUnstarred } from '@/services/emailService';
 import { toast } from 'sonner';
+import { createGmailFilter, fetchGmailLabels } from '@/integrations/gapiService';
 import { emitLabelUpdateEvent } from '@/utils/labelUpdateEvents';
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
@@ -15,8 +16,6 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { TableRow, TableCell } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { createGmailFilter, fetchGmailLabels } from '@/integrations/gapiService';
-import { useFilterCreation } from '@/contexts/FilterCreationContext';
 import { cleanEmailSubject, cleanEncodingIssues } from '@/utils/textEncoding';
 import { cleanEmailAddress } from '@/utils/emailFormatting';
 
@@ -36,7 +35,7 @@ interface EmailListItemProps {
 
 function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEmailDelete, isDraft = false, onCreateFilter, isSelected = false, onToggleSelect, renderAsTableRow = true }: EmailListItemProps) {
   const navigate = useNavigate();
-  const { startFilterCreation } = useFilterCreation();
+  // const { startFilterCreation } = useFilterCreation();
   const [isToggling, setIsToggling] = useState(false);
   const [isTogglingImportance, setIsTogglingImportance] = useState(false);
   const [isTogglingStar, setIsTogglingStar] = useState(false);
@@ -47,8 +46,10 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
   const [showCreateFilterModal, setShowCreateFilterModal] = useState(false);
   const [isApplyingLabel, setIsApplyingLabel] = useState<string | null>(null);
   const [labelSearchQuery, setLabelSearchQuery] = useState('');
+  // Label picker state for the Create Filter modal
   const [filterLabelQuery, setFilterLabelQuery] = useState('');
   const [selectedFilterLabel, setSelectedFilterLabel] = useState<string>('');
+  // Removed unused filter label states after extraction of portals
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const labelSearchRef = useRef<HTMLInputElement>(null);
   const filterModalRef = useRef<HTMLDivElement>(null);
@@ -126,10 +127,38 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
     return filteredLabels.some(l => (l as any).displayName.toLowerCase() === q);
   })();
   
-  // Filter labels for the filter modal
-  const filteredFilterLabels = labels.filter(label => 
-    label.name.toLowerCase().includes(filterLabelQuery.toLowerCase())
-  );
+  // Filter labels for the Create Filter modal (use the same system-label exclusions and INBOX/ normalization)
+  const filteredFilterLabels = labels
+    .filter(label => {
+      const name = (label.name || '').toLowerCase();
+      return name !== 'sent' &&
+             name !== 'drafts' &&
+             name !== 'draft' &&
+             name !== 'spam' &&
+             name !== 'trash' &&
+             name !== 'important' &&
+             name !== 'starred' &&
+             name !== 'unread' &&
+             name !== 'yellow_star' &&
+             name !== 'deleted messages' &&
+             name !== 'chat' &&
+             name !== 'blocked' &&
+             name !== '[imap]' &&
+             name !== 'junk e-mail' &&
+             name !== 'notes' &&
+             !name.startsWith('category_') &&
+             !name.startsWith('label_') &&
+             !name.startsWith('[imap');
+    })
+    .filter(label => (label.name || '').toLowerCase() !== 'inbox')
+    .map(label => {
+      const rawName = label.name || '';
+      const displayName = rawName.startsWith('INBOX/') ? rawName.substring(6) : rawName;
+      return { ...label, displayName } as typeof label & { displayName: string };
+    })
+    .filter(label => label.displayName.length > 0)
+    .filter(label => label.displayName.toLowerCase().includes(filterLabelQuery.toLowerCase()))
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
 
   // We intentionally do not render user-visible label chips in the row to keep single-line layout
   
@@ -467,29 +496,7 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
       setTimeout(() => labelSearchRef.current?.focus(), 0);
       toast.success(`Label "${fullName}" created`);
 
-      // Optionally create a Gmail filter to auto-apply this label for future emails from this sender
-      if (autoFilterFuture) {
-        const sender = cleanEmailAddress(email.from?.email || '');
-        if (sender) {
-          try {
-            // Fetch latest labels to get the new label's ID reliably
-            const freshLabels = await fetchGmailLabels();
-            const created = freshLabels.find(l => l.name === fullName);
-            if (created?.id) {
-              await createGmailFilter(
-                { from: sender },
-                { addLabelIds: [created.id] }
-              );
-              toast.success('Filter created: future emails will be labeled automatically');
-            } else {
-              console.warn('Created label not found after refresh:', fullName);
-            }
-          } catch (err) {
-            console.error('Failed to create Gmail filter:', err);
-            toast.error('Could not create filter. You can add it later in Settings > Filters.');
-          }
-        }
-      }
+      // (Auto-filter feature temporarily disabled and code removed to reduce complexity.)
     } catch (err) {
       toast.error('Failed to create label');
     }
@@ -538,24 +545,50 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
   // Handle create filter modal
   const handleCloseCreateFilterModal = () => {
     setShowCreateFilterModal(false);
+    // Reset label picker state
     setFilterLabelQuery('');
     setSelectedFilterLabel('');
   };
 
-  const handleCreateFilterWithLabel = () => {
-    if (!selectedFilterLabel) {
-      console.warn('No label selected for filter creation');
+  const handleCreateFilterWithLabel = async () => {
+    const sender = cleanEmailAddress(email.from?.email || '');
+    if (!sender) {
+      toast.error('Missing sender email');
       return;
     }
-    
-    // Close the modal first
-    handleCloseCreateFilterModal();
-    
-    // Use the same logic as the simple filter creation but with label info
-    console.log('Creating filter for email from:', email.from.email, 'with label:', selectedFilterLabel);
-    
-    // Call the parent's filter creation handler with the email
-    onCreateFilter?.(email);
+    if (!selectedFilterLabel) {
+      toast.error('Please select a folder');
+      return;
+    }
+
+    try {
+      toast.message('Creating rule…');
+      // 1) Find the label id by display name
+      const labelsList = await fetchGmailLabels();
+      const match = labelsList
+        .map(l => ({ id: (l as any).id, name: (l as any).name }))
+        .find(l => (l.name?.startsWith('INBOX/') ? l.name.substring(6) : l.name) === selectedFilterLabel);
+
+      if (!match?.id) {
+        toast.error('Selected folder not found in Gmail');
+        return;
+      }
+
+      // 2) Create the Gmail filter
+      await createGmailFilter(
+        { from: sender },
+        { addLabelIds: [match.id] }
+      );
+
+      toast.success('Rule created. Future emails will be moved.');
+      // Let parent know (optional hook)
+      onCreateFilter?.(email);
+    } catch (err) {
+      console.error('Failed to create Gmail filter:', err);
+      toast.error('Could not create rule. Please check Gmail auth and try again.');
+    } finally {
+      handleCloseCreateFilterModal();
+    }
   };
 
   const handleSelectFilterLabel = (_labelId: string, labelName: string) => {
@@ -563,25 +596,25 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
     setFilterLabelQuery(labelName);
   };
 
-  const handleCreateNewLabel = () => {
-    if (filterLabelQuery.trim()) {
-      // Here you would implement label creation logic
-      console.log('Creating new label:', filterLabelQuery);
-      setSelectedFilterLabel(filterLabelQuery);
-    }
-  };
+  // const handleCreateNewLabel = () => {
+  //   if (filterLabelQuery.trim()) {
+  //     // Here you would implement label creation logic
+  //     console.log('Creating new label:', filterLabelQuery);
+  //     setSelectedFilterLabel(filterLabelQuery);
+  //   }
+  // };
 
   // Handle more options - use context to store email data and navigate
-  const handleMoreOptions = () => {
-    // Close the modal first
-    handleCloseCreateFilterModal();
-    
-    // Store the email data in context for the settings page to use
-    startFilterCreation(email);
-    
-    // Navigate to settings filters tab
-    navigate('/settings?tab=filters');
-  };
+  // const handleMoreOptions = () => {
+  //   // Close the modal first
+  //   handleCloseCreateFilterModal();
+  //   
+  //   // Store the email data in context for the settings page to use
+  //   startFilterCreation(email);
+  //   
+  //   // Navigate to settings filters tab
+  //   navigate('/settings?tab=filters');
+  // };
 
   // Handle label submenu show/hide
   const handleShowLabelSubmenu = () => {
@@ -624,137 +657,10 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
     };
   }, []);
 
-  const RowInner = (
+  // Shared portal content (context menu + modals) so it renders for both table and non-table modes
+  const Portals = (
     <>
-      <div
-        ref={setNodeRef}
-        style={{ ...style, maxHeight: '32px', height: '32px', lineHeight: '32px' }}
-        {...attributes}
-        {...listeners}
-        onClick={handleEmailClick}
-        onContextMenu={handleContextMenu}
-        className={`group flex items-center px-4 pr-4 overflow-hidden border-b border-gray-100 cursor-pointer select-none transition-colors ${
-          !email.isRead ? 'bg-blue-50 hover:bg-blue-100/60' : 'bg-white hover:bg-gray-50'
-        } ${isDragging ? 'opacity-50 z-10' : ''} ${isSelected ? 'bg-blue-100' : ''}`}
-        data-dragging={isDragging}
-      >
-        {/* Selection Checkbox */}
-        {onToggleSelect && (
-          <input
-            type="checkbox"
-            checked={isSelected}
-            onChange={(e) => {
-              e.stopPropagation();
-              onToggleSelect(email.id);
-            }}
-            onClick={(e) => e.stopPropagation()}
-            className="mr-3 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-          />
-        )}
-
-        {/* Star (STARRED) */}
-        <button
-          onClick={handleToggleStar}
-          disabled={isTogglingStar}
-          className={`mr-3 p-1 rounded transition-colors ${isTogglingStar ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-200'}`}
-          title={email.isStarred ? 'Remove star' : 'Add star'}
-        >
-          {email.isStarred ? (
-            <Star size={16} className="text-yellow-500 fill-yellow-500" />
-          ) : (
-            <Star size={16} className="text-gray-400 group-hover:text-yellow-400" />
-          )}
-        </button>
-
-        {/* Important (IMPORTANT) */}
-        <button
-          onClick={handleToggleImportance}
-          disabled={isTogglingImportance}
-          className={`mr-3 p-1 rounded transition-colors ${isTogglingImportance ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-200'}`}
-          title={email.isImportant ? 'Mark not important' : 'Mark important'}
-        >
-          {email.isImportant ? (
-            <Flag size={16} className="text-orange-500 fill-orange-500" />
-          ) : (
-            <Flag size={16} className="text-gray-400 group-hover:text-orange-400" />
-          )}
-        </button>
-
-{/* Content + Timestamp: left grows, right is a fixed wall; no absolute anywhere */}
-<div className="email-row grid grid-cols-[minmax(0,1fr)_9rem] flex-1 min-w-0 items-center gap-3">
-  {/* LEFT cell */}
-  <div className="min-w-0 overflow-hidden flex items-center gap-2 text-sm">
-    {/* Sender */}
-    <span
-      className={`sender w-44 shrink-0 truncate whitespace-nowrap leading-5 ${!email.isRead ? "font-medium text-gray-900" : "text-gray-700"}`}
-      title={senderText}
-    >
-      {senderText}
-    </span>
-
-    {/* Subject caps its greed so it can't eat the row */}
-    <span
-      className={`subject ${!email.isRead ? "font-medium text-gray-900" : "text-gray-700"} shrink-0 max-w-[45%] truncate whitespace-nowrap leading-5`}
-      title={email.subject || "No Subject"}
-    >
-      {cleanEmailSubject(email.subject || "No Subject")}
-    </span>
-
-    {/* Snippet expands until it hits the wall, then ellipsizes */}
-    <span
-      className="snippet min-w-0 flex-1 truncate whitespace-nowrap text-gray-500 leading-5"
-      title={email.body}
-    >
-      {email.body}
-    </span>
-
-    {(email.attachments?.length ?? 0) > 0 && (
-      <Paperclip size={14} className="text-gray-400 shrink-0" />
-    )}
-  </div>
-
-  {/* RIGHT cell: fixed-width wall; swap content by visibility, not position */}
-  <div className="w-36 flex items-center justify-end gap-1">
-    <span className="text-xs text-gray-500 whitespace-nowrap tabular-nums group-hover:hidden">
-      {formattedDate}
-    </span>
-
-    <div className="hidden group-hover:flex items-center gap-1">
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={handleToggleReadStatus}
-        disabled={isToggling}
-        title={email.isRead ? "Mark as unread" : "Mark as read"}
-      >
-        {email.isRead ? <MailOpen size={14} className="text-gray-500" /> : <Mail size={14} className="text-blue-600" />}
-      </Button>
-
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={handleDeleteEmail}
-        title="Delete email"
-      >
-        <Trash2 size={14} className="text-gray-500" />
-      </Button>
-
-      {isDraft && (
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={handleDelete}
-          title="Delete draft"
-        >
-          <Trash2 size={14} className="text-red-500" />
-        </Button>
-      )}
-    </div>
-  </div>
-</div>
-  </div>
-
-  {/* Context Menu - Rendered in Portal */}
+      {/* Context Menu - Rendered in Portal */}
       {contextMenu.show && createPortal(
         <div
           ref={contextMenuRef}
@@ -778,7 +684,6 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
               </div>
               <ChevronRight size={14} className="text-gray-400" />
             </button>
-            
             {/* Enhanced Label Submenu with Search */}
             {showLabelSubmenu && (
               <div
@@ -806,7 +711,6 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
                     />
                   </div>
                 </div>
-                
                 {/* Scrollable Labels List */}
                 <div className="flex-1 overflow-y-auto overscroll-contain pr-1" onWheelCapture={(e) => e.stopPropagation()}>
                   {filteredLabels.length > 0 ? (
@@ -830,7 +734,6 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
                   ) : (
                     <div className="px-3 py-2 text-xs text-gray-500">No labels available</div>
                   )}
-
                   {/* Create new label CTA as the last option (sticky footer) */}
                   {labelSearchQuery.trim() && !hasExactLabelMatch && (
                     <div className="sticky bottom-0 bg-white border-t border-gray-100 p-2 mt-2">
@@ -846,7 +749,7 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
               </div>
             )}
           </div>
-          
+
           {/* Filter Menu */}
           <div className="relative">
             <button
@@ -860,7 +763,6 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
               </div>
               <ChevronRight size={14} className="text-gray-400" />
             </button>
-            
             {/* Filter Submenu */}
             {showFilterSubmenu && (
               <div
@@ -908,91 +810,59 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
                 </button>
               </div>
             </div>
-
             {/* Modal Body */}
             <div className="px-6 py-4">
               <div className="mb-4">
                 <p className="text-sm text-gray-700 mb-4">
                   Always move messages from <span className="font-semibold">{cleanEncodingIssues(email.from.name) || cleanEmailAddress(email.from.email)}</span> to this folder:
                 </p>
-                
-                {/* Label Selection Dropdown */}
-                <div className="relative">
-                  <div className="border border-gray-300 rounded-lg p-3 cursor-pointer hover:border-gray-400 transition-colors">
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-700">
-                        {selectedFilterLabel || 'Select a folder'}
-                      </span>
-                      <ChevronRight size={16} className="text-gray-400 transform rotate-90" />
-                    </div>
-                  </div>
-                  
-                  {/* Label Search and List */}
-                  <div className="mt-2 border border-gray-300 rounded-lg bg-white shadow-lg max-h-60 overflow-hidden">
-                    {/* Search Bar */}
-                    <div className="p-2 border-b border-gray-100">
-                      <div className="relative">
-                        <Search size={14} className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                        <input
-                          type="text"
-                          placeholder="Search for a folder"
-                          value={filterLabelQuery}
-                          onChange={(e) => setFilterLabelQuery(e.target.value)}
-                          className="w-full pl-7 pr-2 py-1.5 text-sm border-0 focus:ring-0 outline-none"
-                        />
-                        {filterLabelQuery && (
-                          <button
-                            onClick={() => setFilterLabelQuery('')}
-                            className="absolute right-2 top-1/2 transform -translate-y-1/2 p-0.5 hover:bg-gray-100 rounded"
-                          >
-                            <X size={12} className="text-gray-400" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    
-                    {/* Scrollable Labels List */}
-                    <div className="max-h-40 overflow-y-auto">
-                      {filteredFilterLabels.length > 0 ? (
-                        filteredFilterLabels.map(label => (
-                          <button
-                            key={label.id}
-                            className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center transition-colors"
-                            onClick={() => handleSelectFilterLabel(label.id, label.name)}
-                          >
-                            <Tag size={14} className="mr-3 text-gray-400" />
-                            <span className="truncate">{label.name}</span>
-                          </button>
-                        ))
-                      ) : filterLabelQuery ? (
-                        <div className="px-3 py-4 text-center">
-                          <p className="text-sm text-gray-500 mb-2">
-                            No labels found for "{filterLabelQuery}"
-                          </p>
-                          <button
-                            onClick={handleCreateNewLabel}
-                            className="text-sm text-blue-600 hover:text-blue-700 font-medium"
-                          >
-                            Create new folder "{filterLabelQuery}"
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="px-3 py-2 text-sm text-gray-500">No labels available</div>
+                {/* Label Selection UI */}
+                <div className="border border-gray-200 rounded-lg">
+                  {/* Search Bar */}
+                  <div className="p-2 border-b border-gray-100">
+                    <div className="relative">
+                      <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+                      <input
+                        type="text"
+                        placeholder="Search for a folder"
+                        value={filterLabelQuery}
+                        onChange={(e) => setFilterLabelQuery(e.target.value)}
+                        className="w-full pl-7 pr-2 py-1.5 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                      />
+                      {filterLabelQuery && (
+                        <button
+                          onClick={() => setFilterLabelQuery('')}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 hover:bg-gray-100 rounded"
+                          aria-label="Clear search"
+                        >
+                          <X size={12} className="text-gray-400" />
+                        </button>
                       )}
                     </div>
                   </div>
+
+                  {/* Labels List */}
+                  <div className="max-h-56 overflow-y-auto">
+                    {filteredFilterLabels.length > 0 ? (
+                      filteredFilterLabels.map((label: any) => (
+                        <button
+                          key={label.id}
+                          className={`w-full px-3 py-2 text-left text-sm flex items-center justify-between hover:bg-gray-50 ${selectedFilterLabel === label.displayName ? 'bg-blue-50' : ''}`}
+                          onClick={() => handleSelectFilterLabel(label.id, label.displayName)}
+                        >
+                          <span className="truncate text-gray-800">{label.displayName}</span>
+                          {selectedFilterLabel === label.displayName && (
+                            <span className="text-xs text-blue-600">Selected</span>
+                          )}
+                        </button>
+                      ))
+                    ) : (
+                      <div className="px-3 py-3 text-sm text-gray-500">No labels found</div>
+                    )}
+                  </div>
                 </div>
-                
-                {/* More Options Link */}
-                <button 
-                  onClick={handleMoreOptions}
-                  className="text-blue-600 hover:text-blue-700 text-sm mt-3 font-medium"
-                >
-                  More options
-                </button>
               </div>
             </div>
-
             {/* Modal Footer */}
             <div className="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
               <button
@@ -1033,12 +903,11 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
                 </button>
               </div>
             </div>
-
             {/* Modal Body */}
             <div className="px-6 py-4">
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <label className="text-sm text-gray-600">Please enter a new label name:</label>
+                  <label className="text-sm text-gray-600">Label name</label>
                   <Input
                     placeholder="Enter label name"
                     value={newLabelName}
@@ -1055,26 +924,28 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
                     onCheckedChange={(checked) => setNestUnder(!!checked)}
                   />
                   <label htmlFor="nest-under-create" className="text-sm text-gray-600">
-                    Nest label under:
+                    Nest label under
                   </label>
                 </div>
 
                 {nestUnder && (
-                  <Select value={parentLabel} onValueChange={setParentLabel}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Choose parent label..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {filteredLabels.map((label: any) => (
-                        <SelectItem key={label.id} value={label.displayName}>
-                          {label.displayName}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="space-y-2">
+                    <label className="text-sm text-gray-600">Parent label</label>
+                    <Select value={parentLabel} onValueChange={setParentLabel}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Choose parent label..." />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-64">
+                        {filteredLabels.map((label: any) => (
+                          <SelectItem key={label.id} value={label.displayName}>
+                            {label.displayName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 )}
 
-                {/* Auto-filter future emails */}
                 <div className="flex items-start space-x-2">
                   <Checkbox
                     id="auto-filter-future"
@@ -1087,7 +958,6 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
                 </div>
               </div>
             </div>
-
             {/* Modal Footer */}
             <div className="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
               <Button
@@ -1110,8 +980,127 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
     </>
   );
 
+  const RowInner = (
+    <div
+      ref={setNodeRef}
+      style={{ ...style, maxHeight: '32px', height: '32px', lineHeight: '32px' }}
+      {...attributes}
+      {...listeners}
+      onClick={handleEmailClick}
+      onContextMenu={handleContextMenu}
+      className={`group flex items-center px-4 pr-4 overflow-hidden border-b border-gray-100 cursor-pointer select-none transition-colors ${
+        !email.isRead ? 'bg-blue-50 hover:bg-blue-100/60' : 'bg-white hover:bg-gray-50'
+      } ${isDragging ? 'opacity-50 z-10' : ''} ${isSelected ? 'bg-blue-100' : ''}`}
+      data-dragging={isDragging}
+    >
+      {/* Selection Checkbox */}
+      {onToggleSelect && (
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={(e) => {
+            e.stopPropagation();
+            onToggleSelect(email.id);
+          }}
+          onClick={(e) => e.stopPropagation()}
+          className="mr-3 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+        />
+      )}
+
+      {/* Star */}
+      <button
+        onClick={handleToggleStar}
+        disabled={isTogglingStar}
+        className={`mr-3 p-1 rounded transition-colors ${isTogglingStar ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-200'}`}
+        title={email.isStarred ? 'Remove star' : 'Add star'}
+      >
+        {email.isStarred ? (
+          <Star size={16} className="text-yellow-500 fill-yellow-500" />
+        ) : (
+          <Star size={16} className="text-gray-400 group-hover:text-yellow-400" />
+        )}
+      </button>
+
+      {/* Important */}
+      <button
+        onClick={handleToggleImportance}
+        disabled={isTogglingImportance}
+        className={`mr-3 p-1 rounded transition-colors ${isTogglingImportance ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-200'}`}
+        title={email.isImportant ? 'Mark not important' : 'Mark important'}
+      >
+        {email.isImportant ? (
+          <Flag size={16} className="text-orange-500 fill-orange-500" />
+        ) : (
+          <Flag size={16} className="text-gray-400 group-hover:text-orange-400" />
+        )}
+      </button>
+
+      {/* Content grid */}
+      <div className="email-row grid grid-cols-[minmax(0,1fr)_9rem] flex-1 min-w-0 items-center gap-3">
+        <div className="min-w-0 overflow-hidden flex items-center gap-2 text-sm">
+          <span
+            className={`sender w-44 shrink-0 truncate whitespace-nowrap leading-5 ${!email.isRead ? 'font-medium text-gray-900' : 'text-gray-700'}`}
+            title={senderText}
+          >
+            {senderText}
+          </span>
+          <span
+            className={`subject ${!email.isRead ? 'font-medium text-gray-900' : 'text-gray-700'} shrink-0 max-w-[45%] truncate whitespace-nowrap leading-5`}
+            title={email.subject || 'No Subject'}
+          >
+            {cleanEmailSubject(email.subject || 'No Subject')}
+          </span>
+          <span
+            className="snippet min-w-0 flex-1 truncate whitespace-nowrap text-gray-500 leading-5"
+            title={email.body}
+          >
+            {email.body}
+          </span>
+          {(email.attachments?.length ?? 0) > 0 && (
+            <Paperclip size={14} className="text-gray-400 shrink-0" />
+          )}
+        </div>
+        <div className="w-40 flex items-center justify-end gap-1">
+          <span className="text-xs text-gray-500 whitespace-nowrap tabular-nums group-hover:hidden">
+            {formattedDate}
+          </span>
+          <div className="hidden group-hover:flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleToggleReadStatus}
+              disabled={isToggling}
+              title={email.isRead ? 'Mark as unread' : 'Mark as read'}
+            >
+              {email.isRead ? <MailOpen size={14} className="text-gray-500" /> : <Mail size={14} className="text-blue-600" />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleDeleteEmail}
+              title="Delete email"
+            >
+              <Trash2 size={14} className="text-gray-500" />
+            </Button>
+            {isDraft && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleDelete}
+                title="Delete draft"
+              >
+                <Trash2 size={14} className="text-red-500" />
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
   if (renderAsTableRow) {
     return (
+      <>
       <TableRow
         ref={setNodeRef as unknown as React.Ref<HTMLTableRowElement>}
         {...attributes}
@@ -1126,7 +1115,7 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
       >
         {/* LEFT cell: controls + sender + subject + snippet */}
         <TableCell className="p-0">
-          <div className="flex items-center px-4 pr-4 overflow-hidden" style={{ height: '32px', lineHeight: '32px' }}>
+          <div className="flex items-center px-4 pr-4 overflow-hidden" style={{ height: '32px', lineHeight: '32px' }} onContextMenu={handleContextMenu}>
             {/* Selection Checkbox */}
             {onToggleSelect && (
               <input
@@ -1203,7 +1192,7 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
 
         {/* RIGHT cell: fixed width wall */}
   <TableCell className="p-0 w-40 sm:w-44 align-middle">
-          <div className="flex items-center justify-end gap-1 pr-2" style={{ height: '32px' }}>
+    <div className="flex items-center justify-end gap-1 pr-2" style={{ height: '32px' }} onContextMenu={handleContextMenu}>
             <span className="text-xs text-gray-500 whitespace-nowrap tabular-nums group-hover:hidden">
               {formattedDate}
             </span>
@@ -1240,6 +1229,8 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
           </div>
         </TableCell>
       </TableRow>
+      {Portals}
+      </>
     );
   }
 
