@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { FileText, Image, Film, FileSpreadsheet, Eye, Download, Trash2, Package, FolderOpen, Paperclip } from 'lucide-react';
+import { FileText, Eye, Download, Trash2, MoreHorizontal, Plus } from 'lucide-react';
+import { supabase } from '../../lib/supabase';
 import { ShipmentDocument } from '../../types';
 import { DocumentPreviewModal } from './document-preview-modal';
 import { GoogleDriveService } from '../../services/googleDriveService';
@@ -12,7 +13,7 @@ interface AllShipmentFilesProps {
 }
 
 interface DocumentCardProps {
-  doc: ShipmentDocument;
+  doc: ShipmentDocument & { shipment_ref?: string };
   onPreview: (doc: ShipmentDocument) => void;
   onDownload: (doc: ShipmentDocument) => void;
   onDelete: (doc: ShipmentDocument) => void;
@@ -20,6 +21,7 @@ interface DocumentCardProps {
   isSelected: boolean;
   onSelect: (documentId: string, selected: boolean) => void;
   isAdmin: boolean; // Admin status for permission control
+  onAssignNew?: (doc: ShipmentDocument) => void; // open create shipment prefilled with this doc
 }
 
 const DocumentCard: React.FC<DocumentCardProps> = ({
@@ -30,119 +32,106 @@ const DocumentCard: React.FC<DocumentCardProps> = ({
   isDeleting,
   isSelected,
   onSelect,
-  isAdmin
+  isAdmin,
+  onAssignNew
 }) => {
-  const getFileIcon = (fileType?: string) => {
-    if (!fileType) return <FileText className="w-4 h-4 text-gray-500" />;
-    
-    if (fileType.includes('image')) {
-      return <Image className="w-4 h-4 text-blue-500" />;
-    } else if (fileType.includes('video')) {
-      return <Film className="w-4 h-4 text-purple-500" />;
-    } else if (fileType.includes('spreadsheet') || fileType.includes('excel')) {
-      return <FileSpreadsheet className="w-4 h-4 text-green-500" />;
-    } else {
-      return <FileText className="w-4 h-4 text-gray-500" />;
-    }
+  const [menuOpen, setMenuOpen] = React.useState(false);
+
+  const toggleMenu = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setMenuOpen(prev => !prev);
   };
 
-  const formatFileSize = (bytes?: number) => {
-    if (!bytes) return 'Unknown size';
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+  const handleCardClick = () => {
+    onPreview(doc);
   };
 
-  const getDocumentStatus = (doc: ShipmentDocument) => {
-    if (doc.shipment_id === null) {
-      return {
-        label: 'Unassigned',
-        className: 'bg-yellow-100 text-yellow-800 border-yellow-200',
-        icon: <Paperclip className="w-3 h-3" />
-      };
-    } else {
-      return {
-        label: `Shipment #${doc.shipment_id}`,
-        className: 'bg-green-100 text-green-800 border-green-200',
-        icon: <Package className="w-3 h-3" />
-      };
-    }
+  const handleAction = (e: React.MouseEvent, action: () => void) => {
+    e.stopPropagation();
+    action();
+    setMenuOpen(false);
   };
 
-  const status = getDocumentStatus(doc);
+
+  const baseAssigned = 'bg-green-200 hover:bg-green-100 border-green-300';
+  const baseUnassigned = 'bg-yellow-200 hover:bg-yellow-100 border-yellow-300';
+  const selectionHighlight = isSelected && isAdmin ? 'ring-2 ring-blue-300' : '';
+  const cardColor = doc.shipment_id === null ? baseUnassigned : baseAssigned;
 
   return (
-    <div className={`border rounded-lg p-3 transition-colors ${isSelected && isAdmin ? 'bg-blue-50 border-blue-300' : 'bg-gray-50 hover:bg-gray-100'}`}>
-      {/* Selection checkbox and File Header */}
+    <div
+      className={`relative border rounded-lg p-3 transition-colors cursor-pointer ${cardColor} ${selectionHighlight}`}
+      onClick={handleCardClick}
+    >
+      {/* Top Row: Checkbox + filename + menu */}
       <div className="flex items-start justify-between mb-2">
-        <div className="flex items-center flex-1 min-w-0">
-          {/* Only show checkbox for admin users */}
+        <div className="flex items-center flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
           {isAdmin && (
             <input
               type="checkbox"
               checked={isSelected}
               onChange={(e) => onSelect(doc.id, e.target.checked)}
               className="mr-2 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              onClick={(e) => e.stopPropagation()}
             />
           )}
-          {getFileIcon(doc.file_type)}
-          <div className="ml-2 flex-1 min-w-0">
-            <p className="text-sm font-medium text-gray-900 truncate" title={doc.file_name}>
-              {doc.file_name}
-            </p>
-          </div>
+          <p className="text-sm font-medium text-gray-900 truncate" title={doc.file_name}>
+            {doc.file_name}
+          </p>
         </div>
-      </div>
-
-      {/* Status Badge */}
-      <div className="mb-2">
-        <span className={`inline-flex items-center px-2 py-1 text-xs font-medium rounded-full border ${status.className}`}>
-          {status.icon}
-          <span className="ml-1">{status.label}</span>
-        </span>
+        <div className="relative" onClick={(e) => e.stopPropagation()}>
+          <button
+            className="p-1.5 rounded hover:bg-gray-200 text-gray-600"
+            onClick={toggleMenu}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+          >
+            <MoreHorizontal className="w-4 h-4" />
+          </button>
+          {menuOpen && (
+            <div className="absolute right-0 mt-2 w-36 bg-white border border-gray-200 rounded-md shadow-lg z-10 py-1 text-sm">
+              <button
+                className="flex w-full items-center px-3 py-2 hover:bg-gray-100 text-gray-700"
+                onClick={(e) => handleAction(e, () => onPreview(doc))}
+              >
+                <Eye className="w-3 h-3 mr-2" /> Preview
+              </button>
+              <button
+                className="flex w-full items-center px-3 py-2 hover:bg-gray-100 text-gray-700"
+                onClick={(e) => handleAction(e, () => onDownload(doc))}
+              >
+                <Download className="w-3 h-3 mr-2" /> Download
+              </button>
+              {doc.shipment_id === null && isAdmin && onAssignNew && (
+                <button
+                  className="flex w-full items-center px-3 py-2 hover:bg-gray-100 text-gray-700"
+                  onClick={(e) => handleAction(e, () => onAssignNew(doc))}
+                >
+                  <Plus className="w-3 h-3 mr-2" /> Assign
+                </button>
+              )}
+              {isAdmin && (
+                <button
+                  className="flex w-full items-center px-3 py-2 hover:bg-red-50 text-red-600 disabled:opacity-50"
+                  onClick={(e) => handleAction(e, () => onDelete(doc))}
+                  disabled={isDeleting}
+                >
+                  {isDeleting ? (
+                    <div className="w-3 h-3 mr-2 border border-red-600 border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <Trash2 className="w-3 h-3 mr-2" />
+                  )}
+                  Delete
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* File Info */}
-      <div className="text-xs text-gray-500 mb-3">
-        <div>{formatFileSize(doc.file_size)}</div>
+      <div className="text-xs text-gray-1000">
         <div>{new Date(doc.uploaded_at).toLocaleDateString()}</div>
-        {doc.uploaded_by && <div>by {doc.uploaded_by}</div>}
-      </div>
-
-      {/* Actions */}
-      <div className="flex items-center justify-between">
-        <div className="flex space-x-1">
-          <button
-            onClick={() => onPreview(doc)}
-            className="p-1.5 text-blue-600 hover:text-blue-800 hover:bg-blue-100 rounded"
-            title="Preview"
-          >
-            <Eye className="w-3 h-3" />
-          </button>
-          <button
-            onClick={() => onDownload(doc)}
-            className="p-1.5 text-gray-600 hover:text-gray-800 hover:bg-gray-200 rounded"
-            title="Download"
-          >
-            <Download className="w-3 h-3" />
-          </button>
-        </div>
-        
-        {/* Only show delete button for admin users */}
-        {isAdmin && (
-          <button
-            onClick={() => onDelete(doc)}
-            disabled={isDeleting}
-            className="p-1.5 text-red-600 hover:text-red-800 hover:bg-red-100 rounded disabled:opacity-50"
-            title="Delete"
-          >
-            {isDeleting ? (
-              <div className="w-3 h-3 border border-red-600 border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <Trash2 className="w-3 h-3" />
-            )}
-          </button>
-        )}
       </div>
     </div>
   );
@@ -154,7 +143,7 @@ export const AllShipmentFiles: React.FC<AllShipmentFilesProps> = ({
   isAdmin = false,
   className = ''
 }) => {
-  const [allDocuments, setAllDocuments] = useState<ShipmentDocument[]>([]);
+  const [allDocuments, setAllDocuments] = useState<(ShipmentDocument & { shipment_ref?: string })[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
@@ -183,7 +172,30 @@ export const AllShipmentFiles: React.FC<AllShipmentFilesProps> = ({
       console.log('🔄 Fetching all documents from AllShipmentFiles component...');
       const documents = await GoogleDriveService.getAllDocuments();
       console.log('📄 Fetched documents:', documents);
-      setAllDocuments(documents);
+      // Build unique shipment ids (assigned)
+      const assignedIds = Array.from(new Set(documents.filter(d => d.shipment_id !== null).map(d => d.shipment_id as number)));
+      let refMap: Record<number, string> = {};
+      if (assignedIds.length > 0) {
+        try {
+          const { data: shipmentRows, error: shipmentErr } = await supabase
+            .from('shipments')
+            .select('id, ref')
+            .in('id', assignedIds);
+          if (shipmentErr) {
+            console.warn('Failed fetching shipment refs', shipmentErr);
+          } else if (shipmentRows) {
+            shipmentRows.forEach(r => { if (r.ref) refMap[r.id] = r.ref; });
+          }
+        } catch (e) {
+          console.warn('Unexpected error fetching shipment refs', e);
+        }
+      }
+      // Enrich documents with shipment_ref property
+      const enriched = documents.map(d => ({
+        ...d,
+        shipment_ref: d.shipment_id !== null ? refMap[d.shipment_id as number] : undefined
+      }));
+      setAllDocuments(enriched);
       
       // Auto-expand if there are unassigned documents
       const unassigned = documents.filter(doc => doc.shipment_id === null);
@@ -291,6 +303,12 @@ export const AllShipmentFiles: React.FC<AllShipmentFilesProps> = ({
   const assignedDocuments = allDocuments.filter(doc => doc.shipment_id !== null);
   const unassignedDocuments = allDocuments.filter(doc => doc.shipment_id === null);
 
+  // State for assigning a document to a brand new shipment
+
+  const handleAssignNewShipment = (doc: ShipmentDocument) => {
+    window.dispatchEvent(new CustomEvent('open-add-shipment-with-doc', { detail: { documentId: doc.id } }));
+  };
+
   if (loading) {
     return (
       <div className={`bg-white rounded-lg shadow-sm border p-6 ${className}`}>
@@ -320,30 +338,47 @@ export const AllShipmentFiles: React.FC<AllShipmentFilesProps> = ({
 
   return (
     <div className={`bg-white rounded-lg shadow-sm border ${className}`}>
-      {/* Header */}
-      <div className="border-b border-gray-200 p-4">
-        <div className="flex items-center justify-between">
+      {/* Header (title + summary stats + actions all in one row) */}
+      <div className="border-b border-gray-300 p-4">
+        <div className="flex items-center justify-between gap-6">
+          {/* Left: Title & selection count */}
           <div className="flex items-center">
-            <FolderOpen className="w-5 h-5 text-blue-600 mr-2" />
-            <h3 className="text-lg font-medium text-gray-900">All Shipment Files</h3>
-            <span className="ml-2 px-2 py-1 text-xs bg-gray-100 text-gray-600 rounded-full">
-              {allDocuments.length} files
-            </span>
+            <h3 className="text-lg font-medium text-gray-900">Shipment Files</h3>
             {selectedDocuments.size > 0 && isAdmin && (
-              <span className="ml-2 px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded-full">
-                {selectedDocuments.size} selected
+              <span className="">
               </span>
             )}
           </div>
-          <div className="flex items-center space-x-2">
+
+          {/* Right: Stats + (optional) select all + bulk actions */}
+          <div className="flex items-center space-x-6">
+            {/* Summary Stats */}
+            <div className="flex items-center space-x-4 text-sm text-gray-600">
+              <span>{assignedDocuments.length} assigned</span>
+              <span>{unassignedDocuments.length} unassigned</span>
+            </div>
+
+            {/* Select All - only for admin & when documents exist */}
+            {allDocuments.length > 0 && isAdmin && (
+              <div className="flex items-center text-sm text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={selectedDocuments.size === allDocuments.length && allDocuments.length > 0}
+                  onChange={(e) => handleSelectAll(e.target.checked)}
+                  className="mr-2 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span>Select All</span>
+              </div>
+            )}
+
             {/* Bulk Actions - Only for admin */}
             {selectedDocuments.size > 0 && isAdmin && (
-              <>
+              <div className="flex items-center space-x-3">
                 <button
                   onClick={() => setSelectedDocuments(new Set())}
                   className="text-sm text-gray-600 hover:text-gray-800"
                 >
-                  Clear Selection
+                  Clear
                 </button>
                 <button
                   onClick={handleBulkDelete}
@@ -362,50 +397,9 @@ export const AllShipmentFiles: React.FC<AllShipmentFilesProps> = ({
                     </>
                   )}
                 </button>
-              </>
+              </div>
             )}
-            
-            {/* Regular Actions */}
-            <button
-              onClick={fetchAllDocuments}
-              className="text-sm text-blue-600 hover:text-blue-800"
-            >
-              Refresh
-            </button>
-            <button
-              onClick={() => setIsExpanded(!isExpanded)}
-              className="text-sm text-gray-600 hover:text-gray-800"
-            >
-              {isExpanded ? 'Collapse' : 'Expand'}
-            </button>
           </div>
-        </div>
-
-        {/* Summary Stats */}
-        <div className="mt-3 flex items-center justify-between text-sm text-gray-600">
-          <div className="flex items-center space-x-4">
-            <div className="flex items-center">
-              <Package className="w-4 h-4 mr-1 text-green-600" />
-              <span>{assignedDocuments.length} assigned</span>
-            </div>
-            <div className="flex items-center">
-              <Paperclip className="w-4 h-4 mr-1 text-yellow-600" />
-              <span>{unassignedDocuments.length} unassigned</span>
-            </div>
-          </div>
-          
-          {/* Select All Checkbox - Only for admin */}
-          {allDocuments.length > 0 && isAdmin && (
-            <div className="flex items-center">
-              <input
-                type="checkbox"
-                checked={selectedDocuments.size === allDocuments.length && allDocuments.length > 0}
-                onChange={(e) => handleSelectAll(e.target.checked)}
-                className="mr-2 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              <span className="text-sm text-gray-600">Select All</span>
-            </div>
-          )}
         </div>
       </div>
 
@@ -414,7 +408,7 @@ export const AllShipmentFiles: React.FC<AllShipmentFilesProps> = ({
         <div className="p-4">
           {allDocuments.length === 0 ? (
             <div className="text-center py-8 text-gray-500">
-              <FileText className="w-8 h-8 mx-auto mb-2 text-gray-300" />
+              <FileText className="w-8 h-8 mx-auto mb-2 text-gray-400" />
               <p>No documents found</p>
             </div>
           ) : (
@@ -422,20 +416,12 @@ export const AllShipmentFiles: React.FC<AllShipmentFilesProps> = ({
               {/* Unassigned Documents Section */}
               {unassignedDocuments.length > 0 && (
                 <div>
-                  <div className="flex items-center mb-3">
-                    <Paperclip className="w-4 h-4 text-yellow-600 mr-2" />
-                    <h4 className="text-sm font-medium text-gray-900">
-                      Unassigned Documents ({unassignedDocuments.length})
-                    </h4>
-                    <span className="ml-2 text-xs text-gray-500">
-                      • Bulk uploaded files waiting for assignment
-                    </span>
-                  </div>
+                  <div className="flex items-center mb-2"></div>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-6">
                     {unassignedDocuments.map((doc) => (
                       <DocumentCard
                         key={doc.id}
-                        doc={doc}
+                        doc={doc as ShipmentDocument & { shipment_ref?: string }}
                         onPreview={handlePreview}
                         onDownload={handleDownload}
                         onDelete={handleDelete}
@@ -443,6 +429,7 @@ export const AllShipmentFiles: React.FC<AllShipmentFilesProps> = ({
                         isSelected={selectedDocuments.has(doc.id)}
                         onSelect={handleSelectDocument}
                         isAdmin={isAdmin}
+                        onAssignNew={handleAssignNewShipment}
                       />
                     ))}
                   </div>
@@ -452,20 +439,13 @@ export const AllShipmentFiles: React.FC<AllShipmentFilesProps> = ({
               {/* Assigned Documents Section */}
               {assignedDocuments.length > 0 && (
                 <div>
-                  <div className="flex items-center mb-3">
-                    <Package className="w-4 h-4 text-green-600 mr-2" />
-                    <h4 className="text-sm font-medium text-gray-900">
-                      Assigned Documents ({assignedDocuments.length})
-                    </h4>
-                    <span className="ml-2 text-xs text-gray-500">
-                      • Documents linked to specific shipments
-                    </span>
+                  <div className="flex items-center">
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                     {assignedDocuments.map((doc) => (
                       <DocumentCard
                         key={doc.id}
-                        doc={doc}
+                        doc={doc as ShipmentDocument & { shipment_ref?: string }}
                         onPreview={handlePreview}
                         onDownload={handleDownload}
                         onDelete={handleDelete}

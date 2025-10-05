@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Package, RefreshCw, Truck, Plus, Upload, FileText, ArrowUpDown, Settings, Download, Trash2, FileSpreadsheet, AlertCircle, Eye } from 'lucide-react';
+import { Package, RefreshCw, Upload, FileText, ArrowUpDown, Trash2, FileSpreadsheet, AlertCircle, Eye } from 'lucide-react';
 import { Shipment, ShipmentDocument } from '../types';
 import { fetchShipments, createShipment, importShipments } from '../services/backendApi';
 import { GoogleDriveService } from '../services/googleDriveService';
@@ -17,8 +17,6 @@ import { supabase } from '../lib/supabase';
 
 function Shipments() {
   const { isGmailSignedIn, isAdmin } = useAuth();
-  
-  // Debug admin status
   console.log('🎯 Shipments page - isAdmin:', isAdmin);
   const navigate = useNavigate();
   const [shipments, setShipments] = useState<Shipment[]>([]);
@@ -34,12 +32,12 @@ function Shipments() {
   const [bulkUploadModalOpen, setBulkUploadModalOpen] = useState(false);
   const [documentRefreshTrigger, setDocumentRefreshTrigger] = useState(0);
   const [selectedShipments, setSelectedShipments] = useState<Set<number>>(new Set());
-  
   const [selectedShipmentForUpload, setSelectedShipmentForUpload] = useState<{ id: number; containerNumber: string } | null>(null);
   const [selectedShipmentForDetails, setSelectedShipmentForDetails] = useState<Shipment | null>(null);
   const [isExitingButtons, setIsExitingButtons] = useState(false);
   const [documentPreviewModalOpen, setDocumentPreviewModalOpen] = useState(false);
   const [selectedDocumentForPreview, setSelectedDocumentForPreview] = useState<ShipmentDocument | null>(null);
+  const [pendingAssignDocumentId, setPendingAssignDocumentId] = useState<string | null>(null);
   
   // Dynamic columns state - Updated for simplified schema
   const [visibleColumns, _setVisibleColumns] = useState<string[]>([
@@ -55,6 +53,23 @@ function Shipments() {
   // Fetch shipments and documents on component mount
   useEffect(() => {
     fetchShipmentData();
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const custom = e as CustomEvent;
+      const documentId = custom.detail?.documentId as string | undefined;
+      
+      if (documentId) {
+        console.log('Received open-add-shipment-with-doc event:', documentId);
+        setPendingAssignDocumentId(documentId);
+        setAddShipmentModalOpen(true);
+      }
+    };
+
+    window.addEventListener('open-add-shipment-with-doc', handler as EventListener);
+
+    return () => window.removeEventListener('open-add-shipment-with-doc', handler as EventListener);
   }, []);
 
   // Function to fetch shipments
@@ -152,15 +167,33 @@ function Shipments() {
       console.log('Creating new shipment:', shipmentData);
       const newShipment = await createShipment(shipmentData);
       console.log('Successfully created shipment:', newShipment);
-      
-      // Refresh the shipments list to include the new shipment
+
       await fetchShipmentData(true);
-      
-      // Close the modal
+
+      if (pendingAssignDocumentId) {
+        try {
+          const { error: linkError } = await supabase
+            .from('documents')
+            .update({ shipment_id: newShipment.id })
+            .eq('id', pendingAssignDocumentId);
+          if (linkError) {
+            console.error('Failed to link document to new shipment:', linkError);
+          } else {
+            console.log(`Linked document ${pendingAssignDocumentId} to shipment ${newShipment.id}`);
+            setDocumentRefreshTrigger(prev => prev + 1);
+            // Silently refresh documents for this new shipment so details modal will have them if opened
+            fetchShipmentDocumentsData(newShipment.id);
+          }
+        } catch (e) {
+          console.error('Unexpected error linking document', e);
+        } finally {
+          setPendingAssignDocumentId(null);
+        }
+      }
+
       setAddShipmentModalOpen(false);
     } catch (error) {
       console.error('Error creating shipment:', error);
-      // Re-throw to let the modal handle the error
       throw error;
     }
   };
@@ -403,25 +436,15 @@ function Shipments() {
 
   return (
     <div className="fade-in pb-6">
-      <div className="flex items-center justify-between mb-4">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4 mt-10">
         <div className="flex items-center">
-          <div className="mr-3 p-2 bg-blue-100 rounded-full">
-            <Truck className="w-5 h-5 text-blue-600" />
+          <div className="mr-3 p-2">
+            <Package className="w-5 h-5 text-red-500" />
           </div>
-          <h1 className="text-2xl font-semibold text-gray-800">Shipment Tracking</h1>
+          <h1 className="text-2xl font-semibold text-gray-800">Shipments</h1>
         </div>
         <div className="flex items-center space-x-2">
-          {/* Export Buttons */}
-          <button
-            onClick={() => exportToCSV()}
-            className={`px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 text-gray-700 flex items-center transition-all duration-300 ${
-              (selectedShipments.size > 0 || isExitingButtons) ? 'transform -translate-x-2' : 'transform translate-x-0'
-            }`}
-          >
-            <Download size={14} className="mr-1.5" />
-            Export All
-          </button>
-          
           {/* Export Selected - Admin only */}
           {isAdmin && (selectedShipments.size > 0 || isExitingButtons) && (
             <button
@@ -461,24 +484,17 @@ function Shipments() {
             <>
               <button
                 onClick={() => setAddShipmentModalOpen(true)}
-                className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-md flex items-center"
+                className="px-3 py-1.5 text-sm bg-gray-600 hover:bg-gray-700 text-white rounded-md flex items-center"
               >
-                <Plus size={14} className="mr-1.5" />
-                Add Shipment
+                <Upload size={14} className="mr-1.5" />
+                Upload
               </button>
               <button
                 onClick={() => setBulkUploadModalOpen(true)}
-                className="px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-700 text-white rounded-md flex items-center"
-              >
-                <Upload size={14} className="mr-1.5" />
-                Bulk Upload
-              </button>
-              <button
-                onClick={() => setColumnManagerModalOpen(true)}
                 className="px-3 py-1.5 text-sm bg-gray-600 hover:bg-gray-700 text-white rounded-md flex items-center"
               >
-                <Settings size={14} className="mr-1.5" />
-                Manage Columns
+                <Upload size={14} className="mr-1.5" />
+                Upload Many
               </button>
             </>
           )}
@@ -488,8 +504,8 @@ function Shipments() {
             className="px-3 py-1.5 text-sm bg-gray-600 hover:bg-gray-700 text-white rounded-md flex items-center"
             disabled={refreshing}
           >
-            <RefreshCw size={14} className={`mr-1.5 ${refreshing ? 'animate-spin' : ''}`} />
-            {refreshing ? 'Refreshing...' : 'Refresh'}
+            <RefreshCw size={20} className={`mr-0 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? 'Refreshing...' : ''}
           </button>
         </div>
       </div>
@@ -503,24 +519,23 @@ function Shipments() {
         </div>
       )}
       
+
+
       {loading && !refreshing ? (
         <div className="flex justify-center items-center h-64">
           <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-primary-500"></div>
         </div>
       ) : shipments.length === 0 ? (
-        <div className="bg-white rounded-lg shadow-sm p-8 text-center">
-          <Package className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <h2 className="text-xl font-medium text-gray-700 mb-2">No Shipments Found</h2>
-          <p className="text-gray-500 mb-4">
-            There are no shipments in the system yet. Add a new shipment or import from CSV.
-          </p>
+        <div className="bg-white rounded-lg shadow-sm p-8 text-center text-gray-500 border border-gray-300 p-4">
+          <Package className="w-8 h-8 mx-auto mb-2 text-gray-400" />
+          <p>No shipments found</p>
         </div>
       ) : (
         <div className="bg-white rounded-lg shadow-sm overflow-hidden">
           {/* Table */}
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+          <div className="overflow-x-auto border border-gray-300 rounded-lg">
+            <table className="min-w-full divide-y divide-gray-300">
+              <thead className="bg-gray-50 border-b border-gray-300">
                 <tr>
                   <th className="w-8 px-2 py-3 text-left border-r border-gray-200">
                     {/* Only show select all checkbox for admin users */}
@@ -545,7 +560,7 @@ function Shipments() {
                       </div>
                     </th>
                   ))}
-                  <th className="w-16 px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="w-16 px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
@@ -598,7 +613,7 @@ function Shipments() {
                               e.stopPropagation();
                               handleUploadClick(shipment.id, shipment.ref);
                             }}
-                            className="text-blue-600 hover:text-blue-900 p-1 rounded"
+                            className="text-gray-600 hover:text-gray-900 p-1 rounded"
                             title="Upload Documents"
                           >
                             <Upload className="w-4 h-4" />
@@ -609,7 +624,7 @@ function Shipments() {
                           <div className="relative group">
                             <button
                               onClick={(e) => e.stopPropagation()}
-                              className="text-green-600 hover:text-green-900 p-1 rounded flex items-center"
+                              className="text-gray-600 hover:text-gray-900 p-1 rounded flex items-center"
                               title={`${shipmentDocuments[shipment.id].length} documents`}
                             >
                               <FileText className="w-4 h-4" />
@@ -653,15 +668,6 @@ function Shipments() {
               </tbody>
             </table>
           </div>
-          
-          {/* Footer with selected count - Admin only */}
-          {isAdmin && selectedShipments.size > 0 && (
-            <div className="bg-gray-50 px-4 py-3 border-t">
-              <p className="text-sm text-gray-700">
-                {selectedShipments.size} of {shipments.length} shipment(s) selected
-              </p>
-            </div>
-          )}
         </div>
       )}
 
@@ -689,6 +695,7 @@ function Shipments() {
         isOpen={addShipmentModalOpen}
         onClose={() => setAddShipmentModalOpen(false)}
         onSubmit={handleCreateShipment}
+        assigningDocumentId={pendingAssignDocumentId}
       />
       
       {/* CSV Import Modal */}

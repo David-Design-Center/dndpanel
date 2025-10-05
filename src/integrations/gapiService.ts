@@ -171,11 +171,87 @@ export const initGapiClient = async (): Promise<void> => {
  */
 export const isGmailSignedIn = (): boolean => {
   try {
-    return !!(currentAccessToken && Date.now() < tokenExpiryTime - 5 * 60 * 1000); // 5-minute buffer
+    const hasValidToken = !!(currentAccessToken && Date.now() < tokenExpiryTime - 5 * 60 * 1000); // 5-minute buffer
+    
+    // If token expires in 10 minutes or less, refresh it in background
+    if (currentAccessToken && Date.now() > tokenExpiryTime - 10 * 60 * 1000) {
+      refreshTokenInBackground();
+    }
+    
+    return hasValidToken;
   } catch (error) {
     console.error('Error checking Gmail sign-in status:', error);
     return false;
   }
+};
+
+let refreshPromise: Promise<void> | null = null;
+
+/**
+ * Refresh the token in background without interrupting user
+ */
+const refreshTokenInBackground = async (): Promise<void> => {
+  // Prevent multiple simultaneous refreshes
+  if (refreshPromise) return refreshPromise;
+  
+  refreshPromise = (async () => {
+    try {
+      console.log('🔄 Refreshing Gmail token in background...');
+      
+      // Import your token refresh function
+      const { fetchGmailAccessToken } = await import('../lib/gmail');
+      
+      // Get current user email (you'll need to adapt this based on how you store it)
+      const userEmail = getCurrentUserEmail(); // You'll need to implement this helper
+      
+      if (!userEmail) {
+        console.warn('No user email available for token refresh');
+        return;
+      }
+      
+      // Get fresh token
+      const newToken = await fetchGmailAccessToken(userEmail);
+      
+      // Update the current token and expiry
+      currentAccessToken = newToken;
+      tokenExpiryTime = Date.now() + (55 * 60 * 1000); // 55 minutes from now
+      
+      // Update gapi with new token
+      if (window.gapi?.client) {
+        window.gapi.client.setToken({ access_token: newToken });
+      }
+      
+      console.log('✅ Gmail token refreshed successfully in background for:', userEmail);
+      
+    } catch (error) {
+      console.error('❌ Background token refresh failed:', error);
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+  
+  return refreshPromise;
+};
+
+/**
+ * Get current user email from various sources
+ */
+const getCurrentUserEmail = (): string | null => {
+  // Method 1: Try to get from window._currentProfileEmail (set by ProfileContext)
+  if ((window as any)._currentProfileEmail) {
+    return (window as any)._currentProfileEmail;
+  }
+  
+  // Method 2: Try localStorage backup
+  const storedEmail = localStorage.getItem('currentProfileUserEmail');
+  if (storedEmail) {
+    return storedEmail;
+  }
+  
+  // Method 3: Check if we can extract from any existing auth token context
+  // This is a fallback that shouldn't normally be needed
+  console.warn('No current user email found - token refresh may fail');
+  return null;
 };
 
 /**

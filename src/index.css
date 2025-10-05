@@ -624,11 +624,8 @@ div[class*="bg-black"][class*="fixed"] {
   z-index: 50 !important;
 }
 
-/* Ensure modal content containers work */
-div[class*="flex"][class*="min-h-full"] {
-  position: fixed !important;
-  z-index: 50 !important;
-}
+/* Removed broad selector that forced any flex + min-h-full div to fixed positioning (caused modals to shift left)
+   If specific components need elevation, add a scoped class instead (e.g., .app-modal-container). */
 
 @layer base {
   html {
@@ -950,19 +947,82 @@ div[class*="flex"][class*="min-h-full"] {
 .rich-text-editor [contenteditable] ol {
   margin: 0.5em 0;
   padding-left: 1.5em;
+  list-style-position: outside;
+}
+
+.rich-text-editor [contenteditable] ul {
+  list-style-type: disc;
+}
+
+.rich-text-editor [contenteditable] ol {
+  list-style-type: decimal;
 }
 
 .rich-text-editor [contenteditable] li {
   margin: 0.25em 0;
+  display: list-item;
+}
+
+/* Nested list styles */
+.rich-text-editor [contenteditable] ul ul {
+  list-style-type: circle;
+  margin-top: 0.25em;
+  margin-bottom: 0.25em;
+}
+
+.rich-text-editor [contenteditable] ul ul ul {
+  list-style-type: square;
+}
+
+.rich-text-editor [contenteditable] ol ol {
+  list-style-type: lower-alpha;
+  margin-top: 0.25em;
+  margin-bottom: 0.25em;
+}
+
+.rich-text-editor [contenteditable] ol ol ol {
+  list-style-type: lower-roman;
+}
+
+/* Force list styles to override any CSS resets */
+.rich-text-editor [contenteditable] ul > li::marker {
+  color: #374151;
+}
+
+.rich-text-editor [contenteditable] ol > li::marker {
+  color: #374151;
+  font-weight: 500;
+}
+
+/* Ensure list items are properly spaced and visible */
+.rich-text-editor [contenteditable] ul,
+.rich-text-editor [contenteditable] ol {
+  color: #374151;
+}
+
+.rich-text-editor [contenteditable] li {
+  color: inherit;
+  line-height: 1.5;
 }
 
 .rich-text-editor [contenteditable] a {
   color: #3b82f6;
   text-decoration: underline;
+  cursor: pointer;
+  transition: color 0.2s ease;
 }
 
 .rich-text-editor [contenteditable] a:hover {
   color: #1d4ed8;
+  background-color: rgba(59, 130, 246, 0.1);
+  border-radius: 2px;
+  padding: 1px 2px;
+  margin: -1px -2px;
+}
+
+/* Link tooltip styling - ensure it's visible */
+.rich-text-editor [contenteditable] a[title] {
+  position: relative;
 }
 
 .rich-text-editor [contenteditable] strong,
@@ -1694,4 +1754,13 @@ aside .flex.items-center span:not(.flex-shrink-0) {
   white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
+}
+
+/* Today cell styling - light blue background */
+.modern-calendar .fc-day-today {
+  background-color: #dbeafe !important; /* Light blue background */
+}
+
+.modern-calendar .fc-day-today .fc-daygrid-day-frame {
+  background-color: transparent !important;
 }

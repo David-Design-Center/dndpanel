@@ -550,7 +550,9 @@ export const getAllInboxEmails = async (
 ): Promise<PaginatedEmailServiceResponse> => {
   // Unified inbox: include everything except Sent and Trash
   // Unified inbox: All Mail except Sent, Trash, and Spam
-  return getEmails(forceRefresh, '-in:sent -in:trash -in:spam', maxResults, pageToken);
+  // Extra guard: Some sent messages (bcc to self) can still appear; explicitly exclude label:SENT
+  // Gmail search syntax: -in:sent already covers most, but adding -label:SENT mitigates edge cases.
+  return getEmails(forceRefresh, '-in:sent -label:SENT -in:trash -in:spam', maxResults, pageToken);
 };
 
 export const getSentEmails = async (

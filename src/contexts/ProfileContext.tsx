@@ -199,6 +199,18 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
       
       setCurrentProfile(profileToSelect);
       sessionStorage.setItem('currentProfileId', id);
+      
+      // Store user email globally for token refresh
+      if (profileToSelect.userEmail) {
+        (window as any)._currentProfileEmail = profileToSelect.userEmail;
+        localStorage.setItem('currentProfileUserEmail', profileToSelect.userEmail);
+        console.log('📧 Set current user email:', profileToSelect.userEmail);
+      } else {
+        (window as any)._currentProfileEmail = null;
+        localStorage.removeItem('currentProfileUserEmail');
+        console.warn('⚠️ Profile has no userEmail');
+      }
+      
       setError(null);
       
       // Configure authentication method based on profile email
@@ -322,6 +334,12 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     setCurrentProfile(null);
     sessionStorage.removeItem('selectedProfileId');
     sessionStorage.removeItem('currentProfileId');
+    
+    // Clear user email from global storage
+    (window as any)._currentProfileEmail = null;
+    localStorage.removeItem('currentProfileUserEmail');
+    console.log('📧 Cleared current user email');
+    
     setError(null);
     
     // Configure back to traditional auth when no profile is selected

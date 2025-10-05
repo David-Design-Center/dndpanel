@@ -209,9 +209,6 @@ function Shipments() {
         <div className="bg-white rounded-lg shadow-sm p-8 text-center">
           <Package className="w-16 h-16 text-gray-300 mx-auto mb-4" />
           <h2 className="text-xl font-medium text-gray-700 mb-2">No Shipments Found</h2>
-          <p className="text-gray-500 mb-4">
-            There are no shipments in the system yet. Add a new shipment or import from CSV.
-          </p>
         </div>
       ) : (
         <div className="bg-white rounded-lg shadow-sm overflow-hidden">
@@ -275,15 +272,6 @@ function Shipments() {
               </tbody>
             </table>
           </div>
-          
-          {/* Footer with selected count */}
-          {selectedShipments.size > 0 && (
-            <div className="bg-gray-50 px-4 py-3 border-t">
-              <p className="text-sm text-gray-700">
-                {selectedShipments.size} of {shipments.length} shipment(s) selected
-              </p>
-            </div>
-          )}
         </div>
       )}
       

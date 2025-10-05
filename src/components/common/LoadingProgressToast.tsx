@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { CheckCircle2, Circle, Loader2, XCircle } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
+import { CheckCircle2, Circle, Loader2, XCircle, X } from 'lucide-react';
 import {
   LOADING_PROGRESS_EVENT,
   LoadingProgressEventDetail,
@@ -20,6 +21,9 @@ const INITIAL_STATUS: Record<LoadingProgressSource, StatusState> = {
   labels: 'idle',
   counters: 'idle'
 };
+
+// Track if this is the first trigger globally
+let hasTriggeredBefore = false;
 
 const STATUS_SUBTEXT: Record<StatusState, string> = {
   idle: 'Waiting to start',
@@ -42,9 +46,21 @@ const iconForStatus = (status: StatusState) => {
 };
 
 export function LoadingProgressToast() {
+  const location = useLocation();
   const [statuses, setStatuses] = useState(INITIAL_STATUS);
   const toastIdRef = useRef<string | number | null>(null);
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Only show on Inbox page
+  const isInboxPage = location.pathname === '/inbox';
+
+  const handleManualClose = () => {
+    if (toastIdRef.current !== null) {
+      toast.dismiss(toastIdRef.current);
+      toastIdRef.current = null;
+      setStatuses(INITIAL_STATUS);
+    }
+  };
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -63,25 +79,57 @@ export function LoadingProgressToast() {
       });
     };
 
+    const handleProfileSwitch = () => {
+      console.log('🔄 LoadingProgressToast: Profile switch detected, resetting first trigger flag');
+      hasTriggeredBefore = false;
+      // Clear any existing toast on profile switch
+      if (toastIdRef.current !== null) {
+        toast.dismiss(toastIdRef.current);
+        toastIdRef.current = null;
+      }
+      setStatuses(INITIAL_STATUS);
+    };
+
     window.addEventListener(LOADING_PROGRESS_EVENT, handler as EventListener);
+    window.addEventListener('clear-all-caches', handleProfileSwitch as EventListener);
+    
     return () => {
       window.removeEventListener(LOADING_PROGRESS_EVENT, handler as EventListener);
+      window.removeEventListener('clear-all-caches', handleProfileSwitch as EventListener);
     };
   }, []);
 
   useEffect(() => {
     const hasStarted = ORDER.some(key => statuses[key] !== 'idle');
-    if (!hasStarted) return;
+    if (!hasStarted || !isInboxPage) return; // Only show on Inbox page
+
+    // Determine if this is the first trigger globally
+    const isFirstTimeEver = !hasTriggeredBefore;
+    
+    // Mark that we've triggered at least once
+    if (!hasTriggeredBefore) {
+      hasTriggeredBefore = true;
+    }
+
+    // Determine which items to show based on whether this is the first trigger ever
+    const itemsToShow = isFirstTimeEver ? ORDER : ['inbox' as LoadingProgressSource];
 
     const CustomContent = (
       <div className="relative w-[380px] max-w-[85vw] rounded-xl border border-slate-200 shadow-xl overflow-hidden bg-white">
         {/* Gradient overlay for stronger visibility */}
         <div className="pointer-events-none absolute inset-0 bg-white" />
-                <div className="px-4 pt-4 pb-2">
+        <div className="relative z-10 px-4 pt-4 pb-2 flex items-center justify-between">
           <p className="text-base font-semibold text-black">Preparing workspace</p>
+          <button
+            onClick={handleManualClose}
+            className="flex items-center justify-center w-6 h-6 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
+            aria-label="Close"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
         <div className="relative px-3 pb-3 space-y-3">
-          {ORDER.map(key => {
+          {itemsToShow.map(key => {
             const status = statuses[key];
             return (
               <div
@@ -117,8 +165,9 @@ export function LoadingProgressToast() {
       });
     }
 
-    const allSuccess = ORDER.every(key => statuses[key] === 'success');
-    const anyError = ORDER.some(key => statuses[key] === 'error');
+    const itemsToCheck = isFirstTimeEver ? ORDER : ['inbox' as LoadingProgressSource];
+    const allSuccess = itemsToCheck.every(key => statuses[key] === 'success');
+    const anyError = itemsToCheck.some(key => statuses[key] === 'error');
 
     if ((allSuccess || anyError) && toastIdRef.current !== null) {
       if (dismissTimerRef.current) {
@@ -135,7 +184,16 @@ export function LoadingProgressToast() {
       clearTimeout(dismissTimerRef.current);
       dismissTimerRef.current = null;
     }
-  }, [statuses]);
+  }, [statuses, isInboxPage]);
+
+  // Clean up toast when navigating away from inbox
+  useEffect(() => {
+    if (!isInboxPage && toastIdRef.current !== null) {
+      toast.dismiss(toastIdRef.current);
+      toastIdRef.current = null;
+      setStatuses(INITIAL_STATUS);
+    }
+  }, [isInboxPage]);
 
   useEffect(() => {
     return () => {

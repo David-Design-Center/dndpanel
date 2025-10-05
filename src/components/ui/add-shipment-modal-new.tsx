@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Package, AlertCircle } from 'lucide-react';
 import { FileUpload } from './file-upload';
+import { supabase } from '../../lib/supabase';
 
 export interface NewShipmentData {
   ref: string;
@@ -8,18 +9,21 @@ export interface NewShipmentData {
   etd: string;
   container_n: string; // Match database column name
   documents?: File[]; // Add files array for uploads
+  user_id?: string; // Ownership
 }
 
 interface AddShipmentModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSubmit: (data: NewShipmentData) => Promise<void>;
+  assigningDocumentId?: string | null; // If provided, we're creating shipment to attach existing doc
 }
 
 export const AddShipmentModal: React.FC<AddShipmentModalProps> = ({
   isOpen,
   onClose,
-  onSubmit
+  onSubmit,
+  assigningDocumentId
 }) => {
   const [formData, setFormData] = useState<NewShipmentData>({
     ref: '',
@@ -32,6 +36,36 @@ export const AddShipmentModal: React.FC<AddShipmentModalProps> = ({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [assigningDocumentName, setAssigningDocumentName] = useState<string | null>(null);
+
+  // Fetch existing document metadata if assigning an unassigned document
+  React.useEffect(() => {
+    let active = true;
+    const loadDoc = async () => {
+      if (!assigningDocumentId) {
+        setAssigningDocumentName(null);
+        return;
+      }
+      try {
+        const { data, error } = await supabase
+          .from('documents')
+          .select('id, file_name')
+          .eq('id', assigningDocumentId)
+          .single();
+        if (error) {
+          console.warn('Failed to load assigning document metadata', error);
+          if (active) setAssigningDocumentName('(unknown file)');
+        } else if (data && active) {
+          setAssigningDocumentName(data.file_name || '(unnamed file)');
+        }
+      } catch (e) {
+        console.warn('Unexpected error loading document metadata', e);
+        if (active) setAssigningDocumentName('(error)');
+      }
+    };
+    loadDoc();
+    return () => { active = false; };
+  }, [assigningDocumentId]);
 
 
   const validateForm = (): boolean => {
@@ -55,12 +89,24 @@ export const AddShipmentModal: React.FC<AddShipmentModalProps> = ({
     setIsSubmitting(true);
     
     try {
-      // Add files to the form data before submission
-      const submitData = {
+      // Fetch current user for ownership
+      const { data: authData } = await supabase.auth.getUser();
+      const userId = authData?.user?.id;
+
+      if (!userId) {
+        setErrors({ submit: 'Not authenticated. Please re-login.' });
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Add files + user ownership to the form data before submission
+      const submitData: NewShipmentData = {
         ...formData,
-        documents: selectedFiles
+        // If we are assigning an existing document, don't include uploads
+        documents: assigningDocumentId ? [] : selectedFiles,
+        user_id: userId
       };
-      
+
       await onSubmit(submitData);
       // Reset form on success
       setFormData({
@@ -68,7 +114,8 @@ export const AddShipmentModal: React.FC<AddShipmentModalProps> = ({
         eta: '',
         etd: '',
         container_n: '',
-        documents: []
+        documents: [],
+        user_id: undefined
       });
       setSelectedFiles([]);
       setErrors({});
@@ -118,7 +165,7 @@ export const AddShipmentModal: React.FC<AddShipmentModalProps> = ({
       <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-hidden">
         <div className="flex items-center justify-between p-6 border-b">
           <div className="flex items-center">
-            <Package className="w-6 h-6 text-blue-600 mr-3" />
+            <Package className="w-6 h-6 text-red-500 mr-3" />
             <h2 className="text-xl font-semibold">Add New Shipment</h2>
           </div>
           <button
@@ -200,32 +247,36 @@ export const AddShipmentModal: React.FC<AddShipmentModalProps> = ({
               />
             </div>
 
-            {/* Documents Upload - Full Width */}
+            {/* Existing document notice OR upload field */}
             <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Documents
-              </label>
-              <div className="space-y-2">
-                <FileUpload
-                  onFileSelect={handleFileSelect}
-                  accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
-                  multiple={true}
-                  maxSize={10}
-                  disabled={isSubmitting}
-                  className="w-full"
-                />
-                {selectedFiles.length > 0 && (
-                  <div className="text-sm text-gray-600">
-                    {selectedFiles.length} file{selectedFiles.length > 1 ? 's' : ''} selected:
-                    <ul className="mt-1 ml-4 list-disc text-xs">
-                      {selectedFiles.map((file, index) => (
-                        <li key={index}>{file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)</li>
-                      ))}
-                    </ul>
+              {assigningDocumentId ? (
+                <div className="p-3 border rounded-md bg-blue-50 border-blue-200 text-sm text-blue-800">
+                  <p className="truncate" title={assigningDocumentName || ''}>
+                    {assigningDocumentName ? assigningDocumentName : 'Loading file name...'}
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Documents
+                  </label>
+                  <div className="space-y-2">
+                    <FileUpload
+                      onFileSelect={handleFileSelect}
+                      accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                      multiple={true}
+                      maxSize={10}
+                      disabled={isSubmitting}
+                      className="w-full"
+                    />
+                    {selectedFiles.length > 0 && (
+                      <div className="text-sm text-gray-600">
+                      </div>
+                    )}
+                    {errors.documents && <p className="mt-1 text-xs text-red-600">{errors.documents}</p>}
                   </div>
-                )}
-                {errors.documents && <p className="mt-1 text-xs text-red-600">{errors.documents}</p>}
-              </div>
+                </>
+              )}
             </div>
           </div>
 

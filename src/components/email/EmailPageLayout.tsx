@@ -507,10 +507,12 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       // Quick step: replace primary-only with unified inbox (All Mail except Sent/Trash/Spam) for accuracy
       try {
         const unified = await getAllInboxEmails(true, 100);
+        // Defensive filter: remove any items that still carry SENT label (bcc/self edge cases)
+        const filteredUnified = (unified.emails || []).filter(e => !e.labelIds?.includes('SENT'));
         setAllTabEmails(prev => ({
           ...prev,
-          all: unified.emails || [],
-          unread: (unified.emails || []).filter(e => !e.isRead)
+            all: filteredUnified,
+            unread: filteredUnified.filter(e => !e.isRead)
         }));
 
         setPageTokens(prev => ({

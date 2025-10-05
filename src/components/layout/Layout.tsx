@@ -100,10 +100,7 @@ function LayoutContent({
   currentProfile, 
   profileLoading, 
   selectProfile, 
-  isPreloading, 
-  isGhostPreloadComplete, 
   navigate, 
-  showSuccess, 
   setShowSuccess, 
   hasAutoSelected, 
   setHasAutoSelected, 
@@ -165,19 +162,6 @@ function LayoutContent({
         <EmailListProvider>
           <InboxLayoutProvider>
             <div className="flex h-screen overflow-hidden bg-gray-50">
-              {/* Ghost Preloader Indicator */}
-              {isPreloading && (
-                <div className="fixed top-4 right-4 z-50 bg-blue-500 text-white text-xs px-3 py-1 rounded-full shadow-lg flex items-center space-x-2">
-                  <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  <span>👻 Loading emails...</span>
-                </div>
-              )}
-              {isGhostPreloadComplete && showSuccess && (
-                <div className="fixed top-4 right-4 z-50 bg-green-500 text-white text-xs px-3 py-1 rounded-full shadow-lg animate-pulse">
-                  🚀 All emails ready!
-                </div>
-              )}
-              
               <Sidebar />
               
               {/* Folders Column - only for email routes */}

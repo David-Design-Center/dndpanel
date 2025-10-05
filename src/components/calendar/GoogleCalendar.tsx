@@ -156,7 +156,7 @@ const GoogleCalendar = forwardRef<FullCalendar, GoogleCalendarProps>((_props, fo
         <FullCalendar
           ref={ref as any}
           plugins={plugins}
-          initialView="timeGridWeek"
+          initialView="dayGridMonth"
           timeZone="America/New_York"
           headerToolbar={{ 
             left: "prev,next today", 

@@ -89,32 +89,109 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
     { name: 'Cyan', value: '#b2ebf2', display: '#80deea' },
   ];
 
+  // Enhanced link processing
+  const enhanceLinks = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    
+    const links = editor.querySelectorAll('a[href]');
+    links.forEach(link => {
+      const linkElement = link as HTMLAnchorElement;
+      
+      // Set target to open in new window
+      linkElement.target = '_blank';
+      linkElement.rel = 'noopener noreferrer';
+      
+      // Add tooltip with URL and instruction
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const modifierKey = isMac ? 'Cmd' : 'Ctrl';
+      linkElement.title = `${linkElement.href}\n\n${modifierKey}+Click to open in new tab`;
+      
+      // Make it clickable during editing
+      linkElement.style.cursor = 'pointer';
+      
+      // Remove any existing click handlers and add new one
+      linkElement.onclick = (e) => {
+        if (e.ctrlKey || e.metaKey) {
+          // Open in new tab when Ctrl/Cmd + click
+          e.preventDefault();
+          window.open(linkElement.href, '_blank', 'noopener,noreferrer');
+        }
+      };
+      
+      // Add hover effect to show it's clickable
+      linkElement.onmouseenter = () => {
+        linkElement.style.backgroundColor = 'rgba(59, 130, 246, 0.1)';
+        linkElement.style.borderRadius = '2px';
+        linkElement.style.padding = '1px 2px';
+        linkElement.style.margin = '-1px -2px';
+      };
+      
+      linkElement.onmouseleave = () => {
+        linkElement.style.backgroundColor = '';
+        linkElement.style.borderRadius = '';
+        linkElement.style.padding = '';
+        linkElement.style.margin = '';
+      };
+    });
+  }, []);
+
   // Update editor content when value prop changes
   useEffect(() => {
     if (editorRef.current && editorRef.current.innerHTML !== value) {
       editorRef.current.innerHTML = value;
+      // Enhance any links in the loaded content
+      setTimeout(() => enhanceLinks(), 50);
     }
-  }, [value]);
+  }, [value, enhanceLinks]);
 
   // Handle content changes
   const handleInput = useCallback(() => {
     if (editorRef.current) {
       const content = editorRef.current.innerHTML;
       onChange(content);
+      
+      // Enhance any links that may have been added
+      setTimeout(() => enhanceLinks(), 50);
     }
-  }, [onChange]);
+  }, [onChange, enhanceLinks]);
 
   // Update toolbar state based on cursor position
   const updateToolbarState = useCallback(() => {
     if (!editorRef.current) return;
 
     try {
+      // Get selection to check for lists manually
+      const selection = window.getSelection();
+      let unorderedList = false;
+      let orderedList = false;
+      
+      if (selection && selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0);
+        let node: Node | null = range.commonAncestorContainer;
+        
+        // Walk up the DOM tree to find list elements
+        while (node && node !== editorRef.current) {
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            const element = node as Element;
+            if (element.tagName === 'UL') {
+              unorderedList = true;
+              break;
+            } else if (element.tagName === 'OL') {
+              orderedList = true;
+              break;
+            }
+          }
+          node = node.parentNode;
+        }
+      }
+
       setIsFormatted({
         bold: document.queryCommandState('bold'),
         italic: document.queryCommandState('italic'),
         underline: document.queryCommandState('underline'),
-        unorderedList: document.queryCommandState('insertUnorderedList'),
-        orderedList: document.queryCommandState('insertOrderedList'),
+        unorderedList: unorderedList || document.queryCommandState('insertUnorderedList'),
+        orderedList: orderedList || document.queryCommandState('insertOrderedList'),
         alignLeft: document.queryCommandState('justifyLeft'),
         alignCenter: document.queryCommandState('justifyCenter'),
         alignRight: document.queryCommandState('justifyRight')
@@ -135,6 +212,56 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
       handleInput();
     } catch (error) {
       console.warn('Command execution failed:', error);
+    }
+  }, [disabled, updateToolbarState, handleInput]);
+
+  // Enhanced list creation function
+  const createList = useCallback((listType: 'ul' | 'ol') => {
+    if (disabled) return;
+    
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+
+    // Execute the appropriate command
+    const command = listType === 'ul' ? 'insertUnorderedList' : 'insertOrderedList';
+    
+    try {
+      // First, ensure we're focused on the editor
+      editor.focus();
+      
+      // Execute the command
+      document.execCommand(command, false);
+      
+      // Force update of the content to ensure proper list styling
+      setTimeout(() => {
+        // Find all lists and ensure they have proper styling
+        const lists = editor.querySelectorAll('ul, ol');
+        lists.forEach(list => {
+          if (list.tagName.toLowerCase() === 'ul') {
+            (list as HTMLElement).style.listStyleType = 'disc';
+          } else {
+            (list as HTMLElement).style.listStyleType = 'decimal';
+          }
+          (list as HTMLElement).style.paddingLeft = '1.5em';
+          (list as HTMLElement).style.margin = '0.5em 0';
+        });
+        
+        // Ensure list items have proper display
+        const listItems = editor.querySelectorAll('li');
+        listItems.forEach(li => {
+          (li as HTMLElement).style.display = 'list-item';
+          (li as HTMLElement).style.margin = '0.25em 0';
+        });
+        
+        updateToolbarState();
+        handleInput();
+      }, 10);
+      
+    } catch (error) {
+      console.warn('List creation failed:', error);
     }
   }, [disabled, updateToolbarState, handleInput]);
 
@@ -175,6 +302,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
     const url = prompt('Enter the URL:');
     if (url) {
       executeCommand('createLink', url);
+      // Links will be enhanced automatically by handleInput
     }
   }, [disabled, executeCommand]);
 
@@ -427,6 +555,9 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
     e.preventDefault();
     const text = e.clipboardData.getData('text/plain');
     executeCommand('insertText', text);
+    
+    // Enhance any links that might have been pasted
+    setTimeout(() => enhanceLinks(), 100);
   }, [executeCommand, handleInput, selectedImageSize, createGmailCompatibleImage]);
 
   // Handle key events
@@ -634,7 +765,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
           <Toggle
             size="sm"
             pressed={isFormatted.unorderedList}
-            onPressedChange={() => executeCommand('insertUnorderedList')}
+            onPressedChange={() => createList('ul')}
             disabled={disabled}
             title="Bullet List"
           >
@@ -643,7 +774,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
           <Toggle
             size="sm"
             pressed={isFormatted.orderedList}
-            onPressedChange={() => executeCommand('insertOrderedList')}
+            onPressedChange={() => createList('ol')}
             disabled={disabled}
             title="Numbered List"
           >

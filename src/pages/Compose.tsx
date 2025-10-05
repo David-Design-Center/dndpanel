@@ -1,7 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { X, Paperclip, Minimize, Maximize, CheckCircle, Plus } from 'lucide-react';
+import { X, Paperclip, Minimize, Maximize, CheckCircle, Plus, FileText, Receipt } from 'lucide-react';
 import { sendEmail, getThreadEmails, clearEmailCache, saveDraft, deleteDraft } from '../services/emailService';
+// Customer orders (type 'Customer Order') are already included in invoices query; here we fetch supplier orders from 'orders' table
+import { supabase } from '../lib/supabase';
+// Use the same print components pipeline to ensure consistent preview as Invoice/Orders tabs
+import { exportInvoiceDocToPDF, exportSupplierOrderToPDF } from '@/services/printExport';
+// Use existing shared supabase client to avoid multiple GoTrueClient instances
+import { supabase as sharedSupabase } from '@/lib/supabase';
+import type { Invoice as InvoiceDoc } from '@/components/invoice/InvoicePrintView';
+import type { SupplierOrderDoc } from '@/components/invoice/SupplierOrderPrintView';
 import { Email, Contact } from '../types';
 import { getProfileInitial } from '../lib/utils';
 import Modal from '../components/common/Modal';
@@ -37,7 +45,7 @@ interface AttachmentItem {
 
 function Compose() {
   const { currentProfile } = useProfile();
-  const { searchContacts, shouldLoadContacts, setShouldLoadContacts } = useContacts();
+  const { searchContacts, setShouldLoadContacts } = useContacts();
   const [to, setTo] = useState('');
   const [ccRecipients, setCcRecipients] = useState<string[]>([]); // Start empty, will be set in useEffect
   const [showCc, setShowCc] = useState(true); // Show CC by default since we have hardcoded recipient
@@ -71,6 +79,13 @@ function Compose() {
   const [isAutoSaving, setIsAutoSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Attachment panel state
+  const [invoices, setInvoices] = useState<any[]>([]);
+  const [orders, setOrders] = useState<any[]>([]);
+  const [attachmentPanelTab, setAttachmentPanelTab] = useState<'invoices' | 'orders'>('invoices');
+  const [isLoadingAttachmentData, setIsLoadingAttachmentData] = useState(false);
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
@@ -311,7 +326,8 @@ function Compose() {
           }
         ],
         subject,
-        body: finalBodyHtml
+        body: finalBodyHtml,
+        internalDate: new Date().toISOString()
       }, processedAttachments, currentDraftId, ccRecipientsString);
 
       if (result.success) {
@@ -455,7 +471,8 @@ function Compose() {
           }
         ],
         subject,
-        body: finalBodyHtml
+        body: finalBodyHtml,
+        internalDate: new Date().toISOString() // Add this line
       }, processedAttachments, currentThreadId, ccRecipientsString);
       
       // Delete the draft if it exists (since we just sent the email)
@@ -524,22 +541,7 @@ function Compose() {
     }
   };
 
-  const handleAttachmentClick = () => {
-    fileInputRef.current?.click();
-  };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      const fileList = Array.from(e.target.files);
-      const newAttachments = fileList.map(file => ({
-        name: file.name,
-        mimeType: file.type || 'application/octet-stream',
-        file: file,
-        size: file.size
-      }));
-      setAttachments(prev => [...prev, ...newAttachments]);
-    }
-  };
 
   // Handle file attachments from RichTextEditor
   const handleRichTextFileAttachment = (files: FileList) => {
@@ -655,6 +657,26 @@ function Compose() {
     }
   };
 
+  // Prevent pressing Enter in the To field from submitting the entire form.
+  const handleToInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      // Optionally we could finalize the typed email here (similar to chips) but requirement says: must click Send.
+      if (to && !to.includes('@')) {
+        // Basic feedback for malformed quick Enter
+        // (Silent ignore otherwise)
+        console.warn('Email not added: missing @');
+      }
+    }
+  };
+
+  // Also block Enter in CC input when empty (already handled when adding) to stop form submit bubbling.
+  const handleCcInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+    }
+  };
+
   const removeCcRecipient = (email: string) => {
     // Allow David to remove any CC recipients, including himself
     // For other users, don't allow removing the hardcoded David email
@@ -668,58 +690,234 @@ function Compose() {
     setCcRecipients(prev => [...prev, '']);
   };
 
-  // Function to render attachment preview
-  const renderAttachmentPreview = (attachment: AttachmentItem, index: number) => {
-    // Create a compatible attachment object for FileThumbnail
-    const compatibleAttachment = {
-      name: attachment.name,
-      mimeType: attachment.mimeType,
-      size: attachment.size || attachment.file?.size || 0,
-      attachmentId: attachment.attachmentId,
-      partId: attachment.partId
+
+
+  // Drag and drop handlers for invoices and orders
+  const handleDragStart = (e: React.DragEvent, item: any, type: 'invoice' | 'order' | 'customer-order' | 'supplier-order') => {
+    e.dataTransfer.setData('application/json', JSON.stringify({ item, type }));
+    e.dataTransfer.effectAllowed = 'copy';
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsGeneratingPDF(true);
+    
+    try {
+      const data = JSON.parse(e.dataTransfer.getData('application/json'));
+  const { item, type } = data;
+      
+      console.log(`Generating PDF for ${type}:`, item);
+
+  const sb = sharedSupabase;
+
+      let pdfBlob: Blob;
+      let filename: string;
+
+      if (type === 'invoice' || type === 'customer-order') {
+        // Fetch real invoice and its line items
+        const invoiceId = item.id;
+        const { data: invoiceData, error: invoiceError } = await sb
+          .from('invoices')
+          .select('*')
+          .eq('id', invoiceId)
+          .single();
+        if (invoiceError) throw invoiceError;
+
+        const { data: lineItemsData, error: lineError } = await sb
+          .from('invoice_line_items')
+          .select('*')
+          .eq('invoice_id', invoiceId);
+        if (lineError) throw lineError;
+
+        // Transform to InvoicePrintView props (reuse logic similar to InvoicePreviewModal)
+        let payments: any[] = [];
+        if (invoiceData.payments_history) {
+          try {
+            if (typeof invoiceData.payments_history === 'object') {
+              payments = Array.isArray(invoiceData.payments_history) ? invoiceData.payments_history : [];
+            } else {
+              payments = JSON.parse(invoiceData.payments_history);
+            }
+          } catch {
+            payments = [];
+          }
+        }
+
+        const invoiceDoc: InvoiceDoc = {
+          poNumber: invoiceData.po_number,
+          date: invoiceData.invoice_date,
+          customerName: invoiceData.customer_name,
+          address: invoiceData.customer_address,
+          city: invoiceData.customer_city,
+          state: invoiceData.customer_state,
+          zip: invoiceData.customer_zip,
+          tel1: invoiceData.customer_tel1 || '',
+          tel2: invoiceData.customer_tel2 || '',
+          email: invoiceData.customer_email || '',
+          lineItems: (lineItemsData || []).map((it: any) => ({
+            id: it.id,
+            item: it.item_code || '',
+            description: it.description,
+            brand: it.brand,
+            quantity: it.quantity,
+            price: it.unit_price
+          })),
+          subtotal: invoiceData.subtotal,
+          discount: invoiceData.discount_amount || 0,
+          tax: invoiceData.tax_amount,
+          total: invoiceData.total_amount,
+          balance: invoiceData.balance_due,
+          payments
+        };
+
+        pdfBlob = await exportInvoiceDocToPDF(invoiceDoc);
+        filename = `invoice-${invoiceData.po_number || invoiceData.id}.pdf`;
+      } else if (type === 'order' || type === 'supplier-order') {
+        // For orders, fetch from orders + orders_line_items with suppliers data
+        const orderId = item.id;
+        const { data: orderData, error: orderError } = await sb
+          .from('orders')
+          .select('*, suppliers(*)')
+          .eq('id', orderId)
+          .single();
+        if (orderError) throw orderError;
+
+        const { data: items, error: itemsError } = await sb
+          .from('orders_line_items')
+          .select('*')
+          .eq('order_id', orderId);
+        if (itemsError) throw itemsError;
+
+        const orderDoc: SupplierOrderDoc = {
+          poNumber: orderData.order_number || '',
+          date: orderData.order_date || '',
+          supplierName: orderData.suppliers?.display_name || '',
+          address: orderData.suppliers?.address_line1 || '',
+          city: orderData.suppliers?.city || '',
+          state: orderData.suppliers?.state || '',
+          zip: orderData.suppliers?.postal_code || '',
+          tel1: orderData.suppliers?.phone_primary || '',
+          tel2: orderData.suppliers?.phone_secondary || '',
+          email: orderData.suppliers?.email || '',
+          lineItems: (items || []).map((it: any, idx: number) => ({
+            id: it.id,
+            item: ((idx + 1) as number).toString(),
+            description: it.description || '',
+            brand: it.brand || '',
+            quantity: it.quantity || 1,
+          })),
+        };
+
+        pdfBlob = await exportSupplierOrderToPDF(orderDoc);
+        filename = `order-${orderData.order_number || orderData.id}.pdf`;
+      } else {
+        throw new Error('Unknown item type');
+      }
+      
+      // Convert blob to file for attachment
+  const pdfFile = new File([pdfBlob], filename, { type: 'application/pdf' });
+      
+      // Create attachment with actual PDF file
+      const attachment: AttachmentItem = {
+        name: filename,
+        mimeType: 'application/pdf',
+        file: pdfFile,
+        size: pdfFile.size,
+        dataUrl: URL.createObjectURL(pdfBlob), // For preview
+      };
+      
+      setAttachments(prev => [...prev, attachment]);
+      console.log(`Successfully attached ${filename}`);
+    } catch (error) {
+      console.error('Error processing dropped item:', error);
+      // Show user-friendly error
+      alert('Failed to generate PDF. Please try again.');
+    } finally {
+      setIsGeneratingPDF(false);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  };
+
+  // Load real invoices and orders data from Supabase
+  useEffect(() => {
+    const loadInvoicesAndOrders = async () => {
+      setIsLoadingAttachmentData(true);
+      try {
+        // Fetch invoices from Supabase
+        let invoicesQuery = supabase
+          .from('invoices')
+          .select('id, po_number, customer_name, total_amount, invoice_date, created_by, created_at')
+          .order('created_at', { ascending: false })
+          .limit(20); // Limit to recent 20 invoices
+
+        // Role-based filtering for invoices
+        if (currentProfile?.name === 'David') {
+          // David can see all invoices
+        } else if (currentProfile?.name && ['Marti', 'Natalia', 'Dimitry'].includes(currentProfile.name)) {
+          // Staff can only see their own invoices
+          invoicesQuery = invoicesQuery.eq('created_by', currentProfile.name);
+        }
+
+        const { data: invoicesData, error: invoicesError } = await invoicesQuery;
+        
+        if (invoicesError) {
+          console.error('Error fetching invoices:', invoicesError);
+        } else {
+          const transformedInvoices = (invoicesData || []).map((invoice) => ({
+            id: invoice.id,
+            number: invoice.po_number || 'N/A',
+            client: invoice.customer_name || 'Unknown Client',
+            amount: `$${Number(invoice.total_amount || 0).toLocaleString()}`,
+            date: invoice.invoice_date || invoice.created_at?.split('T')[0] || 'N/A'
+          }));
+          setInvoices(transformedInvoices);
+        }
+
+        // Fetch supplier orders (purchase orders to suppliers)
+        let supplierOrdersQuery = supabase
+          .from('orders')
+          .select('id, order_number, order_date, created_by, suppliers(display_name)')
+          .order('created_at', { ascending: false })
+          .limit(20);
+
+        if (currentProfile?.name && currentProfile.name !== 'David' && ['Marti', 'Natalia', 'Dimitry'].includes(currentProfile.name)) {
+          supplierOrdersQuery = supplierOrdersQuery.eq('created_by', currentProfile.name);
+        }
+
+        const { data: supplierOrdersData, error: supplierOrdersError } = await supplierOrdersQuery;
+        if (supplierOrdersError) {
+          console.error('Error fetching supplier orders:', supplierOrdersError);
+          setOrders([]);
+        } else {
+          const transformedSupplierOrders = (supplierOrdersData || []).map((po: any) => ({
+            id: po.id,
+            number: po.order_number || 'N/A',
+            customer: po.suppliers?.display_name || 'Supplier',
+            total: '-', // Supplier orders may not have a total in this table
+            status: 'Supplier Order',
+            orderSource: 'supplier-order'
+          }));
+          setOrders(transformedSupplierOrders);
+        }
+
+      } catch (error) {
+        console.error('Error loading invoices and orders:', error);
+        // Fallback to empty arrays
+        setInvoices([]);
+        setOrders([]);
+      } finally {
+        setIsLoadingAttachmentData(false);
+      }
     };
 
-    return (
-      <div key={index} className="flex items-center p-3 border border-gray-200 rounded-lg bg-gray-50">
-        {/* Thumbnail */}
-        <div className="flex-shrink-0 mr-3">
-          <FileThumbnail
-            attachment={compatibleAttachment}
-            emailId="compose" // Dummy emailId for compose mode
-            userEmail="me@example.com" // Add userEmail prop
-            size="small"
-            showPreviewButton={true}
-            onPreviewClick={() => handleAttachmentPreview(attachment)}
-          />
-        </div>
-        
-        {/* File info */}
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-gray-900 truncate">{attachment.name}</p>
-          <p className="text-xs text-gray-500">
-            {attachment.file ? formatFileSize(attachment.file.size) : attachment.size ? formatFileSize(attachment.size) : 'Generated attachment'}
-            {attachment.mimeType !== 'application/octet-stream' && (
-              <span className="ml-2">• {attachment.mimeType}</span>
-            )}
-          </p>
-        </div>
-        
-        {/* Remove button */}
-        <button 
-          type="button" 
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            removeAttachment(index);
-          }}
-          className="flex-shrink-0 ml-3 text-gray-400 hover:text-red-500 transition-colors"
-          title="Remove attachment"
-        >
-          <X size={16} />
-        </button>
-      </div>
-    );
-  };
+    if (currentProfile?.name) {
+      loadInvoicesAndOrders();
+    }
+  }, [currentProfile?.name]);
 
   if (isMinimized) {
     return (
@@ -765,10 +963,25 @@ function Compose() {
         </div>
       )}
 
-      <div className="max-w-7xl mx-auto p-4 slide-in">
-        <div className="flex gap-4">
+      <div className="fixed inset-0 flex items-center justify-center p-4 z-50">
+        <div className="flex gap-4 h-full max-w-7xl w-full">
           {/* Main Compose Window */}
-          <div className="flex-1 max-w-4xl bg-white rounded-lg shadow-md overflow-hidden">
+          <div 
+            className="flex-1 max-w-4xl bg-white rounded-lg shadow-xl border border-gray-200 overflow-hidden flex flex-col h-full"
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+          >
+            {/* PDF Generation Overlay */}
+            {isGeneratingPDF && (
+              <div className="absolute inset-0 bg-white bg-opacity-90 flex items-center justify-center z-10">
+                <div className="text-center">
+                  <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mx-auto mb-4"></div>
+                  <p className="text-gray-700 font-medium">Generating PDF...</p>
+                  <p className="text-gray-500 text-sm">Please wait while we create your document</p>
+                </div>
+              </div>
+            )}
+            
             <div className="px-4 py-3 bg-gray-100 border-b border-gray-200 flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-medium">
@@ -793,8 +1006,8 @@ function Compose() {
               </div>
             </div>
           
-          <form onSubmit={handleSubmit}>
-            <div className="p-4 space-y-4">
+          <form onSubmit={handleSubmit} className="flex flex-col h-full">
+            <div className="flex-1 p-4 space-y-4 overflow-y-auto">
               <div className="relative">
                 <div className="flex items-center border-b border-gray-200 py-2">
                   <span className="w-20 text-gray-500 text-sm">To:</span>
@@ -804,6 +1017,7 @@ function Compose() {
                     onChange={handleToInputChange}
                     onFocus={handleToInputFocus}
                     onBlur={handleToInputBlur}
+                    onKeyDown={handleToInputKeyDown}
                     className="flex-1 outline-none text-sm"
                     placeholder="Recipients"
                   />
@@ -888,6 +1102,7 @@ function Compose() {
                         onChange={handleCcInputChange}
                         onFocus={handleCcInputFocus}
                         onBlur={handleCcInputBlur}
+                        onKeyDown={handleCcInputKeyDown}
                         onKeyPress={handleCcInputKeyPress}
                         className="w-full outline-none text-sm"
                         placeholder="Add CC recipients..."
@@ -977,37 +1192,88 @@ function Compose() {
                 />
               </div>
               
-              <div className="pt-2">
-                <RichTextEditor
-                  value={newBodyHtml}
-                  onChange={(value) => {
-                    setNewBodyHtml(value);
-                    handleContentChange();
-                  }}
-                  placeholder="Compose your message..."
-                  minHeight="400px"
-                  disabled={isSending}
-                  showPriceRequestButton={true}
-                  onOpenPriceRequest={handleOpenPriceRequest}
-                  showFileAttachmentButton={true}
-                  onFileAttachment={handleRichTextFileAttachment}
-                />
-              </div>
-
-              {/* Attachment list */}
-              {attachments.length > 0 && (
-                <div className="pt-2 border-t border-gray-200">
-                  <p className="text-sm font-medium text-gray-700 mb-3">
-                    Attachments ({attachments.length})
-                  </p>
-                  <div className="space-y-3">
-                    {attachments.map((attachment, index) => renderAttachmentPreview(attachment, index))}
-                  </div>
+              <div className="pt-2 flex-1 flex flex-col min-h-0">
+                <div className="flex-1 flex flex-col border border-gray-200 rounded-lg overflow-hidden">
+                  <RichTextEditor
+                    value={newBodyHtml}
+                    onChange={(value) => {
+                      setNewBodyHtml(value);
+                      handleContentChange();
+                    }}
+                    placeholder="Compose your message..."
+                    minHeight="300px"
+                    disabled={isSending}
+                    showPriceRequestButton={true}
+                    onOpenPriceRequest={handleOpenPriceRequest}
+                    showFileAttachmentButton={true}
+                    onFileAttachment={handleRichTextFileAttachment}
+                  />
+                  
+                  {/* Attachment thumbnails at bottom of editor */}
+                  {attachments.length > 0 && (
+                    <div className="bg-gray-50 border-t border-gray-200 p-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Paperclip size={14} className="text-gray-500" />
+                        <span className="text-xs font-medium text-gray-600">
+                          {attachments.length} file{attachments.length > 1 ? 's' : ''} attached
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {attachments.map((attachment, index) => (
+                          <div
+                            key={index}
+                            className="group relative bg-white border border-gray-200 rounded-lg p-2 hover:border-gray-300 transition-colors cursor-pointer"
+                            onClick={() => handleAttachmentPreview(attachment)}
+                          >
+                            <div className="flex items-center gap-2">
+                              <div className="flex-shrink-0">
+                                <FileThumbnail
+                                  attachment={{
+                                    name: attachment.name,
+                                    mimeType: attachment.mimeType,
+                                    size: attachment.size || attachment.file?.size || 0,
+                                    attachmentId: attachment.attachmentId,
+                                    partId: attachment.partId
+                                  }}
+                                  emailId="compose"
+                                  userEmail="me@example.com"
+                                  size="small"
+                                  showPreviewButton={false}
+                                />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-medium text-gray-900 truncate max-w-[80px]">
+                                  {attachment.name}
+                                </p>
+                                <p className="text-xs text-gray-500">
+                                  {attachment.size ? formatFileSize(attachment.size) : 
+                                   attachment.file ? formatFileSize(attachment.file.size) : 'Unknown'}
+                                </p>
+                              </div>
+                            </div>
+                            
+                            {/* Remove button - only visible on hover */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeAttachment(index);
+                              }}
+                              className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center hover:bg-red-600"
+                              title="Remove attachment"
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
             
-            <div className="px-4 py-3 bg-gray-50 flex items-center justify-between">
+            <div className="px-4 py-3 bg-gray-50 flex items-center justify-end">
               <div className="flex space-x-2">
                 <button
                   type="submit"
@@ -1027,7 +1293,7 @@ function Compose() {
                   type="button"
                   onClick={handleManualSaveDraft}
                   disabled={isAutoSaving || !isDraftDirty}
-                  className="px-4 py-2 border border-yellow-500 text-yellow-700 rounded-md hover:bg-yellow-50 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="btn btn-secondary"
                 >
                   {isAutoSaving ? 'Saving...' : 'Save Draft'}
                 </button>
@@ -1051,29 +1317,201 @@ function Compose() {
                     <span className="text-amber-600">Unsaved changes</span>
                   )}
                 </div>
-                
-                {/* Attachment button */}
-                <div>
-                  {/* Hidden file input */}
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    onChange={handleFileChange}
-                    multiple
-                    style={{ display: 'none' }}
-                  />
-                  <button
-                    type="button"
-                    onClick={handleAttachmentClick}
-                    className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full"
-                    title="Attach files"
-                  >
-                    <Paperclip size={18} />
-                  </button>
-                </div>
               </div>
             </div>
           </form>
+        </div>
+
+        {/* Attachments Panel */}
+        <div className="w-80 bg-white rounded-lg shadow-xl border border-gray-200 overflow-hidden flex flex-col h-full">
+          <div className="px-4 py-3 bg-gray-100 border-b border-gray-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-medium">Quick Attach</h3>
+                <p className="text-sm text-gray-600 mt-1">Drag items to email to attach</p>
+              </div>
+              <button
+                onClick={() => {
+                  if (currentProfile?.name) {
+                    // Trigger data reload
+                    const loadInvoicesAndOrders = async () => {
+                      setIsLoadingAttachmentData(true);
+                      try {
+                        let invoicesQuery = supabase
+                          .from('invoices')
+                          .select('id, po_number, customer_name, total_amount, invoice_date, created_by, created_at')
+                          .order('created_at', { ascending: false })
+                          .limit(20);
+
+                        if (currentProfile.name !== 'David' && ['Marti', 'Natalia', 'Dimitry'].includes(currentProfile.name)) {
+                          invoicesQuery = invoicesQuery.eq('created_by', currentProfile.name);
+                        }
+
+                        const { data: invoicesData } = await invoicesQuery;
+                        
+                        const transformedInvoices = (invoicesData || []).map((invoice) => ({
+                          id: invoice.id,
+                          number: invoice.po_number || 'N/A',
+                          client: invoice.customer_name || 'Unknown Client',
+                          amount: `$${Number(invoice.total_amount || 0).toLocaleString()}`,
+                          date: invoice.invoice_date || invoice.created_at?.split('T')[0] || 'N/A'
+                        }));
+                        setInvoices(transformedInvoices);
+
+                        // Reload supplier orders instead of customer orders
+                        let supplierOrdersQuery = supabase
+                          .from('orders')
+                          .select('id, order_number, order_date, created_by, suppliers(display_name)')
+                          .order('created_at', { ascending: false })
+                          .limit(20);
+
+                        if (currentProfile.name !== 'David' && ['Marti', 'Natalia', 'Dimitry'].includes(currentProfile.name)) {
+                          supplierOrdersQuery = supplierOrdersQuery.eq('created_by', currentProfile.name);
+                        }
+
+                        const { data: supplierOrdersData } = await supplierOrdersQuery;
+                        const transformedSupplierOrders = (supplierOrdersData || []).map((po: any) => ({
+                          id: po.id,
+                          number: po.order_number || 'N/A',
+                          customer: po.suppliers?.display_name || 'Supplier',
+                          total: '-',
+                          status: 'Supplier Order',
+                          orderSource: 'supplier-order'
+                        }));
+                        setOrders(transformedSupplierOrders);
+                      } catch (error) {
+                        console.error('Error refreshing data:', error);
+                      } finally {
+                        setIsLoadingAttachmentData(false);
+                      }
+                    };
+                    loadInvoicesAndOrders();
+                  }
+                }}
+                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded-lg transition-colors"
+                title="Refresh data"
+                disabled={isLoadingAttachmentData}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          {/* Tab Navigation */}
+          <div className="flex border-b border-gray-200">
+            <button
+              onClick={() => setAttachmentPanelTab('invoices')}
+              className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
+                attachmentPanelTab === 'invoices'
+                  ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-500'
+                  : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
+              }`}
+            >
+              <Receipt size={16} className="inline mr-2" />
+              Invoices
+            </button>
+            <button
+              onClick={() => setAttachmentPanelTab('orders')}
+              className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
+                attachmentPanelTab === 'orders'
+                  ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-500'
+                  : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
+              }`}
+            >
+              <FileText size={16} className="inline mr-2" />
+              Orders
+            </button>
+          </div>
+
+          {/* Content */}
+          <div className="flex-1 overflow-y-auto p-4">
+            {isLoadingAttachmentData ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
+                <span className="ml-3 text-gray-600">Loading...</span>
+              </div>
+            ) : (
+              <>
+                {attachmentPanelTab === 'invoices' && (
+                  <div className="space-y-3">
+                    <div className="text-xs text-gray-500 mb-3">Drag invoices to attach as PDF</div>
+                    {invoices.length === 0 ? (
+                      <div className="text-center py-8 text-gray-500">
+                        <Receipt size={48} className="mx-auto mb-4 text-gray-300" />
+                        <p className="text-sm">No invoices available</p>
+                      </div>
+                    ) : (
+                      invoices.map((invoice) => (
+                        <div
+                          key={invoice.id}
+                          draggable
+                          onDragStart={(e) => handleDragStart(e, invoice, 'invoice')}
+                          className="p-3 border border-gray-200 rounded-lg hover:border-blue-300 hover:shadow-md cursor-grab active:cursor-grabbing transition-all bg-gradient-to-r from-white to-blue-50"
+                        >
+                          <div className="flex items-center">
+                            <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center mr-3">
+                              <Receipt size={16} className="text-blue-600" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-gray-900 truncate">{invoice.number}</p>
+                              <p className="text-xs text-gray-500">{invoice.client}</p>
+                              <div className="flex items-center justify-between">
+                                <p className="text-xs text-blue-600 font-medium">{invoice.amount}</p>
+                                <p className="text-xs text-gray-400">{invoice.date}</p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {attachmentPanelTab === 'orders' && (
+                  <div className="space-y-3">
+                    <div className="text-xs text-gray-500 mb-3">Drag orders to attach as PDF</div>
+                    {orders.length === 0 ? (
+                      <div className="text-center py-8 text-gray-500">
+                        <FileText size={48} className="mx-auto mb-4 text-gray-300" />
+                        <p className="text-sm">No orders available</p>
+                      </div>
+                    ) : (
+                      orders.map((order) => (
+                        <div
+                          key={order.id}
+                          draggable
+                          onDragStart={(e) => handleDragStart(e, order, 'order')}
+                          className="p-3 border border-gray-200 rounded-lg hover:border-green-300 hover:shadow-md cursor-grab active:cursor-grabbing transition-all bg-gradient-to-r from-white to-green-50"
+                        >
+                          <div className="flex items-center">
+                            <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center mr-3">
+                              <FileText size={16} className="text-green-600" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-gray-900 truncate">{order.number}</p>
+                              <p className="text-xs text-gray-500">{order.customer}</p>
+                              <div className="flex items-center justify-between">
+                                <p className="text-xs text-green-600 font-medium">{order.total}</p>
+                                <span className={`text-xs px-2 py-1 rounded-full ${
+                                  order.status === 'Paid in Full' || order.status === 'Completed' ? 'bg-green-100 text-green-700' :
+                                  order.status === 'Order in Progress' || order.status === 'Pending' ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-blue-100 text-blue-700'
+                                }`}>
+                                  {order.status}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
 
         {/* Sliding Product Table Panel */}

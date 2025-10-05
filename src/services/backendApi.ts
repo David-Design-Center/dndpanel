@@ -1365,6 +1365,7 @@ export const createShipment = async (shipmentData: {
   etd: string;
   container_n: string;
   documents?: File[];
+  user_id?: string;
 }): Promise<Shipment> => {
   try {
     console.log('Creating new shipment:', shipmentData);
@@ -1375,7 +1376,8 @@ export const createShipment = async (shipmentData: {
         ref: shipmentData.ref,
         eta: shipmentData.eta,
         etd: shipmentData.etd,
-        container_n: shipmentData.container_n
+        container_n: shipmentData.container_n,
+        user_id: shipmentData.user_id // Required for RLS ownership
         // Let created_at and updated_at be set automatically by the database
       }])
       .select()
