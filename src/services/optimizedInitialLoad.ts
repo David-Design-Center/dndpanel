@@ -195,6 +195,8 @@ async function fetchMessageMetadataBatch(messageList: any[]): Promise<Email[]> {
       }
       
       const email: Email = {
+        // Gmail returns internalDate as a unix timestamp (string). Preserve it if present.
+        internalDate: (response as any)?.result?.internalDate ?? (dateHeader ? Date.parse(dateHeader).toString() : Date.now().toString()),
         id: response.result.id!,
         threadId: response.result.threadId!,
         subject: subject.replace(/^Re:\s*|^Fwd:\s*/i, '').trim(),
@@ -317,7 +319,9 @@ export async function loadCriticalInboxData(): Promise<CriticalInboxData> {
       : [];
     
     // Create placeholder emails for recent (IDs only, no metadata)
+    const nowTs = Date.now().toString();
     const recentEmailPlaceholders: Email[] = recentIds.map(id => ({
+      internalDate: nowTs,
       id,
       threadId: id, // Placeholder - will be populated when metadata is fetched
       subject: 'Loading...',

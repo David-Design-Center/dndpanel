@@ -61,7 +61,7 @@ function Auth() {
   };
 
   const formFields = {
-    header: 'Welcome to DND Panel',
+    header: 'Welcome to D&D Panel',
     subHeader: 'Sign in to your business dashboard',
     fields: [
       {

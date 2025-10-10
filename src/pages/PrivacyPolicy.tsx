@@ -29,7 +29,7 @@ export default function PrivacyPolicy() {
             <section>
               <h2 className="text-2xl font-semibold mb-4">1. Introduction</h2>
               <p className="text-muted-foreground leading-relaxed">
-                DnD Panel ("we," "our," or "us") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our application and services.
+                D&D Panel ("we," "our," or "us") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our application and services.
               </p>
             </section>
 
@@ -148,7 +148,7 @@ export default function PrivacyPolicy() {
                 If you have any questions about this Privacy Policy, please contact us at:
               </p>
               <div className="mt-4 p-4 bg-muted rounded-lg">
-                <p className="font-medium">DnD Panel Support</p>
+                <p className="font-medium">D&D Panel Support</p>
                 <p className="text-muted-foreground">Email: info@dnddesigncenter.com</p>
                 <p className="text-muted-foreground">Website: https://dnddesigncenter.com</p>
               </div>

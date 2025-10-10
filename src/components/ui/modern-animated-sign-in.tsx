@@ -289,7 +289,7 @@ type TechnologyOrbitDisplayProps = {
 
 const TechOrbitDisplay = memo(function TechOrbitDisplay({
   iconsArray,
-  text = 'DND Panel',
+  text = 'D&D Panel',
   logoUrl,
 }: TechnologyOrbitDisplayProps) {
   return (

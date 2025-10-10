@@ -507,7 +507,11 @@ export const getEmails = async (
 
 // Specialized query functions
 export const getUnreadEmails = async (forceRefresh = false): Promise<Email[]> => {
-  const response = await getEmails(forceRefresh, 'in:inbox is:unread');
+  // Use 24h filtered query to match real Gmail and folder counter
+  const { get24hInboxQuery } = await import('../lib/utils');
+  const query = get24hInboxQuery(false); // Only unread emails from last 24h
+  const response = await getEmails(forceRefresh, query);
+  console.log('📧 getUnreadEmails using 24h filter:', query);
   return response.emails;
 };
 
@@ -516,7 +520,11 @@ export const getPrimaryEmails = async (
   maxResults = 100, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
-  return getEmailsByLabelIds(['INBOX'], forceRefresh, maxResults, pageToken);
+  // Use 24h filtered inbox query to match the folder counter
+  // This ensures consistency between counter (16) and email list content
+  const { get24hInboxQuery } = await import('../lib/utils');
+  const query = get24hInboxQuery(true); // Include both read and unread for full inbox view
+  return getEmails(forceRefresh, query, maxResults, pageToken);
 };
 
 export const getSocialEmails = async (
@@ -548,11 +556,12 @@ export const getAllInboxEmails = async (
   maxResults = 100, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
-  // Unified inbox: include everything except Sent and Trash
-  // Unified inbox: All Mail except Sent, Trash, and Spam
-  // Extra guard: Some sent messages (bcc to self) can still appear; explicitly exclude label:SENT
-  // Gmail search syntax: -in:sent already covers most, but adding -label:SENT mitigates edge cases.
-  return getEmails(forceRefresh, '-in:sent -label:SENT -in:trash -in:spam', maxResults, pageToken);
+  // Use 24h filtered inbox query to match real Gmail behavior and folder counter
+  // This replaces the old "all mail" approach with focused inbox view
+  const { get24hInboxQuery } = await import('../lib/utils');
+  const query = get24hInboxQuery(true); // Include both read and unread from last 24h
+  console.log('📧 getAllInboxEmails using 24h filter:', query);
+  return getEmails(forceRefresh, query, maxResults, pageToken);
 };
 
 export const getSentEmails = async (
@@ -1433,7 +1442,11 @@ export const getCategoryEmailsForFolder = async (
   // Base query for folder and category
   switch (folderType) {
     case 'all':
-      queryParts.push(`in:inbox category:${category}`);
+      // For inbox 'all' view, add 24h time filter to match folder counter
+      const { getRolling24hCutoffUnixSeconds } = await import('../lib/utils');
+      const cutoffSeconds = getRolling24hCutoffUnixSeconds();
+      queryParts.push(`in:inbox category:${category} after:${cutoffSeconds}`);
+      console.log(`📅 Applied 24h filter for ${category} category: after:${cutoffSeconds}`);
       break;
     case 'archive':
       queryParts.push(`-in:inbox -in:spam -in:trash category:${category}`);

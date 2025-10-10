@@ -728,6 +728,37 @@ const extractTextFromPart = (part: EmailPart): string => {
     return '';
   }
 
+  // Heuristic: score a decoded string for likely correctness with Cyrillic text
+  const scoreDecoded = (s: string): number => {
+    const cyr = (s.match(/[\u0400-\u04FF]/g) || []).length; // Cyrillic block
+    const bad = (s.match(/[ÃÂÐÑ�]/g) || []).length; // common mojibake markers + replacement
+    // extra penalty for box-drawing/line chars often seen in mojibake dumps
+    const box = (s.match(/[╔║╚╩╦╣╟╢╧]/g) || []).length;
+    return cyr * 3 - bad * 5 - box * 2;
+  };
+
+  const decodeWithFallbacks = (bytes: Uint8Array, preferred: string): string => {
+    const tried = new Set<string>();
+    const candidates = [preferred, 'utf-8', 'windows-1251', 'koi8-r', 'iso-8859-5', 'windows-1252']
+      .filter((cs) => cs && !tried.has(cs) && (tried.add(cs), true));
+
+    let bestText = '';
+    let bestScore = -Infinity;
+    for (const cs of candidates) {
+      try {
+        const text = new TextDecoder(cs as any).decode(bytes);
+        const score = scoreDecoded(text);
+        if (score > bestScore) {
+          bestScore = score;
+          bestText = text;
+        }
+      } catch {
+        // ignore unsupported charset
+      }
+    }
+    return bestText || new TextDecoder('utf-8').decode(bytes);
+  };
+
   const charsetMap: Record<string,string> = {
     'iso-8859-1':  'iso-8859-1',
     'latin1':      'iso-8859-1',
@@ -788,8 +819,9 @@ const extractTextFromPart = (part: EmailPart): string => {
       finalBytes = decodeQuotedPrintableToBytes(finalBytes);
     }
 
-    // STEP 3: decode bytes → string
-    const decoded = new TextDecoder(charset).decode(finalBytes);
+  // STEP 3: decode bytes → string with fallbacks for mojibake
+  // If declared charset is wrong (very common for Cyrillic), pick best among candidates
+  const decoded = decodeWithFallbacks(finalBytes, charset);
     
     // STEP 4: Final cleanup - decode HTML entities if present
     let cleanedContent = decodeHtmlEntities(decoded);

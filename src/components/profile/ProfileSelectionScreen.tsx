@@ -69,7 +69,7 @@ function ProfileSelectionScreen() {
             <p className="text-gray-600">
               {showPasscodeInput 
                 ? `Enter the passcode for ${profiles.find(p => p.id === selectedProfileId)?.name}`
-                : 'Choose a profile to access the email system'
+                : 'Choose a profile to access the panel'
               }
             </p>
           </div>
@@ -105,9 +105,6 @@ function ProfileSelectionScreen() {
                       <h3 className="font-medium text-gray-900 group-hover:text-primary-700">
                         {profile.name}
                       </h3>
-                      <p className="text-sm text-gray-500">
-                        {profile.passcode ? 'Protected profile' : 'Open profile'}
-                      </p>
                     </div>
                     {profile.passcode && (
                       <Lock size={20} className="text-gray-400 group-hover:text-primary-500" />
@@ -159,7 +156,7 @@ function ProfileSelectionScreen() {
         {/* Footer */}
         <div className="text-center mt-6">
           <p className="text-sm text-gray-500">
-            DND Panel Email System
+            D&D Panel &copy; 2025. All rights reserved.
           </p>
         </div>
       </div>

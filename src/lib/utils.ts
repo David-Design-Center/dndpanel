@@ -6,6 +6,23 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
+ * Get rolling 24h cutoff timestamp in Unix seconds
+ */
+export function getRolling24hCutoffUnixSeconds(): number {
+  return Math.floor((Date.now() - 24 * 60 * 60 * 1000) / 1000);
+}
+
+/**
+ * Get Gmail query for inbox emails within last 24h
+ * @param includeRead Whether to include read emails (default: false, unread only)
+ */
+export function get24hInboxQuery(includeRead = false): string {
+  const cutoffSeconds = getRolling24hCutoffUnixSeconds();
+  const readFilter = includeRead ? '' : ' is:unread';
+  return `label:INBOX${readFilter} after:${cutoffSeconds}`;
+}
+
+/**
  * Get initial letter for profile icon - use name if available, otherwise domain from email
  */
 export function getProfileInitial(name: string, email: string): string {

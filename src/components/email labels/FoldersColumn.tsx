@@ -310,16 +310,17 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
       
       const systemLabelId = systemLabelIdMap[folder.name];
       if (systemLabelId) {
-        const systemCount = systemCounts[systemLabelId];
-        const fallbackCount = matchingLabel?.messagesUnread ?? 0;
-
-        unreadCount = systemCount ?? fallbackCount;
-        overLimit = unreadCount > 99;
-
-        if (systemLabelId === 'INBOX' && unreadCount === 0) {
-          // As a last resort, reuse recent count snapshot
+        if (systemLabelId === 'INBOX') {
+          // For Inbox, always use the 24h filtered count (inboxUnreadToday)
+          // This matches what users see in the email list (last 24h only)
           unreadCount = recentCounts.inboxUnreadToday || 0;
-          overLimit = recentCounts.inboxUnreadOverLimit;
+          overLimit = recentCounts.inboxUnreadOverLimit || false;
+        } else {
+          // For other system folders, use the total unread count
+          const systemCount = systemCounts[systemLabelId];
+          const fallbackCount = matchingLabel?.messagesUnread ?? 0;
+          unreadCount = systemCount ?? fallbackCount;
+          overLimit = unreadCount > 99;
         }
       }
 
@@ -385,6 +386,9 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
   }, [labelTree, searchTerm]);
 
   const handleLabelClick = (label: NestedLabel) => {
+    // Clear system folder selection when viewing custom labels
+    setSelectedSystemFolder(null);
+    
     // Navigate for both leaf nodes and parent folders
     // For parent folders, we'll show all messages in that folder and its subfolders
     const displayName = label.fullPath || label.name;
@@ -604,10 +608,25 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
   };
 
   const handleSystemFolderClick = (folderType: string) => {
-    // Set the selected folder for color state
+    // Always allow system folder selection (even if already selected)
+    // This allows users to return to Inbox from custom labels
     setSelectedSystemFolder(folderType);
     
-    // Trigger email filtering instead of navigation
+    // Navigate to the appropriate system folder route to close any active custom labels
+    const systemFolderRoutes: Record<string, string> = {
+      'inbox': '/inbox',
+      'sent': '/inbox?folder=sent', 
+      'drafts': '/inbox?folder=drafts',
+      'trash': '/inbox?folder=trash',
+      'spam': '/inbox?folder=spam',
+      'important': '/inbox?folder=important',
+      'starred': '/inbox?folder=starred'
+    };
+    
+    const route = systemFolderRoutes[folderType] || '/inbox';
+    navigate(route);
+    
+    // Also trigger the filter for any additional logic
     if (onSystemFolderFilter) {
       onSystemFolderFilter(folderType);
     }
@@ -705,10 +724,8 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
                             <Tooltip key={folder.name}>
                               <TooltipTrigger asChild>
                                 <button
-                                  onClick={isActive ? undefined : () => handleSystemFolderClick(folder.folderType)}
-                                  disabled={isActive}
-                                  className={`w-full flex items-center justify-between px-2 py-1.5 text-sm rounded-md transition-colors group ${isActive ? 'bg-gray-200 cursor-default' : 'hover:bg-gray-100'}`}
-                                  aria-disabled={isActive || undefined}
+                                  onClick={() => handleSystemFolderClick(folder.folderType)}
+                                  className={`w-full flex items-center justify-between px-2 py-1.5 text-sm rounded-md transition-colors group ${isActive ? 'bg-gray-200' : 'hover:bg-gray-100'}`}
                                 >
                                   <div className="flex items-center space-x-2 min-w-0 flex-1">
                                     <IconComponent

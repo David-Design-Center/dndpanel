@@ -29,14 +29,14 @@ export default function TermsOfService() {
             <section>
               <h2 className="text-2xl font-semibold mb-4">1. Acceptance of Terms</h2>
               <p className="text-muted-foreground leading-relaxed">
-                By accessing and using DnD Panel ("the Service"), you accept and agree to be bound by the terms and provision of this agreement. If you do not agree to abide by the above, please do not use this service.
+                By accessing and using D&D Panel ("the Service"), you accept and agree to be bound by the terms and provision of this agreement. If you do not agree to abide by the above, please do not use this service.
               </p>
             </section>
 
             <section>
               <h2 className="text-2xl font-semibold mb-4">2. Description of Service</h2>
               <p className="text-muted-foreground leading-relaxed mb-4">
-                DnD Panel is a productivity and email management application that provides:
+                D&D Panel is a productivity and email management application that provides:
               </p>
               <ul className="list-disc list-inside text-muted-foreground space-y-2">
                 <li>Email management and organization tools</li>
@@ -100,7 +100,7 @@ export default function TermsOfService() {
               <h2 className="text-2xl font-semibold mb-4">6. Intellectual Property</h2>
               <h3 className="text-xl font-medium mb-2">6.1 Service Content</h3>
               <p className="text-muted-foreground leading-relaxed mb-4">
-                The Service and its original content, features, and functionality are owned by DnD Panel and are protected by international copyright, trademark, patent, trade secret, and other intellectual property laws.
+                The Service and its original content, features, and functionality are owned by D&D Panel and are protected by international copyright, trademark, patent, trade secret, and other intellectual property laws.
               </p>
               
               <h3 className="text-xl font-medium mb-2">6.2 User Content</h3>
@@ -119,7 +119,7 @@ export default function TermsOfService() {
             <section>
               <h2 className="text-2xl font-semibold mb-4">8. Limitation of Liability</h2>
               <p className="text-muted-foreground leading-relaxed">
-                To the maximum extent permitted by law, DnD Panel shall not be liable for any indirect, incidental, special, consequential, or punitive damages, including but not limited to loss of profits, data, use, goodwill, or other intangible losses resulting from your use of the Service.
+                To the maximum extent permitted by law, D&D Panel shall not be liable for any indirect, incidental, special, consequential, or punitive damages, including but not limited to loss of profits, data, use, goodwill, or other intangible losses resulting from your use of the Service.
               </p>
             </section>
 
@@ -133,7 +133,7 @@ export default function TermsOfService() {
             <section>
               <h2 className="text-2xl font-semibold mb-4">10. Indemnification</h2>
               <p className="text-muted-foreground leading-relaxed">
-                You agree to defend, indemnify, and hold harmless DnD Panel from any claims, damages, obligations, losses, liabilities, costs, or expenses arising from your use of the Service or violation of these Terms.
+                You agree to defend, indemnify, and hold harmless D&D Panel from any claims, damages, obligations, losses, liabilities, costs, or expenses arising from your use of the Service or violation of these Terms.
               </p>
             </section>
 
@@ -150,7 +150,7 @@ export default function TermsOfService() {
             <section>
               <h2 className="text-2xl font-semibold mb-4">12. Governing Law</h2>
               <p className="text-muted-foreground leading-relaxed">
-                These Terms shall be governed and construed in accordance with the laws of the jurisdiction where DnD Panel operates, without regard to conflict of law provisions.
+                These Terms shall be governed and construed in accordance with the laws of the jurisdiction where D&D Panel operates, without regard to conflict of law provisions.
               </p>
             </section>
 
@@ -167,7 +167,7 @@ export default function TermsOfService() {
                 If you have any questions about these Terms of Service, please contact us at:
               </p>
               <div className="mt-4 p-4 bg-muted rounded-lg">
-                <p className="font-medium">DnD Panel Support</p>
+                <p className="font-medium">D&D Panel Support</p>
                 <p className="text-muted-foreground">Email: info@dnddesigncenter.com</p>
                 <p className="text-muted-foreground">Website: https://dnddesigncenter.com</p>
               </div>

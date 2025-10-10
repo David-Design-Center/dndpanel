@@ -8,6 +8,7 @@ import { useSecurity } from './SecurityContext';
 import { devLog } from '../utils/logging';
 import { shouldBlockDataFetches } from '../utils/authFlowUtils';
 import { emitLoadingProgress } from '@/utils/loadingProgress';
+import { getRolling24hCutoffUnixSeconds } from '../lib/utils';
 import { subscribeLabelUpdateEvent } from '../utils/labelUpdateEvents';
 
 interface LabelContextType {
@@ -67,8 +68,6 @@ const SYSTEM_LABEL_IDS = new Set([
 ]);
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-const getRolling24hCutoffUnixSeconds = (): number => Math.floor((Date.now() - 24 * 60 * 60 * 1000) / 1000);
 
 const fetchInboxUnreadSinceCutoff = async (cutoffSeconds: number): Promise<{ count: number; overLimit: boolean; }> => {
   let pageToken: string | undefined;
