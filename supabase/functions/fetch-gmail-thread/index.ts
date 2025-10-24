@@ -131,60 +131,230 @@ function charsetFromHeaders(headers) {
   const m = /charset="?([^;"\s]+)"?/i.exec(h);
   return m ? normalizeCharset(m[1]) : undefined;
 }
-// Decode a single Gmail part into a string
+
+// === ENHANCED UNIVERSAL DECODER WITH EMOJI/UNICODE SUPPORT ===
+const ENCODING_CONFIDENCE_THRESHOLD = 0.6;
+
+// Comprehensive quality scorer for any text
+function scoreDecodedTextQuality(text: string): number {
+  let score = 0;
+  const length = text.length;
+  
+  if (length === 0) return -Infinity;
+  
+  // Count character categories
+  const cyrillic = (text.match(/[\u0400-\u04FF]/g) || []).length;
+  const latin = (text.match(/[a-zA-Z]/g) || []).length;
+  const digits = (text.match(/[0-9]/g) || []).length;
+  const emoji = (text.match(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{27BF}\u{1F900}-\u{1F9FF}]/gu) || []).length;
+  const cjk = (text.match(/[\u4E00-\u9FFF\u3040-\u309F\uAC00-\uD7AF]/g) || []).length;
+  const arabic = (text.match(/[\u0600-\u06FF]/g) || []).length;
+  const hebrew = (text.match(/[\u0590-\u05FF]/g) || []).length;
+  const devanagari = (text.match(/[\u0900-\u097F]/g) || []).length;
+  const thai = (text.match(/[\u0E00-\u0E7F]/g) || []).length;
+  
+  // Mojibake patterns to penalize
+  const mojibakePatterns = [
+    /[ÃÂÐÑ]/g,           // Common double-encoded UTF-8
+    /[╔║╚╩╦╣╟╢╧]/g,      // Box drawing chars
+    /[\uFFFD]/g,          // Replacement character
+    /[пЃпЃ]/g,            // Garbled Cyrillic
+    /â€/g,                // Broken smart quotes
+    /Â /g,                // Broken spacing
+    /[ð»ðµðð°]/g,         // Specific Cyrillic mojibake patterns
+  ];
+  
+  let mojibakeCount = 0;
+  mojibakePatterns.forEach(pattern => {
+    mojibakeCount += (text.match(pattern) || []).length;
+  });
+  
+  // Control characters (except common whitespace/newlines)
+  const controlChars = (text.match(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g) || []).length;
+  
+  // Scoring logic
+  score += cyrillic * 4;        // Strong signal if Cyrillic present
+  score += latin * 2;           // Basic Latin is good
+  score += digits * 1.5;        // Numbers help
+  score += emoji * 3;           // Emoji is valid Unicode
+  score += (cjk + arabic + hebrew + devanagari + thai) * 3; // Other scripts = good
+  score -= mojibakeCount * 8;   // Heavy penalty for mojibake
+  score -= controlChars * 10;   // Very bad
+  
+  // Bonus: if text contains mostly printable characters
+  const printable = (text.match(/[\x20-\x7E\u0080-\uFFFF]/g) || []).length;
+  const printableRatio = printable / length;
+  score += printableRatio * 2;
+  
+  // Normalize by length
+  return (score / Math.sqrt(length)) * 100;
+}
+
+// Decode with enhanced fallbacks
+function decodeWithEnhancedFallbacks(bytes: Uint8Array, preferredCharset: string): { text: string; confidence: number; charset: string } {
+  const tried = new Set<string>();
+  
+  // Prioritized charset list - best guesses first based on common Gmail scenarios
+  const charsetCandidates = [
+    preferredCharset,           // What headers say (if present)
+    'utf-8',                    // Most common
+    'windows-1251',             // Russian/Cyrillic
+    'iso-8859-5',               // Cyrillic (ISO)
+    'koi8-r',                   // Old Russian
+    'windows-1252',             // Western European
+    'iso-8859-1',               // Latin-1
+    'iso-8859-2',               // Central European
+    'gb2312',                   // Simplified Chinese
+    'gbk',                      // Extended Chinese
+    'shift_jis',                // Japanese
+    'euc-kr',                   // Korean
+    'iso-8859-6',               // Arabic
+    'iso-8859-7',               // Greek
+    'iso-8859-8',               // Hebrew
+    'windows-874',              // Thai
+  ].filter((cs): cs is string => Boolean(cs && !tried.has(cs) && (tried.add(cs as string), true)));
+  
+  let bestText = '';
+  let bestScore = -Infinity;
+  let bestCharset = 'utf-8';
+  
+  for (const charset of charsetCandidates) {
+    try {
+      const text = new TextDecoder(charset).decode(bytes);
+      const score = scoreDecodedTextQuality(text);
+      
+      if (score > bestScore) {
+        bestScore = score;
+        bestText = text;
+        bestCharset = charset;
+      }
+    } catch (e) {
+      // Charset not supported - continue
+      console.debug(`Charset ${charset} not supported: ${e}`);
+    }
+  }
+  
+  // Fallback: if all else fails, use UTF-8 with replacement characters
+  if (!bestText) {
+    bestText = new TextDecoder('utf-8').decode(bytes);
+    bestScore = -50; // Low confidence
+    bestCharset = 'utf-8';
+  }
+  
+  // Calculate confidence (0-1)
+  const confidence = Math.max(0, Math.min(1, (bestScore + 100) / 200));
+  
+  return {
+    text: bestText,
+    confidence,
+    charset: bestCharset
+  };
+}
+
+// HTML entity decoder (must run AFTER text decoding)
+function decodeHtmlEntities(text: string): string {
+  // Handle numeric entities (decimal and hex)
+  text = text.replace(/&#(\d+);/g, (match, dec) => {
+    try {
+      return String.fromCodePoint(parseInt(dec, 10));
+    } catch {
+      return match;
+    }
+  });
+  
+  text = text.replace(/&#x([A-Fa-f0-9]+);/g, (match, hex) => {
+    try {
+      return String.fromCodePoint(parseInt(hex, 16));
+    } catch {
+      return match;
+    }
+  });
+  
+  // Common named entities
+  const entities: Record<string, string> = {
+    '&nbsp;': '\u00A0', '&lt;': '<', '&gt;': '>', '&quot;': '"',
+    '&apos;': "'", '&amp;': '&', '&euro;': '€', '&pound;': '£',
+    '&yen;': '¥', '&copy;': '©', '&reg;': '®', '&trade;': '™',
+    '&bullet;': '•', '&hellip;': '…', '&mdash;': '—', '&ndash;': '–',
+    '&ldquo;': '\u201C', '&rdquo;': '\u201D', '&lsquo;': '\u2018', '&rsquo;': '\u2019',
+  };
+  
+  Object.entries(entities).forEach(([entity, char]) => {
+    text = text.replace(new RegExp(entity, 'g'), char);
+  });
+  
+  return text;
+}
+
+// Unicode normalization
+function normalizeUnicode(text: string): string {
+  try {
+    // Normalize to NFC (most common form)
+    return text.normalize('NFC');
+  } catch {
+    return text; // Fallback if normalize not available
+  }
+}
+
+// Strip zero-width and invisible characters
+function stripInvisibleChars(text: string): string {
+  return text.replace(/[\u200B\u200C\u200D\uFEFF]/g, ''); // Zero-width chars
+}
+
+// Decode a single Gmail part into a string - ENHANCED VERSION
 function decodeGmailPart(part: any) {
   const mimeType = part.mimeType || 'text/plain';
   const headers = part.headers ?? [];
-  const charset = charsetFromHeaders(headers) || 'utf-8';
-  const cte = headers.find((h)=>h.name.toLowerCase() === 'content-transfer-encoding')?.value?.toLowerCase();
+  const headerCharset = charsetFromHeaders(headers);
+  const cte = headers.find((h) => h.name.toLowerCase() === 'content-transfer-encoding')?.value?.toLowerCase();
 
-  // Heuristic: score decoded text quality for Cyrillic (reduce mojibake)
-  const scoreDecoded = (s: string): number =>{
-    const cyr = (s.match(/[\u0400-\u04FF]/g) || []).length; // Cyrillic block
-    const bad = (s.match(/[ÃÂÐÑ�]/g) || []).length; // common mojibake markers + replacement
-    const box = (s.match(/[╔║╚╩╦╣╟╢╧]/g) || []).length; // box/line chars often seen in mojibake
-    return cyr * 3 - bad * 5 - box * 2;
-  };
-
-  const decodeWithFallbacks = (bytes: Uint8Array, preferred: string): string =>{
-    const tried = new Set();
-    const candidates = [preferred, 'utf-8', 'windows-1251', 'koi8-r', 'iso-8859-5', 'windows-1252']
-      .filter((cs)=>cs && !tried.has(cs) && (tried.add(cs), true));
-    let bestText = '';
-    let bestScore = -Infinity;
-    for (const cs of candidates) {
-      try {
-        const text = new TextDecoder(cs).decode(bytes);
-        const score = scoreDecoded(text);
-        if (score > bestScore) {
-          bestScore = score;
-          bestText = text;
-        }
-      } catch  {
-        // ignore unsupported charsets on this runtime
-      }
-    }
-    return bestText || new TextDecoder('utf-8').decode(bytes);
-  };
   if (part.body?.data) {
     const rawBytes = base64UrlToBytes(part.body.data);
     let bytes = rawBytes;
+    
     if (cte === 'quoted-printable') {
       const asAscii = new TextDecoder('iso-8859-1').decode(rawBytes);
       bytes = decodeQuotedPrintableToBytes(asAscii);
     }
-    // Use heuristic fallbacks to avoid mojibake when headers lie
-    const text = decodeWithFallbacks(bytes, charset);
+    
+    // Use enhanced decoder with confidence tracking
+    const { text, confidence, charset } = decodeWithEnhancedFallbacks(bytes, headerCharset || 'utf-8');
+    
+    let processedText = text;
+    
+    // Post-processing based on MIME type
+    if (mimeType.toLowerCase() === 'text/html') {
+      // Decode HTML entities for HTML content
+      processedText = decodeHtmlEntities(processedText);
+    }
+    
+    // Always apply Unicode normalization
+    processedText = normalizeUnicode(processedText);
+    
+    // Strip invisible characters
+    processedText = stripInvisibleChars(processedText);
+    
+    // Log low-confidence decodings for debugging
+    if (confidence < ENCODING_CONFIDENCE_THRESHOLD) {
+      console.warn(`Low confidence (${(confidence * 100).toFixed(1)}%) decoding for part. Charset: ${charset}, MimeType: ${mimeType}`);
+    } else {
+      console.debug(`Decoded with charset: ${charset}, confidence: ${(confidence * 100).toFixed(1)}%`);
+    }
+    
     return {
-      text,
-      mimeType
+      text: processedText,
+      mimeType,
+      confidence,
+      charset
     };
   }
+  
   if (part.parts && part.parts.length) {
-  const html = part.parts.find((p: any)=>(p.mimeType || '').toLowerCase() === 'text/html');
-  const plain = part.parts.find((p: any)=>(p.mimeType || '').toLowerCase() === 'text/plain');
+    const html = part.parts.find((p: any) => (p.mimeType || '').toLowerCase() === 'text/html');
+    const plain = part.parts.find((p: any) => (p.mimeType || '').toLowerCase() === 'text/plain');
     return decodeGmailPart(html || plain || part.parts[0]);
   }
+  
   return null;
 }
 // Helper to pick best body string from an entire Gmail message
@@ -244,15 +414,23 @@ function cleanTextEncoding(text: string) {
   // Remove multiple consecutive spaces
   .replace(/\s+/g, ' ').trim();
 }
-// Extract email body from parts
+// Extract email body from parts - UPDATED to use proper MIME decoding
 function extractEmailBody(payload: any) {
   let htmlBody = '';
   let textBody = '';
   function traverse(part: any) {
     if (part.mimeType === 'text/html' && part.body?.data) {
-      htmlBody = base64UrlDecode(part.body.data);
+      // Use proper decoding instead of base64UrlDecode
+      const decoded = decodeGmailPart(part);
+      if (decoded && !htmlBody) {
+        htmlBody = decoded.text;
+      }
     } else if (part.mimeType === 'text/plain' && part.body?.data && !htmlBody) {
-      textBody = base64UrlDecode(part.body.data);
+      // Use proper decoding instead of base64UrlDecode
+      const decoded = decodeGmailPart(part);
+      if (decoded && !textBody) {
+        textBody = decoded.text;
+      }
     }
     if (part.parts) {
       part.parts.forEach(traverse);

@@ -15,6 +15,7 @@ import { useToast } from '../ui/use-toast';
 interface EmbeddedViewEmailProps {
   emailId: string;
   onEmailUpdate?: (email: Email) => void;
+  onEmailDelete?: (emailId: string) => void;
 }
 
 // Process thread messages - simplified since Shadow DOM handles sanitization
@@ -61,7 +62,7 @@ const getSenderColor = (email: string): string => {
   return colors[colorIndex];
 };
 
-function EmbeddedViewEmail({ emailId, onEmailUpdate }: EmbeddedViewEmailProps) {
+function EmbeddedViewEmail({ emailId, onEmailUpdate, onEmailDelete }: EmbeddedViewEmailProps) {
   const [email, setEmail] = useState<Email | null>(null);
   const [processedThreadMessages, setProcessedThreadMessages] = useState<Email[]>([]);
   const [loading, setLoading] = useState(true);
@@ -302,7 +303,11 @@ ${originalEmail.body}
     try {
       await markEmailAsTrash(email.id);
       clearSelection();
-      if (onEmailUpdate) {
+      // Call onEmailDelete to immediately remove from list
+      if (onEmailDelete) {
+        onEmailDelete(email.id);
+      } else if (onEmailUpdate) {
+        // Fallback for backwards compatibility
         onEmailUpdate(email);
       }
     } catch (error) {
@@ -783,8 +788,7 @@ ${email.body}
               onClick={handleMoveToTrash}
               className="btn btn-danger flex items-center text-sm px-3 py-2 flex-shrink-0"
             >
-              <Trash size={14} className="mr-2" />
-              Delete
+              <Trash size={14} className="mr-0" />
             </button>
             {(email.labelIds || []).includes('DRAFT') && (
               <button

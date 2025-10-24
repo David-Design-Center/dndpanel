@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { getCurrentAccessToken } from '@/integrations/gapiService';
+import { tokenRefreshManager } from '@/utils/tokenRefreshManager';
 import { fetchGmailAccessToken } from '@/lib/gmail';
 import type { Email } from '@/types';
 
@@ -27,10 +28,19 @@ interface ProcessedEmail {
  * Get the current Gmail access token, or fetch a fresh one using domain-wide delegation
  */
 async function getAccessToken(userEmail?: string): Promise<string | null> {
-  // First try to get the current token from gapi client
+  // First try to get the cached token from token manager
+  const cachedToken = tokenRefreshManager.getToken();
+  
+  if (cachedToken) {
+    console.log('✅ Using cached token from tokenRefreshManager');
+    return cachedToken;
+  }
+
+  // Then try to get the current token from gapi client
   const currentToken = getCurrentAccessToken();
   
   if (currentToken) {
+    console.log('✅ Using current token from gapi client');
     return currentToken;
   }
   
@@ -73,6 +83,7 @@ export class OptimizedEmailService {  /**
       isRead: !processed.labels.includes('UNREAD'),
       isImportant: processed.labels.includes('IMPORTANT'),
       date: processed.date,
+      internalDate: new Date(processed.date).getTime().toString(),
       attachments: processed.attachments.length > 0 ? processed.attachments.map(att => ({
         name: att.filename,
         url: '', // Will be populated when downloaded

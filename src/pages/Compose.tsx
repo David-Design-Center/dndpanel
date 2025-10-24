@@ -773,11 +773,11 @@ function Compose() {
         pdfBlob = await exportInvoiceDocToPDF(invoiceDoc);
         filename = `invoice-${invoiceData.po_number || invoiceData.id}.pdf`;
       } else if (type === 'order' || type === 'supplier-order') {
-        // For orders, fetch from orders + orders_line_items with suppliers data
+        // For orders, fetch from orders + orders_line_items
         const orderId = item.id;
         const { data: orderData, error: orderError } = await sb
           .from('orders')
-          .select('*, suppliers(*)')
+          .select('*')
           .eq('id', orderId)
           .single();
         if (orderError) throw orderError;
@@ -788,17 +788,46 @@ function Compose() {
           .eq('order_id', orderId);
         if (itemsError) throw itemsError;
 
+        // Fetch brand details if supplier_id exists
+        let supplierName = '';
+        let address = '';
+        let city = '';
+        let state = '';
+        let zip = '';
+        let tel1 = '';
+        let tel2 = '';
+        let email = '';
+
+        if (orderData.supplier_id) {
+          const { data: brandData } = await sb
+            .from('brands')
+            .select('*')
+            .eq('id', orderData.supplier_id)
+            .single();
+
+          if (brandData) {
+            supplierName = brandData.name || '';
+            address = brandData.address_line1 || '';
+            city = brandData.city || '';
+            state = brandData.state || '';
+            zip = brandData.postal_code || '';
+            tel1 = brandData.phone_primary || '';
+            tel2 = brandData.phone_secondary || '';
+            email = brandData.email || '';
+          }
+        }
+
         const orderDoc: SupplierOrderDoc = {
           poNumber: orderData.order_number || '',
           date: orderData.order_date || '',
-          supplierName: orderData.suppliers?.display_name || '',
-          address: orderData.suppliers?.address_line1 || '',
-          city: orderData.suppliers?.city || '',
-          state: orderData.suppliers?.state || '',
-          zip: orderData.suppliers?.postal_code || '',
-          tel1: orderData.suppliers?.phone_primary || '',
-          tel2: orderData.suppliers?.phone_secondary || '',
-          email: orderData.suppliers?.email || '',
+          supplierName: supplierName,
+          address: address,
+          city: city,
+          state: state,
+          zip: zip,
+          tel1: tel1,
+          tel2: tel2,
+          email: email,
           lineItems: (items || []).map((it: any, idx: number) => ({
             id: it.id,
             item: ((idx + 1) as number).toString(),

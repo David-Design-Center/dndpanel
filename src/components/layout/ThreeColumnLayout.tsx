@@ -9,9 +9,10 @@ import { Email } from '../../types';
 interface ThreeColumnLayoutProps {
   children: React.ReactNode;
   onEmailUpdate?: (email: Email) => void;
+  onEmailDelete?: (emailId: string) => void;
 }
 
-function ThreeColumnLayout({ children, onEmailUpdate }: ThreeColumnLayoutProps) {
+function ThreeColumnLayout({ children, onEmailUpdate, onEmailDelete }: ThreeColumnLayoutProps) {
   const { id: emailId } = useParams<{ id: string }>();
   const { selectedEmailId, selectEmail, clearSelection } = useInboxLayout();
   const { panelSizes, updatePanelSizes } = usePanelSizes();
@@ -71,6 +72,7 @@ function ThreeColumnLayout({ children, onEmailUpdate }: ThreeColumnLayoutProps) 
               <EmbeddedViewEmail 
                 emailId={selectedEmailId} 
                 onEmailUpdate={onEmailUpdate}
+                onEmailDelete={onEmailDelete}
               />
             ) : (
               <div className="flex items-center justify-center h-full text-gray-500">

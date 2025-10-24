@@ -148,15 +148,18 @@ export function LoadingProgressToast() {
       </div>
     );
 
+    // Only create the toast ONCE on first start
+    // After that, just let the component re-render naturally to update it
     if (!toastIdRef.current) {
       toastIdRef.current = toast.custom(() => CustomContent, {
         id: 'loading-progress',
         duration: Infinity,
-        // Force Sonner wrapper to be transparent and padding-less
         className: 'p-0 !bg-transparent !shadow-none !border-0',
         style: { padding: 0, background: 'transparent', boxShadow: 'none', border: 'none' },
       });
     } else {
+      // Update existing toast with new content
+      // We need to pass the updated CustomContent
       toast.custom(() => CustomContent, {
         id: 'loading-progress',
         duration: Infinity,

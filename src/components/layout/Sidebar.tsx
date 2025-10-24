@@ -148,7 +148,7 @@ function Sidebar({ }: SidebarProps) {
                     </Link>
                   </TooltipTrigger>
                   <TooltipContent side="right" className="bg-gray-800 text-white border-gray-700">
-                    <p>Orders</p>
+                    <p>Vendor Orders</p>
                   </TooltipContent>
                 </Tooltip>
                 
@@ -166,7 +166,7 @@ function Sidebar({ }: SidebarProps) {
                     </Link>
                   </TooltipTrigger>
                   <TooltipContent side="right" className="bg-gray-800 text-white border-gray-700">
-                    <p>Invoices</p>
+                    <p>Customer Invoices</p>
                   </TooltipContent>
                 </Tooltip>
                 
@@ -267,7 +267,7 @@ function Sidebar({ }: SidebarProps) {
                   }`}
                 >
                   <span className="mr-3 flex-shrink-0"><Clipboard size={20} className="text-orange-500"/></span>
-                  <span className="truncate">Orders</span>
+                  <span className="truncate">Vendor Orders</span>
                 </Link>
                 
                 <Link
@@ -279,7 +279,7 @@ function Sidebar({ }: SidebarProps) {
                   }`}
                 >
                   <span className="mr-3 flex-shrink-0"><FileText size={20} className="text-green-500"/></span>
-                  <span className="truncate">Invoices</span>
+                  <span className="truncate">Client Invoices</span>
                 </Link>
                 
                 <Link

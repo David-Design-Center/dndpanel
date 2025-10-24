@@ -10,7 +10,7 @@ export async function deleteOrder(orderId: string): Promise<boolean> {
 }
 
 export async function fetchOrdersWithSuppliers(createdBy?: string) {
-  let query = supabase.from('orders').select('*, suppliers(*)');
+  let query = supabase.from('orders').select('*');
   if (createdBy) {
     query = query.eq('created_by', createdBy);
   }

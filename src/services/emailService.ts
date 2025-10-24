@@ -4,6 +4,7 @@ import { format } from 'date-fns';
 import { 
   getAttachmentDownloadUrl as getGmailAttachmentDownloadUrl
 } from '../lib/gmail';
+import { gapiCallWithRecovery } from '../utils/gapiCallWrapper';
 import { 
   fetchGmailMessages, 
   sendGmailMessage, 
@@ -25,6 +26,8 @@ import {
   isGmailSignedIn
 } from '../integrations/gapiService';
 import { queueGmailRequest } from '../utils/requestQueue';
+
+export const INBOX_FETCH_BATCH_SIZE = 50;
 
 // Auto-reply functionality for out-of-office
 const processedSenders = new Set<string>(); // Track senders we've already replied to
@@ -553,15 +556,12 @@ export const getForumsEmails = async (
 
 export const getAllInboxEmails = async (
   forceRefresh = false, 
-  maxResults = 100, 
+  maxResults = INBOX_FETCH_BATCH_SIZE, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
-  // Use 24h filtered inbox query to match real Gmail behavior and folder counter
-  // This replaces the old "all mail" approach with focused inbox view
-  const { get24hInboxQuery } = await import('../lib/utils');
-  const query = get24hInboxQuery(true); // Include both read and unread from last 24h
-  console.log('📧 getAllInboxEmails using 24h filter:', query);
-  return getEmails(forceRefresh, query, maxResults, pageToken);
+  // Fetch recent Inbox messages regardless of age to support Everything else backfill
+  // Use labelIds for efficiency and to avoid unintended search-time filtering
+  return getEmailsByLabelIds(['INBOX'], forceRefresh, maxResults, pageToken);
 };
 
 export const getSentEmails = async (
@@ -580,9 +580,10 @@ export const getDraftEmails = async (_forceRefresh = false): Promise<Email[]> =>
       throw new Error('Not signed in to Gmail');
     }
 
-    const response = await window.gapi.client.gmail.users.drafts.list({
-      userId: 'me'
-    });
+    const response = await gapiCallWithRecovery(
+      () => window.gapi.client.gmail.users.drafts.list({ userId: 'me' }),
+      'drafts.list'
+    );
 
     if (!response.result.drafts || response.result.drafts.length === 0) {
       return [];
@@ -595,10 +596,13 @@ export const getDraftEmails = async (_forceRefresh = false): Promise<Email[]> =>
       if (!draft.id) continue;
 
       try {
-        const draftMsg = await window.gapi.client.gmail.users.drafts.get({
-          userId: 'me',
-          id: draft.id
-        });
+        const draftMsg = await gapiCallWithRecovery(
+          () => window.gapi.client.gmail.users.drafts.get({
+            userId: 'me',
+            id: draft.id
+          }),
+          `draft.get for ${draft.id}`
+        );
 
         if (!draftMsg.result || !draftMsg.result.message) continue;
         const message = draftMsg.result.message;

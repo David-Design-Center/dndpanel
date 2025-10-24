@@ -1,19 +1,20 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, ChevronDown } from 'lucide-react';
-import { useBrand } from '../../contexts/BrandContext';
+import { Plus, ChevronDown, X } from 'lucide-react';
+import { useBrand, Brand } from '../../contexts/BrandContext';
 
 interface BrandDropdownProps {
   value: string;
-  onChange: (value: string) => void;
+  onChange: (value: string | Brand) => void;  // Can return string or full Brand object
   className?: string;
   placeholder?: string;
+  returnFullBrand?: boolean;  // If true, onChange returns full Brand object
 }
 
 export default function BrandDropdown({ 
   value, 
   onChange, 
   className = '', 
-  placeholder = 'Select brand' 
+  returnFullBrand = false
 }: BrandDropdownProps) {
   const { brands, addBrand, isAddingBrand } = useBrand();
   const [isOpen, setIsOpen] = useState(false);
@@ -64,8 +65,16 @@ export default function BrandDropdown({
     brand.name.toLowerCase().includes(value.toLowerCase())
   );
 
-  const handleBrandSelect = (brandName: string) => {
-    onChange(brandName);
+  const handleBrandSelect = (brandNameOrObject: string | Brand) => {
+    if (returnFullBrand && typeof brandNameOrObject !== 'string') {
+      // Find full brand object and return it
+      const fullBrand = brands.find(b => b.name === brandNameOrObject.name);
+      if (fullBrand) {
+        onChange(fullBrand);
+      }
+    } else if (typeof brandNameOrObject === 'string') {
+      onChange(brandNameOrObject);
+    }
     setIsOpen(false);
   };
 
@@ -122,9 +131,22 @@ export default function BrandDropdown({
           onChange={handleInputChange}
           onFocus={handleInputFocus}
           onKeyDown={handleKeyDown}
-          placeholder={placeholder}
-          className="w-full px-1 py-1 pr-8 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="w-full px-1 py-1 pr-16 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
         />
+        {value && (
+          <button
+            type="button"
+            onClick={() => {
+              onChange('');
+              setIsOpen(false);
+              setShowAddForm(false);
+            }}
+            className="absolute right-8 top-1/2 transform -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600"
+            title="Clear selection"
+          >
+            <X size={16} />
+          </button>
+        )}
         <button
           type="button"
           onClick={() => {
@@ -161,12 +183,12 @@ export default function BrandDropdown({
                   className="w-full px-3 py-2 text-left text-sm text-blue-600 hover:bg-blue-50 flex items-center min-w-0"
                 >
                   <Plus size={16} className="mr-2 flex-shrink-0" />
-                  <span className="truncate">Add "{value}" as new brand</span>
+                  <span className="truncate">Add "{value}" as new vendor</span>
                 </button>
               ) : (
                 <div className="p-3 bg-blue-50">
                   <div className="text-sm text-gray-700 mb-2 truncate">
-                    Add "{value}" as new brand
+                    Add "{value}" as new vendor
                   </div>
                   <div className="flex gap-2">
                     <button
@@ -175,7 +197,7 @@ export default function BrandDropdown({
                       disabled={isAddingBrand}
                       className="px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 disabled:opacity-50 flex-shrink-0"
                     >
-                      {isAddingBrand ? 'Adding...' : 'Add Brand'}
+                      {isAddingBrand ? 'Adding...' : 'Add Vendor'}
                     </button>
                     <button
                       type="button"
@@ -198,10 +220,12 @@ export default function BrandDropdown({
                 <button
                   key={brand.id}
                   type="button"
-                  onClick={() => handleBrandSelect(brand.name)}
+                  onClick={() => handleBrandSelect(returnFullBrand ? brand : brand.name)}
                   className="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 focus:bg-gray-100 focus:outline-none min-w-0"
                 >
-                  <span className="truncate block">{brand.name}</span>
+                  <span className="truncate block font-medium text-gray-900">{brand.name}</span>
+                  {brand.companyName && <span className="truncate block text-xs text-gray-500">{brand.companyName}</span>}
+                  {brand.email && <span className="truncate block text-xs text-gray-400">{brand.email}</span>}
                 </button>
               ))}
             </>

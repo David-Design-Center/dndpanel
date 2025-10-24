@@ -16,6 +16,8 @@ import { Email, GmailLabel } from '../types/index';
 import { GMAIL_SYSTEM_LABELS, validateLabelIds } from '../constants/gmailLabels';
 import { createLimiter } from '../utils/limiter';
 import { backoff } from '../utils/backoff';
+import { INBOX_FETCH_BATCH_SIZE } from './emailService';
+import { gapiCallWithRecovery } from '../utils/gapiCallWrapper';
 
 // Request deduplication cache - prevents duplicate in-flight requests
 const requestCache = new Map<string, Promise<any>>();
@@ -102,7 +104,10 @@ async function fetchMessagesByLabelIds(
 
     console.log(`📧 Optimized fetch: labelIds=[${labelIds.join(',')}], maxResults=${maxResults}`);
     
-    const response = await window.gapi.client.gmail.users.messages.list(params);
+    const response = await gapiCallWithRecovery(
+      () => window.gapi.client.gmail.users.messages.list(params),
+      `messages.list with labelIds=[${labelIds.join(',')}]`
+    );
     
     if (!response.result.messages) {
       return {
@@ -245,9 +250,10 @@ async function fetchLabelsOptimized(): Promise<GmailLabel[]> {
     console.log('📋 Fetching labels (optimized)');
     
     // Get basic labels list only - no detailed counters initially
-    const response = await window.gapi.client.gmail.users.labels.list({
-      userId: 'me'
-    });
+    const response = await gapiCallWithRecovery(
+      () => window.gapi.client.gmail.users.labels.list({ userId: 'me' }),
+      'labels.list'
+    );
 
     if (!response.result?.labels) {
       return [];
@@ -298,10 +304,10 @@ export async function loadCriticalInboxData(): Promise<CriticalInboxData> {
     // Parallel fetch of message lists (IDs only)
     const [unreadResponse, recentResponse] = await Promise.all([
       // ✅ Primary unread emails using correct CATEGORY_PERSONAL label
-      fetchMessagesByLabelIds([GMAIL_SYSTEM_LABELS.INBOX, GMAIL_SYSTEM_LABELS.CATEGORY.PRIMARY, GMAIL_SYSTEM_LABELS.UNREAD], 100),
+      fetchMessagesByLabelIds([GMAIL_SYSTEM_LABELS.INBOX, GMAIL_SYSTEM_LABELS.CATEGORY.PRIMARY, GMAIL_SYSTEM_LABELS.UNREAD], INBOX_FETCH_BATCH_SIZE),
       
       // ✅ Recent primary emails using correct CATEGORY_PERSONAL label  
-      fetchMessagesByLabelIds([GMAIL_SYSTEM_LABELS.INBOX, GMAIL_SYSTEM_LABELS.CATEGORY.PRIMARY], 100)
+      fetchMessagesByLabelIds([GMAIL_SYSTEM_LABELS.INBOX, GMAIL_SYSTEM_LABELS.CATEGORY.PRIMARY], INBOX_FETCH_BATCH_SIZE)
     ]);
 
     // Extract IDs from both lists
@@ -556,12 +562,15 @@ export async function getInboxUnreadCount(): Promise<number> {
 
   return dedupeRequest(key, async () => {
     try {
-      const response = await window.gapi.client.gmail.users.messages.list({
-        userId: 'me',
-        labelIds: [GMAIL_SYSTEM_LABELS.INBOX, GMAIL_SYSTEM_LABELS.UNREAD],
-        maxResults: 1,
-        fields: 'resultSizeEstimate'
-      });
+      const response = await gapiCallWithRecovery(
+        () => window.gapi.client.gmail.users.messages.list({
+          userId: 'me',
+          labelIds: [GMAIL_SYSTEM_LABELS.INBOX, GMAIL_SYSTEM_LABELS.UNREAD],
+          maxResults: 1,
+          fields: 'resultSizeEstimate'
+        }),
+        'inbox unread count'
+      );
 
       return response.result.resultSizeEstimate || 0;
     } catch (error) {

@@ -30,6 +30,7 @@ interface SupplierInvoice {
   amount: number; // Keep for compatibility with shared utilities
   balance: number;
   customerName: string; // Alias used by shared search utility
+  createdBy?: string; // Who created the order
 }
 
 function Orders() {
@@ -52,7 +53,7 @@ function Orders() {
 
         let query = supabase
           .from('orders')
-          .select('*, suppliers(*)');
+          .select('*');
 
         if (currentProfile?.name === 'David') {
           query = query.order('created_at', { ascending: false });
@@ -75,27 +76,47 @@ function Orders() {
 
         const ordersFromDb = orderData || [];
 
+        // Fetch all unique brand IDs from orders
+        const brandIds = [...new Set(ordersFromDb.map((order: any) => order.supplier_id).filter(Boolean))];
+        
+        // Fetch all brands at once
+        const brandsMap = new Map();
+        if (brandIds.length > 0) {
+          const { data: brandsData } = await supabase
+            .from('brands')
+            .select('*')
+            .in('id', brandIds);
+          
+          if (brandsData) {
+            brandsData.forEach(brand => {
+              brandsMap.set(brand.id, brand);
+            });
+          }
+        }
+
         const transformed: SupplierInvoice[] = ordersFromDb.map((order: any) => {
-          const supplier = order.suppliers || {};
-          const supplierName = supplier.display_name || supplier.company_name || 'Unknown Supplier';
-          const phones = [supplier.phone_primary, supplier.phone_secondary].filter((p: string) => !!p && typeof p === 'string');
-          const email = supplier.email as string | undefined;
+          // Get brand info from the map
+          const brand = brandsMap.get(order.supplier_id);
+          const supplierName = brand?.name || 'Unknown Vendor';
+          const phones: string[] = [brand?.phone_primary, brand?.phone_secondary].filter(Boolean);
+          const email = brand?.email;
 
           return {
             id: order.id,
             supplierName,
-            companyName: supplier.company_name || undefined,
+            companyName: brand?.company_name,
             orderNumber: order.order_number || 'N/A',
             date: order.order_date || order.created_at,
             status: (order.status === 'received' ? 'received' : 'pending') as 'received' | 'pending',
             isEdited: false,
             originalInvoiceId: undefined,
-            supplierAddress: supplier.address_line1 || undefined,
-            supplierCity: supplier.city || undefined,
-            supplierState: supplier.state || undefined,
-            supplierZip: supplier.postal_code || undefined,
+            supplierAddress: brand?.address_line1,
+            supplierCity: brand?.city,
+            supplierState: brand?.state,
+            supplierZip: brand?.postal_code,
             supplierEmail: email,
             supplierPhones: phones as string[],
+            createdBy: order.created_by,
             amount: 0,
             balance: 0,
             customerName: supplierName,
@@ -105,8 +126,8 @@ function Orders() {
         setSupplierInvoices(transformed);
         setFilteredSupplierInvoices(transformed);
       } catch (err) {
-        console.error('Error loading supplier invoices:', err);
-        setError('Failed to load supplier invoices. Please try again.');
+        console.error('Error loading vendor orders:', err);
+        setError('Failed to load vendor orders. Please try again.');
       } finally {
         setLoading(false);
       }
@@ -128,7 +149,7 @@ function Orders() {
       const filtered = await searchInvoicesForList<SupplierInvoice>(supplierInvoices, term);
       setFilteredSupplierInvoices(filtered);
     } catch (err) {
-      console.error('Error searching supplier invoices:', err);
+      console.error('Error searching vendor orders:', err);
       setFilteredSupplierInvoices(supplierInvoices);
     } finally {
       setIsSearching(false);
@@ -173,7 +194,7 @@ function Orders() {
     });
 
     const buildCardPayload = (invoice: SupplierInvoice) => {
-      const description = buildReadableAddress(invoice);
+      const description = invoice.createdBy ? `Created by: ${invoice.createdBy}` : '';
       const contactItems = buildContactItems(invoice);
 
       return {
@@ -191,7 +212,7 @@ function Orders() {
       id: poNumber,
       originalInvoice: buildCardPayload(group.original),
       editedInvoice: group.edited ? buildCardPayload(group.edited) : undefined,
-      editReason: group.edited ? 'Supplier invoice was modified' : undefined,
+      editReason: group.edited ? 'Vendor invoice was modified' : undefined,
       editDate: group.edited ? new Date(group.edited.date).toLocaleDateString() : undefined,
     }));
   }, [filteredSupplierInvoices]);
@@ -208,7 +229,7 @@ function Orders() {
   };
 
   const handleDeleteInvoice = async (invoiceId: string, orderNumber: string) => {
-    if (!window.confirm(`Are you sure you want to delete supplier order ${orderNumber}? This action cannot be undone.`)) {
+    if (!window.confirm(`Are you sure you want to delete vendor order ${orderNumber}? This action cannot be undone.`)) {
       return;
     }
 
@@ -224,8 +245,8 @@ function Orders() {
         alert('Failed to delete invoice. Please try again.');
       }
     } catch (err) {
-      console.error('Error deleting supplier invoice:', err);
-      alert('Failed to delete invoice. Please try again.');
+      console.error('Error deleting vendor order:', err);
+      alert('Failed to delete vendor order. Please try again.');
     } finally {
       setDeletingInvoice(null);
     }
@@ -245,7 +266,7 @@ function Orders() {
             </div>
             <h3 className="text-lg font-medium text-gray-900 mb-2">Gmail Connection Required</h3>
             <p className="text-gray-600 mb-6">
-              Please connect to Gmail to access Supplier Invoices. This page requires Gmail integration to manage your vendor billing.
+              Please connect to Gmail to access Vendor Orders. This page requires Gmail integration to manage your vendor billing.
             </p>
             <button
               onClick={() => navigate('/inbox')}
@@ -263,11 +284,11 @@ function Orders() {
     return (
       <div className="fade-in pb-6">
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-semibold text-gray-800">Supplier Invoices</h1>
+          <h1 className="text-2xl font-semibold text-gray-800">Vendor Orders</h1>
         </div>
         <div className="flex justify-center items-center h-64">
           <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-primary-500"></div>
-          <span className="ml-3 text-gray-600">Loading supplier invoices...</span>
+          <span className="ml-3 text-gray-600">Loading vendor orders...</span>
         </div>
       </div>
     );
@@ -277,7 +298,7 @@ function Orders() {
     return (
       <div className="fade-in pb-6">
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-semibold text-gray-800">Supplier Invoices</h1>
+          <h1 className="text-2xl font-semibold text-gray-800">Vendor Orders</h1>
         </div>
         <div className="bg-red-50 border border-red-200 rounded-md p-4 text-red-800">
           <p>{error}</p>
@@ -296,10 +317,10 @@ function Orders() {
   return (
     <div className="fade-in pb-6">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold text-gray-800">Supplier Invoices</h1>
+        <h1 className="text-2xl font-semibold text-gray-800">Vendor Orders</h1>
         <Button onClick={handleCreateSupplierInvoice}>
           <Plus className="h-4 w-4 mr-2" />
-          Create Supplier Invoice
+          Create Vendor Order
         </Button>
       </div>
 
@@ -308,7 +329,7 @@ function Orders() {
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
           <Input
             type="text"
-            placeholder="Search by supplier, PO #, date, or brand..."
+            placeholder="Search by vendor, PO #, date, or brand..."
             value={searchTerm}
             onChange={(e) => handleSearch(e.target.value)}
             className="pl-10"
@@ -321,7 +342,7 @@ function Orders() {
         </div>
         {searchTerm && (
           <p className="text-sm text-gray-500 mt-2">
-            Showing {filteredSupplierInvoices.length} of {supplierInvoices.length} supplier invoices
+            Showing {filteredSupplierInvoices.length} of {supplierInvoices.length} vendor orders
           </p>
         )}
       </div>
@@ -334,25 +355,25 @@ function Orders() {
             </svg>
           </div>
           <h3 className="text-lg font-medium text-gray-900 mb-2">
-            {searchTerm ? 'No supplier invoices found' : 'No supplier invoices yet'}
+            {searchTerm ? 'No vendor orders found' : 'No vendor orders yet'}
           </h3>
           <p className="text-gray-500 mb-4">
             {searchTerm 
               ? 'Try adjusting your search terms.' 
-              : 'Create your first supplier invoice to get started.'
+              : 'Create your first vendor order to get started.'
             }
           </p>
           {!searchTerm && (
             <Button onClick={handleCreateSupplierInvoice}>
               <Plus className="h-4 w-4 mr-2" />
-              Create Supplier Invoice
+              Create Vendor Order
             </Button>
           )}
         </div>
       ) : (
         <>
           <div className="mb-4 text-sm text-gray-500">
-            Showing {supplierInvoiceCards.length} supplier invoice{supplierInvoiceCards.length !== 1 ? 's' : ''}
+            Showing {supplierInvoiceCards.length} vendor order{supplierInvoiceCards.length !== 1 ? 's' : ''}
           </div>
           <InvoiceCards
             invoices={supplierInvoiceCards}
@@ -367,14 +388,6 @@ function Orders() {
       )}
     </div>
   );
-}
-
-function buildReadableAddress(invoice: SupplierInvoice): string {
-  const parts = [invoice.supplierAddress, invoice.supplierCity, invoice.supplierState, invoice.supplierZip]
-    .map(part => part?.trim())
-    .filter(Boolean);
-
-  return parts.length > 0 ? parts.join(', ') : 'No supplier address provided';
 }
 
 function buildContactItems(invoice: SupplierInvoice): string[] {

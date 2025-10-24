@@ -149,19 +149,10 @@ const InvoiceSlot: React.FC<{
               {invoice.description}
             </p>
           )}
-          {invoice.items && invoice.items.length > 0 && (
-            <ul className="space-y-1 text-[10px] text-white/80">
-              {invoice.items.slice(0, 3).map((item, idx) => (
-                <li key={idx} className="truncate">
-                  {item}
-                </li>
-              ))}
-            </ul>
-          )}
         </div>
 
         {/* Footer */}
-        <div className="mt-2 pt-2 border-t border-white/20">
+        <div className="mt-2 pt-2">
           <p className="text-xs opacity-70 truncate">
             {isEdited ? 'Edited' : 'Original'}
           </p>
@@ -332,14 +323,37 @@ export function InvoiceCards({
   const fetchInvoiceDetails = async (invoiceId: string) => {
     try {
       if (dataSource === 'orders') {
-        // Fetch order details with supplier info
+        // Fetch order details
         const { data: orderData, error: orderError } = await supabase
           .from('orders')
-          .select('*, suppliers(*)')
+          .select('*')
           .eq('id', invoiceId)
           .single();
 
         if (orderError) throw orderError;
+
+        // If order has supplier_id, fetch the brand details to populate supplier info
+        if (orderData && orderData.supplier_id) {
+          const { data: brandData, error: brandError } = await supabase
+            .from('brands')
+            .select('*')
+            .eq('id', orderData.supplier_id)
+            .single();
+
+          if (brandError) {
+            console.warn('Could not fetch brand details:', brandError);
+          } else if (brandData) {
+            // Populate supplier fields from brand data
+            orderData.supplierName = brandData.name;
+            orderData.address = brandData.address_line1 || '';
+            orderData.city = brandData.city || '';
+            orderData.state = brandData.state || '';
+            orderData.zip = brandData.postal_code || '';
+            orderData.tel1 = brandData.phone_primary || '';
+            orderData.tel2 = brandData.phone_secondary || '';
+            orderData.email = brandData.email || '';
+          }
+        }
 
         // Fetch order line items
         const { data: lineItemsData, error: lineItemsError } = await supabase

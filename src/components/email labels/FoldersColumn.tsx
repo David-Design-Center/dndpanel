@@ -310,18 +310,12 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
       
       const systemLabelId = systemLabelIdMap[folder.name];
       if (systemLabelId) {
-        if (systemLabelId === 'INBOX') {
-          // For Inbox, always use the 24h filtered count (inboxUnreadToday)
-          // This matches what users see in the email list (last 24h only)
-          unreadCount = recentCounts.inboxUnreadToday || 0;
-          overLimit = recentCounts.inboxUnreadOverLimit || false;
-        } else {
-          // For other system folders, use the total unread count
-          const systemCount = systemCounts[systemLabelId];
-          const fallbackCount = matchingLabel?.messagesUnread ?? 0;
-          unreadCount = systemCount ?? fallbackCount;
-          overLimit = unreadCount > 99;
-        }
+        // Use the system count from Gmail labels for ALL folders (including Inbox)
+        // This ensures consistency: what Gmail says = what we show
+        const systemCount = systemCounts[systemLabelId];
+        const fallbackCount = matchingLabel?.messagesUnread ?? 0;
+        unreadCount = systemCount ?? fallbackCount;
+        overLimit = unreadCount > 99;
       }
 
       // Debug logging

@@ -10,9 +10,10 @@ import { Email } from '../../types';
 interface AnimatedThreeColumnLayoutProps {
   children: React.ReactNode;
   onEmailUpdate?: (email: Email) => void;
+  onEmailDelete?: (emailId: string) => void;
 }
 
-function AnimatedThreeColumnLayout({ children, onEmailUpdate }: AnimatedThreeColumnLayoutProps) {
+function AnimatedThreeColumnLayout({ children, onEmailUpdate, onEmailDelete }: AnimatedThreeColumnLayoutProps) {
   const panelGroupRef = useRef<any>(null);
   const { id: emailId } = useParams<{ id: string }>();
   const { 
@@ -199,9 +200,10 @@ function AnimatedThreeColumnLayout({ children, onEmailUpdate }: AnimatedThreeCol
                 </div>
               ) : (
                 <FoldersColumn 
-                  isExpanded={!isFoldersCollapsed} 
-                  onToggle={toggleFolders}
-                />
+                      isExpanded={!isFoldersCollapsed}
+                      onToggle={toggleFolders} onCompose={function (): void {
+                        throw new Error('Function not implemented.');
+                      } }                />
               )}
             </motion.div>
           </ResizablePanel>
@@ -260,6 +262,7 @@ function AnimatedThreeColumnLayout({ children, onEmailUpdate }: AnimatedThreeCol
                   <EmbeddedViewEmail 
                     emailId={selectedEmailId} 
                     onEmailUpdate={onEmailUpdate}
+                    onEmailDelete={onEmailDelete}
                   />
                 </div>
               ) : (

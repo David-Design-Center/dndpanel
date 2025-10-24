@@ -7,12 +7,26 @@ export interface Brand {
   name: string;
   created_at: string;
   user_id: string | null; // Allow null for default brands
+  // Vendor/supplier contact info
+  email?: string;
+  phonePrimary?: string;
+  phoneSecondary?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  country?: string;
+  notes?: string;
+  companyName?: string;
+  updatedAt?: string;
 }
 
 interface BrandContextType {
   brands: Brand[];
   loadingBrands: boolean;
-  addBrand: (name: string) => Promise<void>;
+  addBrand: (name: string, vendorInfo?: Partial<Brand>) => Promise<void>;
+  updateBrand: (id: string, updates: Partial<Brand>) => Promise<Brand>;
   isAddingBrand: boolean;
   addBrandError: string | null;
   refreshBrands: () => Promise<void>;
@@ -62,8 +76,21 @@ export function BrandProvider({ children }: { children: React.ReactNode }) {
 
       if (error) throw error;
       
-      setBrands(data || []);
-      console.log('BrandContext - brands set to:', data || []);
+      // Transform snake_case to camelCase
+      const transformedBrands = (data || []).map(brand => ({
+        ...brand,
+        phonePrimary: brand.phone_primary,
+        phoneSecondary: brand.phone_secondary,
+        addressLine1: brand.address_line1,
+        addressLine2: brand.address_line2,
+        postalCode: brand.postal_code,
+        companyName: brand.company_name,
+        createdAt: brand.created_at,
+        userId: brand.user_id
+      }));
+      
+      setBrands(transformedBrands);
+      console.log('BrandContext - brands set to:', transformedBrands);
     } catch (error) {
       console.error('Error fetching brands:', error);
       // On error, show hardcoded default brands as fallback
@@ -74,7 +101,7 @@ export function BrandProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const addBrand = async (name: string) => {
+  const addBrand = async (name: string, vendorInfo?: Partial<Brand>) => {
     if (!user) return;
     
     setIsAddingBrand(true);
@@ -90,9 +117,29 @@ export function BrandProvider({ children }: { children: React.ReactNode }) {
         throw new Error('Brand already exists');
       }
 
+      const brandData: any = { 
+        name: name.trim(), 
+        user_id: user.id 
+      };
+
+      // Add optional vendor fields if provided
+      if (vendorInfo) {
+        if (vendorInfo.email) brandData.email = vendorInfo.email;
+        if (vendorInfo.phonePrimary) brandData.phone_primary = vendorInfo.phonePrimary;
+        if (vendorInfo.phoneSecondary) brandData.phone_secondary = vendorInfo.phoneSecondary;
+        if (vendorInfo.addressLine1) brandData.address_line1 = vendorInfo.addressLine1;
+        if (vendorInfo.addressLine2) brandData.address_line2 = vendorInfo.addressLine2;
+        if (vendorInfo.city) brandData.city = vendorInfo.city;
+        if (vendorInfo.state) brandData.state = vendorInfo.state;
+        if (vendorInfo.postalCode) brandData.postal_code = vendorInfo.postalCode;
+        if (vendorInfo.country) brandData.country = vendorInfo.country;
+        if (vendorInfo.notes) brandData.notes = vendorInfo.notes;
+        if (vendorInfo.companyName) brandData.company_name = vendorInfo.companyName;
+      }
+
       const { data, error } = await supabase
         .from('brands')
-        .insert([{ name: name.trim(), user_id: user.id }])
+        .insert([brandData])
         .select()
         .single();
 
@@ -105,6 +152,42 @@ export function BrandProvider({ children }: { children: React.ReactNode }) {
       throw error;
     } finally {
       setIsAddingBrand(false);
+    }
+  };
+
+  const updateBrand = async (id: string, updates: Partial<Brand>) => {
+    try {
+      const updateData: any = {};
+
+      // Map camelCase to snake_case for database
+      if (updates.name !== undefined) updateData.name = updates.name;
+      if (updates.email !== undefined) updateData.email = updates.email;
+      if (updates.phonePrimary !== undefined) updateData.phone_primary = updates.phonePrimary;
+      if (updates.phoneSecondary !== undefined) updateData.phone_secondary = updates.phoneSecondary;
+      if (updates.addressLine1 !== undefined) updateData.address_line1 = updates.addressLine1;
+      if (updates.addressLine2 !== undefined) updateData.address_line2 = updates.addressLine2;
+      if (updates.city !== undefined) updateData.city = updates.city;
+      if (updates.state !== undefined) updateData.state = updates.state;
+      if (updates.postalCode !== undefined) updateData.postal_code = updates.postalCode;
+      if (updates.country !== undefined) updateData.country = updates.country;
+      if (updates.notes !== undefined) updateData.notes = updates.notes;
+      if (updates.companyName !== undefined) updateData.company_name = updates.companyName;
+
+      const { data, error } = await supabase
+        .from('brands')
+        .update(updateData)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Update local state
+      setBrands(prev => prev.map(b => b.id === id ? data : b));
+      return data;
+    } catch (error) {
+      console.error('Error updating brand:', error);
+      throw error;
     }
   };
 
@@ -121,6 +204,7 @@ export function BrandProvider({ children }: { children: React.ReactNode }) {
       brands,
       loadingBrands,
       addBrand,
+      updateBrand,
       isAddingBrand,
       addBrandError,
       refreshBrands

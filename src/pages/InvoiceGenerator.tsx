@@ -4,6 +4,7 @@ import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { createClient } from '@supabase/supabase-js';
 import CollapsibleSection from '../components/common/CollapsibleSection';
 import BrandDropdown from '../components/common/BrandDropdown';
+import ContactsDropdown from '../components/common/ContactsDropdown';
 import { ItemDropdown } from '../components/common/ItemDropdown';
 import InvoicePrintView, { 
   Invoice, 
@@ -17,6 +18,7 @@ import {
   saveInvoiceToSupabase,
   saveCustomerOrderToSupabase
 } from '../services/backendApi';
+import { fetchContacts, createContact } from '../services/contactsService';
 import { getNextPoNumber } from '../services/poNumberService';
 import { useItems } from '../hooks/useItems';
 import { SupabaseInvoice, SupabaseInvoiceLineItem } from '../types';
@@ -477,6 +479,30 @@ function InvoiceGenerator({ orderId: propOrderId, onClose, isModal = false }: In
       [field]: value
     }));
   };
+
+  // Handle contact selection from ContactsDropdown
+  const handleContactSelect = (contactData: {
+    customerName: string;
+    address: string;
+    city: string;
+    state: string;
+    zip: string;
+    tel1: string;
+    tel2: string;
+    email: string;
+  }) => {
+    setInvoice(prev => ({
+      ...prev,
+      customerName: contactData.customerName,
+      address: contactData.address,
+      city: contactData.city,
+      state: contactData.state,
+      zip: contactData.zip,
+      tel1: contactData.tel1,
+      tel2: contactData.tel2,
+      email: contactData.email
+    }));
+  };
   
   // Save invoice to Supabase
   const saveInvoice = async (): Promise<SupabaseInvoice | null> => {
@@ -555,6 +581,43 @@ function InvoiceGenerator({ orderId: propOrderId, onClose, isModal = false }: In
           // Don't fail the entire save if order creation fails
           // The invoice was saved successfully
         }
+      }
+
+      // Create or update contact if customer information is provided
+      try {
+        if (invoice.customerName) {
+          // Check if contact already exists
+          const existingContacts = await fetchContacts();
+          const contactExists = existingContacts?.some(
+            c => c.fullName.toLowerCase() === invoice.customerName.toLowerCase()
+          );
+
+          if (!contactExists) {
+            console.log('Creating new contact:', invoice.customerName);
+            // Split phone1 and phone2 back to phone format if needed
+            const phone1 = invoice.tel1 ? (invoice.tel2 ? `(${invoice.tel1}) ${invoice.tel2}` : invoice.tel1) : null;
+            
+            const contactData: any = {
+              fullName: invoice.customerName
+            };
+            
+            if (invoice.email) contactData.email = invoice.email;
+            if (phone1) contactData.phone1 = phone1;
+            if (invoice.address) contactData.address = invoice.address;
+            if (invoice.city) contactData.city = invoice.city;
+            if (invoice.state) contactData.state = invoice.state;
+            if (invoice.zip) contactData.zipCode = invoice.zip;
+
+            await createContact(contactData);
+            console.log('Contact created successfully:', invoice.customerName);
+          } else {
+            console.log('Contact already exists:', invoice.customerName);
+          }
+        }
+      } catch (contactError) {
+        console.error('Error creating contact:', contactError);
+        // Don't fail the entire save if contact creation fails
+        // The invoice was saved successfully
       }
       
       return savedInvoice;
@@ -725,12 +788,11 @@ function InvoiceGenerator({ orderId: propOrderId, onClose, isModal = false }: In
             <div className="space-y-3">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Customer Name</label>
-                <input
-                  type="text"
-                  className="w-full px-1 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                <ContactsDropdown
                   value={invoice.customerName}
-                  onChange={(e) => handleInvoiceChange('customerName', e.target.value)}
+                  onChange={handleContactSelect}
                   placeholder="Enter customer name"
+                  className="text-sm"
                 />
               </div>
               

@@ -725,6 +725,7 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
   }, [clearLabelsCache, refreshLabels, currentProfile, isGmailSignedIn, isGmailApiReady]);
 
   // ✅ SYSTEM COUNTS: Clear derivation for system folder badges
+  // Keys should match Gmail system label IDs: INBOX, SENT, DRAFT, TRASH, SPAM, IMPORTANT, STARRED
   const systemCounts = useMemo(() => {
     const map: Record<string, number> = {};
     
@@ -733,6 +734,9 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       
       // Try messagesUnread first, fallback to threadsUnread
       const count = (label as any).messagesUnread ?? (label as any).threadsUnread ?? 0;
+      
+      // Use label.id as key (for system labels, this is INBOX, SENT, DRAFT, TRASH, SPAM, IMPORTANT, STARRED)
+      // For user labels, this is the label ID
       map[label.id] = count;
     }
     
