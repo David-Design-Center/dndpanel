@@ -1,4 +1,4 @@
-import { Inbox, ChevronRight, Clipboard, FileText, Settings, BarChart3, Package, Calendar, Users, GraduationCap } from 'lucide-react';
+import { Inbox, ChevronRight, Clipboard, FileText, Settings, BarChart3, Package, Calendar, Users, GraduationCap, Sofa, Store } from 'lucide-react';
 import { useLocation, Link } from 'react-router-dom';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useProfile } from '../../contexts/ProfileContext';
@@ -242,18 +242,18 @@ function Sidebar({ }: SidebarProps) {
                   </TooltipContent>
                 </Tooltip>
 
-                <TutorialsDialog variant="icon">
-                  <Tooltip delayDuration={300}>
-                    <TooltipTrigger asChild>
+                <Tooltip delayDuration={300}>
+                  <TooltipTrigger asChild>
+                    <TutorialsDialog variant="icon">
                       <div className="flex items-center justify-center p-2 text-sm font-medium transition-all duration-200 rounded-xl text-gray-600 hover:bg-white hover:shadow-md cursor-pointer">
                         <GraduationCap size={16} className="text-indigo-500" />
                       </div>
-                    </TooltipTrigger>
-                    <TooltipContent side="right" className="bg-gray-800 text-white border-gray-700">
-                      <p>Tutorials</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TutorialsDialog>
+                    </TutorialsDialog>
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="bg-gray-800 text-white border-gray-700">
+                    <p>Tutorials</p>
+                  </TooltipContent>
+                </Tooltip>
               </>
             ) : (
               /* Expanded versions */
@@ -266,7 +266,7 @@ function Sidebar({ }: SidebarProps) {
                       : 'text-gray-600 hover:bg-white hover:shadow-md'
                   }`}
                 >
-                  <span className="mr-3 flex-shrink-0"><Clipboard size={20} className="text-orange-500"/></span>
+                  <span className="mr-3 flex-shrink-0"><Store size={20} className="text-orange-500"/></span>
                   <span className="truncate">Vendor Orders</span>
                 </Link>
                 
