@@ -2252,7 +2252,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   }
 
   return (
-    <ThreeColumnLayout onEmailUpdate={handleEmailUpdate}>
+    <ThreeColumnLayout onEmailUpdate={handleEmailUpdate} onEmailDelete={handleEmailDelete}>
       <div className="h-full flex flex-col min-h-0">
         {/* Search Bar - Always Visible */}
         <div className="flex-shrink-0 bg-[#F9FAFB] border-b border-gray-200 p-2.5 space-y-3">

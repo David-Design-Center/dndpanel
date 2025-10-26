@@ -10,6 +10,7 @@ import {
   sendReply, 
   sendReplyAll, 
   sendEmail, 
+  markAsRead,
   markAsUnread, 
   markAsImportant,
   markAsUnimportant,
@@ -251,16 +252,27 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     }
   };
 
-  const handleTrash = async () => {
+  const handleTrash = async (e?: React.MouseEvent) => {
+    e?.stopPropagation();
     if (!email) return;
     
+    console.log(`🗑️ Moving email ${email.id} to trash`);
+    
+    // ⚡ INSTANT: Navigate away immediately (user expects to leave this view)
+    clearSelection();
+    navigate('/inbox');
+    
+    // ⚡ INSTANT: Notify parent immediately to remove from list
+    onEmailDelete?.(email.id);
+    
+    // Show toast
+    toast({ title: 'Moved to trash' });
+    
+    // 🔄 BACKGROUND: Update on server
     try {
       await markEmailAsTrash(email.id);
-      toast({ title: 'Moved to trash' });
-      onEmailDelete?.(email.id);
-      clearSelection();
-      navigate('/inbox');
     } catch (err) {
+      console.error('Failed to move to trash:', err);
       toast({ 
         title: 'Failed to move to trash',
         variant: 'destructive'
@@ -268,16 +280,27 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     }
   };
 
-  const handleMarkAsSpam = async () => {
+  const handleMarkAsSpam = async (e?: React.MouseEvent) => {
+    e?.stopPropagation();
     if (!email) return;
     
+    console.log(`🚫 Marking email ${email.id} as spam`);
+    
+    // ⚡ INSTANT: Navigate away immediately (user expects to leave this view)
+    clearSelection();
+    navigate('/inbox');
+    
+    // ⚡ INSTANT: Notify parent immediately to remove from list
+    onEmailDelete?.(email.id);
+    
+    // Show toast
+    toast({ title: 'Marked as spam' });
+    
+    // 🔄 BACKGROUND: Update on server
     try {
       await applyLabelsToEmail(email.id, ['SPAM'], ['INBOX']);
-      toast({ title: 'Marked as spam' });
-      onEmailDelete?.(email.id);
-      clearSelection();
-      navigate('/inbox');
     } catch (err) {
+      console.error('Failed to mark as spam:', err);
       toast({ 
         title: 'Failed to mark as spam',
         variant: 'destructive'
@@ -285,75 +308,102 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     }
   };
 
-  const handleMarkAsUnread = async () => {
+  const handleMarkAsUnread = async (e?: React.MouseEvent) => {
+    e?.stopPropagation();
     if (!email) return;
     
+    // Toggle between read and unread
+    const newReadStatus = !email.isRead;
+    
+    console.log(`🔄 Toggling read status: ${email.isRead} → ${newReadStatus}`);
+    
+    // ⚡ INSTANT: Update local state immediately (optimistic update)
+    const updatedEmail = {
+      ...email,
+      isRead: newReadStatus,
+      labelIds: newReadStatus 
+        ? email.labelIds?.filter(id => id !== 'UNREAD') 
+        : [...(email.labelIds || []), 'UNREAD']
+    };
+    
+    setEmail(updatedEmail);
+    
+    // ⚡ INSTANT: Notify parent component to update email list immediately
+    if (onEmailUpdate) {
+      onEmailUpdate(updatedEmail);
+    }
+    
+    // Show appropriate toast
+    toast({ title: newReadStatus ? 'Marked as read' : 'Marked as unread' });
+    
+    // 🔄 BACKGROUND: Update on server
     try {
-      await markAsUnread(email.id);
-      toast({ title: 'Marked as unread' });
-      
-      // Update local email state immediately for instant UI feedback
-      setEmail(prev => prev ? {
-        ...prev,
-        isRead: false,
-        labelIds: prev.labelIds?.includes('UNREAD') ? prev.labelIds : [...(prev.labelIds || []), 'UNREAD']
-      } : null);
-      
-      // Notify parent component to update email list
-      if (onEmailUpdate) {
-        onEmailUpdate({
-          ...email,
-          isRead: false,
-          labelIds: email.labelIds?.includes('UNREAD') ? email.labelIds : [...(email.labelIds || []), 'UNREAD']
-        });
+      if (newReadStatus) {
+        await markAsRead(email.id);
+      } else {
+        await markAsUnread(email.id);
       }
-      
       // Refresh from server to ensure consistency
       await fetchEmailAndThread();
     } catch (err) {
+      console.error('Failed to update read status:', err);
+      // Revert on error
+      setEmail(email);
+      if (onEmailUpdate) {
+        onEmailUpdate(email);
+      }
       toast({ 
-        title: 'Failed to mark as unread',
+        title: 'Failed to update read status',
         variant: 'destructive'
       });
     }
   };
 
-  const handleToggleImportant = async () => {
+  const handleToggleImportant = async (e?: React.MouseEvent) => {
+    e?.stopPropagation();
     if (!email) return;
     
     const isImportant = email.labelIds?.includes('IMPORTANT');
+    const newImportantStatus = !isImportant;
     
+    console.log(`🚩 Toggling important: ${isImportant} → ${newImportantStatus}`);
+    
+    // ⚡ INSTANT: Update local state immediately
+    const updatedLabelIds = newImportantStatus 
+      ? [...(email.labelIds || []), 'IMPORTANT']
+      : email.labelIds?.filter(id => id !== 'IMPORTANT') || [];
+    
+    const updatedEmail = {
+      ...email,
+      isImportant: newImportantStatus,
+      labelIds: updatedLabelIds
+    };
+    
+    setEmail(updatedEmail);
+    
+    // ⚡ INSTANT: Notify parent component
+    if (onEmailUpdate) {
+      onEmailUpdate(updatedEmail);
+    }
+    
+    // Show toast
+    toast({ title: newImportantStatus ? 'Marked as important' : 'Removed from important' });
+    
+    // 🔄 BACKGROUND: Update on server
     try {
-      if (isImportant) {
-        await markAsUnimportant(email.id);
-        toast({ title: 'Removed from important' });
-      } else {
+      if (newImportantStatus) {
         await markAsImportant(email.id);
-        toast({ title: 'Marked as important' });
+      } else {
+        await markAsUnimportant(email.id);
       }
-      
-      // Update local state immediately
-      const updatedLabelIds = isImportant 
-        ? email.labelIds?.filter(id => id !== 'IMPORTANT')
-        : [...(email.labelIds || []), 'IMPORTANT'];
-      
-      setEmail(prev => prev ? {
-        ...prev,
-        isImportant: !isImportant,
-        labelIds: updatedLabelIds
-      } : null);
-      
-      // Notify parent component
-      if (onEmailUpdate) {
-        onEmailUpdate({
-          ...email,
-          isImportant: !isImportant,
-          labelIds: updatedLabelIds
-        });
-      }
-      
       await fetchEmailAndThread();
     } catch (err) {
+      console.error('Failed to update important status:', err);
+      // Revert on error
+      setEmail(email);
+      if (onEmailUpdate) {
+        onEmailUpdate(email);
+      }
       toast({ 
         title: 'Failed to update important status',
         variant: 'destructive'
@@ -361,42 +411,51 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     }
   };
 
-  const handleToggleStarred = async () => {
+  const handleToggleStarred = async (e?: React.MouseEvent) => {
+    e?.stopPropagation();
     if (!email) return;
     
     const isStarred = email.labelIds?.includes('STARRED');
+    const newStarredStatus = !isStarred;
     
+    console.log(`⭐ Toggling starred: ${isStarred} → ${newStarredStatus}`);
+    
+    // ⚡ INSTANT: Update local state immediately
+    const updatedLabelIds = newStarredStatus 
+      ? [...(email.labelIds || []), 'STARRED']
+      : email.labelIds?.filter(id => id !== 'STARRED') || [];
+    
+    const updatedEmail = {
+      ...email,
+      isStarred: newStarredStatus,
+      labelIds: updatedLabelIds
+    };
+    
+    setEmail(updatedEmail);
+    
+    // ⚡ INSTANT: Notify parent component
+    if (onEmailUpdate) {
+      onEmailUpdate(updatedEmail);
+    }
+    
+    // Show toast
+    toast({ title: newStarredStatus ? 'Added star' : 'Removed star' });
+    
+    // 🔄 BACKGROUND: Update on server
     try {
-      if (isStarred) {
-        await markAsUnstarred(email.id);
-        toast({ title: 'Removed star' });
-      } else {
+      if (newStarredStatus) {
         await markAsStarred(email.id);
-        toast({ title: 'Added star' });
+      } else {
+        await markAsUnstarred(email.id);
       }
-      
-      // Update local state immediately
-      const updatedLabelIds = isStarred 
-        ? email.labelIds?.filter(id => id !== 'STARRED')
-        : [...(email.labelIds || []), 'STARRED'];
-      
-      setEmail(prev => prev ? {
-        ...prev,
-        isStarred,
-        labelIds: updatedLabelIds
-      } : null);
-      
-      // Notify parent component
-      if (onEmailUpdate) {
-        onEmailUpdate({
-          ...email,
-          isStarred: !isStarred,
-          labelIds: updatedLabelIds
-        });
-      }
-      
       await fetchEmailAndThread();
     } catch (err) {
+      console.error('Failed to update starred status:', err);
+      // Revert on error
+      setEmail(email);
+      if (onEmailUpdate) {
+        onEmailUpdate(email);
+      }
       toast({ 
         title: 'Failed to update starred status',
         variant: 'destructive'
@@ -788,13 +847,12 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           <button
             onClick={handleMarkAsUnread}
             className="p-2 hover:bg-gray-100 rounded-full transition-colors"
-            title={email?.isRead === false ? "Already unread" : "Mark as unread"}
-            disabled={email?.isRead === false}
+            title={email?.isRead ? "Mark as unread" : "Mark as read"}
           >
-            {email?.isRead === false ? (
-              <MailOpen size={18} className="text-gray-700" />
-            ) : (
+            {email?.isRead ? (
               <Mail size={18} className="text-gray-700" />
+            ) : (
+              <MailOpen size={18} className="text-gray-700" />
             )}
           </button>
           <button
