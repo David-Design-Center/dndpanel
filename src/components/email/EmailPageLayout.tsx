@@ -501,13 +501,27 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
 
       const unreadSinceCutoff = countUnreadSinceCutoff();
       
-      // Load labels separately (1 API call)
-      const labels = await loadLabelsBasic();
+      // 🚀 INSTANT UI: Show emails immediately without waiting for labels
+      console.log(`⚡ INSTANT: Showing ${primaryRecent.length} emails immediately (labels loading in background)`);
       
-      // Show unread emails immediately - this is what users want to see first
-      console.log(`📧 Critical data loaded: ${primaryUnread.length} unread, ${primaryRecent.length} recent, unread last 24h: ${unreadSinceCutoff}, ${labels.length} labels`);
-
-      // Dispatch event to signal unread metadata readiness for recent counts logic
+      const allEmails = Array.from(uniqueAllMap.values());
+      const unreadEmails = Array.from(uniqueUnreadMap.values());
+      
+      // Set emails BEFORE labels load - this gives instant UI
+      setAllTabEmails(prev => ({
+        ...prev,
+        all: allEmails,
+        unread: unreadEmails
+      }));
+      setTabLoaded(prev => ({
+        ...prev,
+        all: true,
+        unread: true
+      }));
+      setLoading(false); // ⚡ INSTANT: Stop loading immediately
+      setHasEverLoaded(true); // ⚡ INSTANT: Mark as loaded so UI renders
+      
+      // Dispatch event to signal unread metadata readiness
       try {
         window.dispatchEvent(new CustomEvent('unread-metadata-ready', { detail: {
           unreadIds: Array.from(uniqueUnreadMap.keys()),
@@ -518,17 +532,10 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
         console.warn('Failed to dispatch unread-metadata-ready event', e);
       }
       
-      // Reset per-tab storage to avoid stale data when switching tabs
-      setAllTabEmails(prev => ({
-        ...prev,
-        all: Array.from(uniqueAllMap.values()),
-        unread: Array.from(uniqueUnreadMap.values())
-      }));
-      setTabLoaded(prev => ({
-        ...prev,
-        all: true,
-        unread: true
-      }));
+      // Load labels in background (1 API call) - won't block UI
+      const labels = await loadLabelsBasic();
+      console.log(`📧 Background: Labels loaded (${labels.length} labels)`);
+
 
       // Update counts immediately using the API's resultSizeEstimate
       setEmailCounts({

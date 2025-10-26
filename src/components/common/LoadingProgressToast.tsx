@@ -8,6 +8,9 @@ import {
 } from '@/utils/loadingProgress';
 import { toast } from 'sonner';
 
+// ⚠️ FEATURE FLAG: Set to false to disable the "Preparing Workspace" toast
+const ENABLE_LOADING_TOAST = false;
+
 const ORDER: LoadingProgressSource[] = ['inbox', 'labels', 'counters'];
 const TITLES: Record<LoadingProgressSource, string> = {
   inbox: 'Inbox emails (10s)',
@@ -53,6 +56,11 @@ export function LoadingProgressToast() {
 
   // Only show on Inbox page
   const isInboxPage = location.pathname === '/inbox';
+  
+  // ⚠️ DISABLED: Return early if feature flag is off (after hooks to avoid hook order issues)
+  if (!ENABLE_LOADING_TOAST) {
+    return null;
+  }
 
   const handleManualClose = () => {
     if (toastIdRef.current !== null) {

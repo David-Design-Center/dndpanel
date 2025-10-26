@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, Reply, ReplyAll, Forward, Trash, MoreVertical, Star, Paperclip, Download, ChevronLeft, Mail, Flag, MailWarning, Filter, Tag, Search, ChevronRight, Settings, Plus } from 'lucide-react';
+import { X, Reply, ReplyAll, Forward, Trash, MoreVertical, Star, Paperclip, Download, ChevronLeft, Mail, MailOpen, Flag, MailWarning, Filter, Tag, Search, ChevronRight, Settings, Plus } from 'lucide-react';
 import { parseISO, format, formatDistanceToNow } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
@@ -94,7 +94,7 @@ const formatFileSize = (bytes: number): string => {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 };
 
-function EmbeddedViewEmailClean({ emailId, onEmailDelete }: EmbeddedViewEmailProps) {
+function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: EmbeddedViewEmailProps) {
   const [email, setEmail] = useState<Email | null>(null);
   const [threadMessages, setThreadMessages] = useState<Email[]>([]);
   const [loading, setLoading] = useState(true);
@@ -291,7 +291,24 @@ function EmbeddedViewEmailClean({ emailId, onEmailDelete }: EmbeddedViewEmailPro
     try {
       await markAsUnread(email.id);
       toast({ title: 'Marked as unread' });
-      // Optionally refresh the email
+      
+      // Update local email state immediately for instant UI feedback
+      setEmail(prev => prev ? {
+        ...prev,
+        isRead: false,
+        labelIds: prev.labelIds?.includes('UNREAD') ? prev.labelIds : [...(prev.labelIds || []), 'UNREAD']
+      } : null);
+      
+      // Notify parent component to update email list
+      if (onEmailUpdate) {
+        onEmailUpdate({
+          ...email,
+          isRead: false,
+          labelIds: email.labelIds?.includes('UNREAD') ? email.labelIds : [...(email.labelIds || []), 'UNREAD']
+        });
+      }
+      
+      // Refresh from server to ensure consistency
       await fetchEmailAndThread();
     } catch (err) {
       toast({ 
@@ -314,6 +331,27 @@ function EmbeddedViewEmailClean({ emailId, onEmailDelete }: EmbeddedViewEmailPro
         await markAsImportant(email.id);
         toast({ title: 'Marked as important' });
       }
+      
+      // Update local state immediately
+      const updatedLabelIds = isImportant 
+        ? email.labelIds?.filter(id => id !== 'IMPORTANT')
+        : [...(email.labelIds || []), 'IMPORTANT'];
+      
+      setEmail(prev => prev ? {
+        ...prev,
+        isImportant: !isImportant,
+        labelIds: updatedLabelIds
+      } : null);
+      
+      // Notify parent component
+      if (onEmailUpdate) {
+        onEmailUpdate({
+          ...email,
+          isImportant: !isImportant,
+          labelIds: updatedLabelIds
+        });
+      }
+      
       await fetchEmailAndThread();
     } catch (err) {
       toast({ 
@@ -336,6 +374,27 @@ function EmbeddedViewEmailClean({ emailId, onEmailDelete }: EmbeddedViewEmailPro
         await markAsStarred(email.id);
         toast({ title: 'Added star' });
       }
+      
+      // Update local state immediately
+      const updatedLabelIds = isStarred 
+        ? email.labelIds?.filter(id => id !== 'STARRED')
+        : [...(email.labelIds || []), 'STARRED'];
+      
+      setEmail(prev => prev ? {
+        ...prev,
+        isStarred,
+        labelIds: updatedLabelIds
+      } : null);
+      
+      // Notify parent component
+      if (onEmailUpdate) {
+        onEmailUpdate({
+          ...email,
+          isStarred: !isStarred,
+          labelIds: updatedLabelIds
+        });
+      }
+      
       await fetchEmailAndThread();
     } catch (err) {
       toast({ 
@@ -729,9 +788,14 @@ function EmbeddedViewEmailClean({ emailId, onEmailDelete }: EmbeddedViewEmailPro
           <button
             onClick={handleMarkAsUnread}
             className="p-2 hover:bg-gray-100 rounded-full transition-colors"
-            title="Mark as unread"
+            title={email?.isRead === false ? "Already unread" : "Mark as unread"}
+            disabled={email?.isRead === false}
           >
-            <Mail size={18} className="text-gray-700" />
+            {email?.isRead === false ? (
+              <MailOpen size={18} className="text-gray-700" />
+            ) : (
+              <Mail size={18} className="text-gray-700" />
+            )}
           </button>
           <button
             onClick={handleMarkAsSpam}
