@@ -106,25 +106,24 @@ function Settings() {
                   </span>
                 </div>
               </div>
-            </div>
-            
+            </div> 
             {isGmailSignedIn ? (
               <button 
                 onClick={handleSignOutGmail}
-                className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 rounded text-xs font-medium transition-colors"
+                className="px-5 py-2.5 bg-red-50 hover:bg-red-100 text-red-700 rounded-md text-sm font-semibold transition-colors animate-pulse"
               >
                 Disconnect
               </button>
             ) : (
               <button 
                 onClick={handleSignInGmail}
-                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-medium transition-colors"
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-semibold transition-colors animate-pulse"
                 disabled={!currentProfile}
               >
                 Connect
               </button>
             )}
-          </div>
+          </div>  
           
           <p className="text-xs text-gray-600">
             {isGmailSignedIn 

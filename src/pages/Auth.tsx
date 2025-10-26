@@ -91,7 +91,6 @@ function Auth() {
       <section className='flex max-lg:justify-center h-screen'>
         {/* Left Side - Animated Background */}
         <span className='flex flex-col justify-center w-1/2 max-lg:hidden relative overflow-hidden'>
-          <Ripple mainCircleSize={100} />
           <TechOrbitDisplay 
             iconsArray={businessIconsArray} 
             logoUrl="https://res.cloudinary.com/designcenter/image/upload/DnD_Logo_Transparent.svg"

@@ -101,6 +101,8 @@ const FilterItem = memo(({
 
   const getFilterAction = (filter: any) => {
     const action = filter.action;
+    if (!action) return 'No action';
+    
     const actions = [];
     if (action.delete) actions.push('Delete it');
     if (action.markAsRead) actions.push('Mark as read');

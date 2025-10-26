@@ -242,6 +242,11 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
         // Wait for Gmail initialization to complete
         await initGmail(profileToSelect);
         
+        // Start automatic token refresh scheduler
+        const { startTokenRefreshScheduler } = await import('../integrations/gapiService');
+        startTokenRefreshScheduler();
+        console.log('✅ Token refresh scheduler started for profile:', profileToSelect.name);
+        
         // CRITICAL: Mark auth flow as completed after successful profile selection
         // This allows all data contexts to start fetching
         setAuthFlowCompleted(true);
@@ -334,6 +339,12 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     setCurrentProfile(null);
     sessionStorage.removeItem('selectedProfileId');
     sessionStorage.removeItem('currentProfileId');
+    
+    // Stop token refresh scheduler
+    import('../integrations/gapiService').then(({ stopTokenRefreshScheduler }) => {
+      stopTokenRefreshScheduler();
+      console.log('🛑 Token refresh scheduler stopped (profile cleared)');
+    });
     
     // Clear user email from global storage
     (window as any)._currentProfileEmail = null;

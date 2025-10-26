@@ -688,7 +688,7 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
               </div>
 
               {/* Write Email Button */}
-              <div className="p-3 border-b border-gray-200 bg-white">
+              <div className="p-3 bg-white">
                 <button
                   onClick={handleCompose}
                   disabled={!isGmailSignedIn}
@@ -768,14 +768,14 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
                   </div>
 
               {/* Combined Search & Create Section */}
-              <div className="p-3 pb-0 border-t border-gray-200 bg-white">
+              <div className="p-3 pt-0 pb-0 bg-white">
                 <div className="relative">
-                  <Search size={14} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                  <Search size={14} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-600" />
                   <Input
-                    placeholder="Search folders..."
+                    placeholder=""
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-8 pr-12 text-xs h-8 border-gray-200"
+                    className="pl-8 pr-12 text-xs h-8 border-gray-400"
                   />
                   {searchTerm ? (
                     <button
@@ -795,7 +795,7 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
                         className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded p-0.5 transition-colors"
                         title="Create new folder"
                       >
-                        <Plus size={14} />
+                        <Plus size={14} className="text-gray-600" />
                       </button>
                     </DialogTrigger>
                     <DialogContent className="sm:max-w-[425px]">

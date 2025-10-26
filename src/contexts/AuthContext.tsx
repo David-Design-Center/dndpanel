@@ -10,7 +10,6 @@ import {
 } from '../integrations/gapiService';
 import { fetchGmailAccessToken } from '../lib/gmail';
 import { authCoordinator } from '../utils/authCoordinator';
-import { tokenRefreshManager } from '../utils/tokenRefreshManager';
 
 interface AuthContextType {
   user: User | null;
@@ -100,10 +99,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (accessToken) {
           // Set the new access token in the gapi client (expires in 1 hour by default)
           setAccessToken(accessToken, 3600);
-          
-          // Initialize token refresh manager for background refresh
-          tokenRefreshManager.setCurrentUser(userEmail);
-          tokenRefreshManager.initializeTokenRefresh(accessToken);
           
           setIsGmailApiReady(true);
           return true;
@@ -469,9 +464,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (isGmailSignedIn) {
         await signOutFromGmail();
       }
-
-      // Clean up token refresh manager
-      tokenRefreshManager.destroy();
       
       // Sign out from Supabase
       await supabase.auth.signOut();

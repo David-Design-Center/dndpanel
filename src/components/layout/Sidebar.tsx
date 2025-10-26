@@ -144,7 +144,7 @@ function Sidebar({ }: SidebarProps) {
                           : 'text-gray-600 hover:bg-white hover:shadow-md'
                       }`}
                     >
-                      <Clipboard size={16} className="text-orange-500"/>
+                      <Store size={16} className="text-orange-500"/>
                     </Link>
                   </TooltipTrigger>
                   <TooltipContent side="right" className="bg-gray-800 text-white border-gray-700">

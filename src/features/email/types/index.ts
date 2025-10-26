@@ -5,9 +5,9 @@
 
 import { Email } from '../../../types';
 
-export type TabName = 'all' | 'unread' | 'sent' | 'drafts' | 'trash' | 'important' | 'starred' | 'spam' | 'archive' | 'allmail';
+export type TabName = 'all' | 'unread' | 'sent' | 'drafts' | 'trash' | 'important' | 'starred' | 'spam' | 'allmail';
 export type CategoryName = 'primary' | 'updates' | 'promotions' | 'social';
-export type FolderType = 'all' | 'archive' | 'spam' | 'trash';
+export type FolderType = 'all' | 'spam' | 'trash';
 
 /**
  * Tab configuration - defines what each tab represents

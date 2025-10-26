@@ -1,3 +1,20 @@
+/**
+ * ⚠️ CURRENTLY DISABLED - This edge function is temporarily disabled
+ * 
+ * ISSUES FOUND:
+ * 1. Destroys email styling - strips CSS and inline styles
+ * 2. Character encoding problems - double-encoding creates artifacts
+ * 3. Performance overhead - adds 200-500ms latency vs direct Gmail API
+ * 4. Complexity - 693 lines of manual MIME parsing that Gmail already handles
+ * 
+ * KEEPING FOR REFERENCE - May be useful in future if:
+ * - Need server-side caching
+ * - Need to proxy images for security
+ * - Need batch processing optimization
+ * 
+ * Current approach: Direct Gmail API calls from frontend with DOMPurify sanitization
+ */
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 // Helper function to decode base64url

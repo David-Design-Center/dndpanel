@@ -1,9 +1,9 @@
 import { supabase } from '@/lib/supabase';
 import { getCurrentAccessToken } from '@/integrations/gapiService';
-import { tokenRefreshManager } from '@/utils/tokenRefreshManager';
 import { fetchGmailAccessToken } from '@/lib/gmail';
 import type { Email } from '@/types';
 
+/* COMMENTED OUT - Interface for edge function
 interface ProcessedEmail {
   id: string;
   threadId: string;
@@ -23,20 +23,13 @@ interface ProcessedEmail {
   }>;
   hasInlineImages: boolean;
 }
+*/
 
 /**
  * Get the current Gmail access token, or fetch a fresh one using domain-wide delegation
  */
 async function getAccessToken(userEmail?: string): Promise<string | null> {
-  // First try to get the cached token from token manager
-  const cachedToken = tokenRefreshManager.getToken();
-  
-  if (cachedToken) {
-    console.log('✅ Using cached token from tokenRefreshManager');
-    return cachedToken;
-  }
-
-  // Then try to get the current token from gapi client
+  // Try to get the current token from gapi client
   const currentToken = getCurrentAccessToken();
   
   if (currentToken) {
@@ -62,10 +55,15 @@ async function getAccessToken(userEmail?: string): Promise<string | null> {
 /**
  * Optimized email fetching service that uses server-side processing
  * via Supabase Edge Functions to avoid client-side bottlenecks
+ * 
+ * ⚠️ CURRENTLY DISABLED - Edge function was causing styling/encoding issues
+ * Keeping code for future reference if needed
  */
-export class OptimizedEmailService {  /**
+export class OptimizedEmailService {
+  /* COMMENTED OUT - Helper method for edge function
+  /**
    * Convert ProcessedEmail to Email type for compatibility
-   */
+   *
   private convertToEmailType(processed: ProcessedEmail): Email {
     return {
       id: processed.id,
@@ -94,6 +92,7 @@ export class OptimizedEmailService {  /**
       threadId: processed.threadId,
     };
   }
+  */
 
   /**
    * Fetch a single email thread using the optimized server-side processing
@@ -102,9 +101,16 @@ export class OptimizedEmailService {  /**
    * @param userEmail - User email for token generation (optional)
    * @returns Promise<Email[]> - Array of emails in the thread
    */
-  async fetchEmailThread(threadId: string, userEmail?: string): Promise<Email[]> {
-    console.log(`🚀 OptimizedEmailService: Fetching thread ${threadId} via server-side processing`);
+  async fetchEmailThread(threadId: string, _userEmail?: string): Promise<Email[]> {
+    console.log(`🚀 OptimizedEmailService: Fetching thread ${threadId}`);
     
+    // ⚠️ EDGE FUNCTION TEMPORARILY DISABLED - Using direct Gmail API instead
+    // The edge function was causing styling issues and character encoding problems
+    // Keeping it commented for future reference
+    console.log('⚠️ Edge function disabled - falling back to direct Gmail API');
+    throw new Error('Edge function disabled - use fallback to getThreadEmails()');
+    
+    /* COMMENTED OUT - Edge function call
     try {
       const accessToken = await getAccessToken(userEmail);
       if (!accessToken) {
@@ -143,6 +149,7 @@ export class OptimizedEmailService {  /**
       console.error('❌ Error in fetchEmailThread:', error);
       throw error;
     }
+    */
   }
 
   /**
@@ -152,9 +159,14 @@ export class OptimizedEmailService {  /**
    * @param userEmail - User email for token generation (optional)
    * @returns Promise<Email> - The processed email
    */
-  async fetchSingleEmail(messageId: string, userEmail?: string): Promise<Email> {
-    console.log(`🚀 OptimizedEmailService: Fetching message ${messageId} via server-side processing`);
+  async fetchSingleEmail(messageId: string, _userEmail?: string): Promise<Email> {
+    console.log(`🚀 OptimizedEmailService: Fetching message ${messageId}`);
     
+    // ⚠️ EDGE FUNCTION TEMPORARILY DISABLED - Using direct Gmail API instead
+    console.log('⚠️ Edge function disabled - falling back to direct Gmail API');
+    throw new Error('Edge function disabled - use fallback to getEmailById()');
+    
+    /* COMMENTED OUT - Edge function call
     try {
       const accessToken = await getAccessToken(userEmail);
       if (!accessToken) {
@@ -189,6 +201,7 @@ export class OptimizedEmailService {  /**
       console.error('Error in fetchSingleEmail:', error);
       throw error;
     }
+    */
   }
 
   /**

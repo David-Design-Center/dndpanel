@@ -24,7 +24,8 @@ import {
   X,
   Trash2,
   Mail,
-  MailOpen
+  MailOpen,
+  MessageSquareWarning
 } from 'lucide-react';
 import { type SearchSuggestion } from '../../services/searchService';
 import EmailListItem from './EmailListItem';
@@ -42,7 +43,6 @@ import {
   getImportantEmails,
   getStarredEmails,
   getSpamEmails,
-  getArchiveEmails,
   getAllMailEmails,
   getLabelEmails,
   deleteEmail,
@@ -160,7 +160,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   const [searchSuggestions, setSearchSuggestions] = useState<SearchSuggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
-  const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'sent' | 'drafts' | 'trash' | 'important' | 'starred' | 'spam' | 'archive' | 'allmail'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'sent' | 'drafts' | 'trash' | 'important' | 'starred' | 'spam' | 'allmail'>('all');
   const [hasEverLoaded, setHasEverLoaded] = useState(false); // Track if we've ever successfully loaded
   // Inbox split view mode: show Unread and Everything Else side-by-side vertically, or expand one
   const [inboxViewMode, setInboxViewMode] = useState<'split' | 'unread' | 'read'>('split');
@@ -304,7 +304,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   const [hasMoreEmails, setHasMoreEmails] = useState(false);
 
   // Email storage for each tab type - always maintained separately
-  type TabKey = 'all' | 'unread' | 'sent' | 'drafts' | 'trash' | 'important' | 'starred' | 'spam' | 'archive' | 'allmail';
+  type TabKey = 'all' | 'unread' | 'sent' | 'drafts' | 'trash' | 'important' | 'starred' | 'spam' | 'allmail';
 
   const [allTabEmails, setAllTabEmails] = useState<Record<TabKey, Email[]>>({
     all: [] as Email[],
@@ -315,7 +315,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     important: [] as Email[],
     starred: [] as Email[],
     spam: [] as Email[],
-    archive: [] as Email[],
     allmail: [] as Email[]
   });
 
@@ -328,19 +327,12 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     important: false,
     starred: false,
     spam: false,
-    archive: false,
     allmail: false,
   });
 
   // Category email storage for each folder context
   const [categoryEmails, setCategoryEmails] = useState({
     all: {
-      primary: [] as Email[],
-      updates: [] as Email[],
-      promotions: [] as Email[],
-      social: [] as Email[]
-    },
-    archive: {
       primary: [] as Email[],
       updates: [] as Email[],
       promotions: [] as Email[],
@@ -369,20 +361,13 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     trash: undefined as string | undefined,
     important: undefined as string | undefined,
     starred: undefined as string | undefined,
-  spam: undefined as string | undefined,
-    archive: undefined as string | undefined,
+    spam: undefined as string | undefined,
     allmail: undefined as string | undefined
   });
 
   // Category page tokens for each folder context
   const [categoryPageTokens, setCategoryPageTokens] = useState({
     all: {
-      primary: undefined as string | undefined,
-      updates: undefined as string | undefined,
-      promotions: undefined as string | undefined,
-      social: undefined as string | undefined
-    },
-    archive: {
       primary: undefined as string | undefined,
       updates: undefined as string | undefined,
       promotions: undefined as string | undefined,
@@ -412,19 +397,12 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     important: false,
     starred: false,
     spam: false,
-    archive: false,
     allmail: false
   });
 
   // Has more category emails for each folder context
   const [hasMoreCategoryEmails, setHasMoreCategoryEmails] = useState({
     all: {
-      primary: false,
-      updates: false,
-      promotions: false,
-      social: false
-    },
-    archive: {
       primary: false,
       updates: false,
       promotions: false,
@@ -660,14 +638,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
         getCategoryEmailsForFolder('social', 'all', forceRefresh, 15, undefined, currentFilters)
       ]);
 
-      // Fetch categories for archive context
-      const [primaryArchive, updatesArchive, promotionsArchive, socialArchive] = await Promise.all([
-        getCategoryEmailsForFolder('primary', 'archive', forceRefresh, 15, undefined, currentFilters),
-        getCategoryEmailsForFolder('updates', 'archive', forceRefresh, 15, undefined, currentFilters),
-        getCategoryEmailsForFolder('promotions', 'archive', forceRefresh, 15, undefined, currentFilters),
-        getCategoryEmailsForFolder('social', 'archive', forceRefresh, 15, undefined, currentFilters)
-      ]);
-
       // Fetch categories for spam context
       const [primarySpam, updatesSpam, promotionsSpam, socialSpam] = await Promise.all([
         getCategoryEmailsForFolder('primary', 'spam', forceRefresh, 15, undefined, currentFilters),
@@ -692,12 +662,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
           promotions: promotionsInbox.emails || [],
           social: socialInbox.emails || []
         },
-        archive: {
-          primary: primaryArchive.emails || [],
-          updates: updatesArchive.emails || [],
-          promotions: promotionsArchive.emails || [],
-          social: socialArchive.emails || []
-        },
         spam: {
           primary: primarySpam.emails || [],
           updates: updatesSpam.emails || [],
@@ -720,12 +684,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
           promotions: promotionsInbox.nextPageToken,
           social: socialInbox.nextPageToken
         },
-        archive: {
-          primary: primaryArchive.nextPageToken,
-          updates: updatesArchive.nextPageToken,
-          promotions: promotionsArchive.nextPageToken,
-          social: socialArchive.nextPageToken
-        },
         spam: {
           primary: primarySpam.nextPageToken,
           updates: updatesSpam.nextPageToken,
@@ -747,12 +705,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
           updates: !!updatesInbox.nextPageToken,
           promotions: !!promotionsInbox.nextPageToken,
           social: !!socialInbox.nextPageToken
-        },
-        archive: {
-          primary: !!primaryArchive.nextPageToken,
-          updates: !!updatesArchive.nextPageToken,
-          promotions: !!promotionsArchive.nextPageToken,
-          social: !!socialArchive.nextPageToken
         },
         spam: {
           primary: !!primarySpam.nextPageToken,
@@ -777,7 +729,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   // Load more category emails for specific category and folder context
   const loadMoreCategoryEmails = async (
     category: 'primary' | 'updates' | 'promotions' | 'social',
-    folderContext: 'all' | 'archive' | 'spam' | 'trash'
+    folderContext: 'all' | 'spam' | 'trash'
   ) => {
     if (!isGmailSignedIn || labelName) return;
 
@@ -1016,27 +968,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
           ...prev,
           spam: !!response.nextPageToken
         }));
-      } else if (tabType === 'archive') {
-        // Load more archive emails using pagination
-        const pageToken = force ? undefined : pageTokens.archive;
-        const response = await getArchiveEmails(force, 20, pageToken);
-        const newEmails = response.emails || [];
-        
-        setAllTabEmails(prev => ({
-          ...prev,
-          archive: [...(force ? [] : prev.archive), ...newEmails]
-        }));
-        setTabLoaded(prev => ({ ...prev, archive: true }));
-
-        setPageTokens(prev => ({
-          ...prev,
-          archive: response.nextPageToken
-        }));
-
-        setHasMoreForTabs(prev => ({
-          ...prev,
-          archive: !!response.nextPageToken
-        }));
       } else if (tabType === 'allmail') {
         // Load more all mail emails using pagination
         const pageToken = force ? undefined : pageTokens.allmail;
@@ -1083,7 +1014,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
        important: [],
        starred: [],
        spam: [],
-       archive: [],
        allmail: []
      });
 
@@ -1096,7 +1026,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
         important: false,
         starred: false,
         spam: false,
-        archive: false,
         allmail: false,
       });
 
@@ -1109,7 +1038,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
         important: undefined,
         starred: undefined,
         spam: undefined,
-        archive: undefined,
         allmail: undefined,
       });
 
@@ -1122,13 +1050,11 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
         important: false,
         starred: false,
         spam: false,
-        archive: false,
         allmail: false,
       });
       
       setCategoryEmails({
         all: { primary: [], updates: [], promotions: [], social: [] },
-        archive: { primary: [], updates: [], promotions: [], social: [] },
         spam: { primary: [], updates: [], promotions: [], social: [] },
         trash: { primary: [], updates: [], promotions: [], social: [] }
       });
@@ -1206,7 +1132,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     if (!isGmailSignedIn) return;
     setRefreshing(true);
     setIsRefreshLoading(true);
-    setAllTabEmails({ all: [], unread: [], sent: [], drafts: [], trash: [], important: [], starred: [], spam: [], archive: [], allmail: [] });
+    setAllTabEmails({ all: [], unread: [], sent: [], drafts: [], trash: [], important: [], starred: [], spam: [], allmail: [] });
     
     if (labelName && effectiveLabelQuery) {
       // For labels, refresh label emails
@@ -1256,7 +1182,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
           case 'allmail':
             await loadMoreForTab(activeTab, { force: true });
             break;
-          case 'archive':
           case 'spam':
           case 'trash':
             await Promise.all([
@@ -1303,8 +1228,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       'trash': 'trash',
       'spam': 'spam', // Use dedicated spam tab
       'starred': 'starred', // Use dedicated starred tab
-      'important': 'important', // Important is separate from starred
-      'archive': 'archive' // Archived emails
+      'important': 'important' // Important is separate from starred
     };
 
     const newTab = folderToTabMap[folderType] || 'all';
@@ -1409,7 +1333,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
           important: prev.important.filter(email => !emailIds.includes(email.id)),
           starred: prev.starred.filter(email => !emailIds.includes(email.id)),
           spam: prev.spam.filter(email => !emailIds.includes(email.id)),
-          archive: prev.archive.filter(email => !emailIds.includes(email.id)),
           allmail: prev.allmail.filter(email => !emailIds.includes(email.id))
         }));
         
@@ -1483,7 +1406,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
           important: updateEmailsReadStatus(prev.important),
           starred: updateEmailsReadStatus(prev.starred),
           spam: updateEmailsReadStatus(prev.spam),
-          archive: updateEmailsReadStatus(prev.archive),
           allmail: updateEmailsReadStatus(prev.allmail)
         }));
         
@@ -1556,7 +1478,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
           important: updateEmailsUnreadStatus(prev.important),
           starred: updateEmailsUnreadStatus(prev.starred),
           spam: updateEmailsUnreadStatus(prev.spam),
-          archive: updateEmailsUnreadStatus(prev.archive),
           allmail: updateEmailsUnreadStatus(prev.allmail)
         }));
         
@@ -1629,11 +1550,9 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     return NaN;
   }, []);
 
-  const supportsCategoryTabs = CATEGORIES_ENABLED && ['all', 'archive', 'spam', 'trash'].includes(activeTab);
-  const folderContextForTab: 'all' | 'archive' | 'spam' | 'trash' = (() => {
+  const supportsCategoryTabs = CATEGORIES_ENABLED && ['all', 'spam', 'trash'].includes(activeTab);
+  const folderContextForTab: 'all' | 'spam' | 'trash' = (() => {
     switch (activeTab) {
-      case 'archive':
-        return 'archive';
       case 'spam':
         return 'spam';
       case 'trash':
@@ -1684,10 +1603,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
         break;
       case 'spam':
         currentEmails = currentEmails.filter(e => hasLabel(e, 'SPAM'));
-        break;
-      case 'archive':
-        // Archive = not in Inbox/Spam/Trash
-        currentEmails = currentEmails.filter(e => !hasLabel(e, 'INBOX') && !hasLabel(e, 'SPAM') && !hasLabel(e, 'TRASH'));
         break;
       case 'allmail':
         // All Mail = exclude Spam/Trash
@@ -1953,7 +1868,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
           important: prev.important.map(e => e.id === updatedEmail.id ? updatedEmail : e),
           starred: prev.starred.map(e => e.id === updatedEmail.id ? updatedEmail : e),
           spam: prev.spam.map(e => e.id === updatedEmail.id ? updatedEmail : e),
-          archive: prev.archive.map(e => e.id === updatedEmail.id ? updatedEmail : e),
           allmail: prev.allmail.map(e => e.id === updatedEmail.id ? updatedEmail : e)
         };
       });
@@ -2038,7 +1952,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
           important: prev.important.filter(email => email.id !== emailId),
           starred: prev.starred.filter(email => email.id !== emailId),
           spam: prev.spam.filter(email => email.id !== emailId),
-          archive: prev.archive.filter(email => email.id !== emailId),
           allmail: prev.allmail.filter(email => email.id !== emailId)
         }));
         
@@ -2307,11 +2220,11 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     return (
       <div className="fade-in">
         <div className="flex items-center justify-between mb-28"></div>
-        <div className="bg-white rounded-lg shadow-sm p-8 text-center">
+        <div className="bg-white rounded-lg shadow-lg mr-8 ml-8 p-4 text-center">
           <div className="max-w-md mx-auto">
             <div className="mb-4">
-              <div className="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Settings className="w-8 h-8 text-yellow-600" />
+              <div className="flex items-center justify-center mx-auto mb-4">
+                <MessageSquareWarning className="w-8 h-8 text-grey-600" />
               </div>
               <h3 className="text-lg font-medium text-gray-900 mb-2">Gmail Not Connected</h3>
               <p className="text-gray-600 mb-6">
@@ -2341,7 +2254,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={15} />
             <input
               type="text"
-              placeholder="Search emails..."
+              placeholder=""
               value={searchQuery}
               onChange={(e) => {
                 handleSearchInput(e.target.value);

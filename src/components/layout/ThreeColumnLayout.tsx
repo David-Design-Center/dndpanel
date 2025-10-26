@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { useInboxLayout } from '../../contexts/InboxLayoutContext';
 import { usePanelSizes } from '../../contexts/PanelSizesContext';
-import EmbeddedViewEmail from '@/components/email/EmbeddedViewEmail';
+import EmbeddedViewEmail from '@/components/email/EmbeddedViewEmailClean';
 import { Email } from '../../types';
 
 interface ThreeColumnLayoutProps {

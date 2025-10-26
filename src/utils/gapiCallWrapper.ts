@@ -5,7 +5,8 @@
  * refresh the token, and retry the request.
  */
 
-import { tokenRefreshManager } from './tokenRefreshManager';
+import { fetchGmailAccessToken } from '../lib/gmail';
+import { setAccessToken } from '../integrations/gapiService';
 
 /**
  * Wrapper for gapi.client.gmail API calls with automatic 401 recovery
@@ -90,11 +91,8 @@ async function attemptTokenRefreshAndRetry(
 
     console.log(`🔄 User email found: ${userEmail}`);
 
-    // Ensure token manager knows about current user
-    tokenRefreshManager.setCurrentUser(userEmail);
-
-    // Force refresh the token
-    const newToken = await tokenRefreshManager.forceRefresh();
+    // Fetch fresh token using domain-wide delegation
+    const newToken = await fetchGmailAccessToken(userEmail);
 
     if (!newToken) {
       console.error('❌ Token refresh failed: no token returned');
@@ -105,7 +103,7 @@ async function attemptTokenRefreshAndRetry(
 
     // Update gapi client with new token
     if (window.gapi?.client) {
-      window.gapi.client.setToken({ access_token: newToken });
+      setAccessToken(newToken, 3600);
       console.log('✅ GAPI client token updated');
     }
 

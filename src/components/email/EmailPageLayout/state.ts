@@ -7,15 +7,15 @@
 import { Email } from '../../../types';
 import { type SearchSuggestion } from '../../../services/searchService';
 
-export type TabKey = 'all' | 'unread' | 'sent' | 'drafts' | 'trash' | 'important' | 'starred' | 'spam' | 'archive' | 'allmail';
+export type TabKey = 'all' | 'unread' | 'sent' | 'drafts' | 'trash' | 'important' | 'starred' | 'spam' | 'allmail';
 export type InboxViewMode = 'split' | 'unread' | 'read';
 export type CategoryName = 'primary' | 'updates' | 'promotions' | 'social';
-export type FolderType = 'all' | 'archive' | 'spam' | 'trash';
+export type FolderType = 'all' | 'spam' | 'trash';
 
 /**
  * Tab configuration - static data about each tab
  */
-export const TAB_KEYS: TabKey[] = ['all', 'unread', 'sent', 'drafts', 'trash', 'important', 'starred', 'spam', 'archive', 'allmail'];
+export const TAB_KEYS: TabKey[] = ['all', 'unread', 'sent', 'drafts', 'trash', 'important', 'starred', 'spam', 'allmail'];
 
 export const INITIAL_TAB_PAGINATION = {
   all: undefined as string | undefined,
@@ -26,7 +26,6 @@ export const INITIAL_TAB_PAGINATION = {
   important: undefined as string | undefined,
   starred: undefined as string | undefined,
   spam: undefined as string | undefined,
-  archive: undefined as string | undefined,
   allmail: undefined as string | undefined,
 };
 
@@ -39,7 +38,6 @@ export const INITIAL_TAB_COUNTS: Record<TabKey, number> = {
   important: 0,
   starred: 0,
   spam: 0,
-  archive: 0,
   allmail: 0,
 };
 

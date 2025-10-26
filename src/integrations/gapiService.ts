@@ -1,6 +1,63 @@
 import { Email, GmailLabel } from '../types';
-import { format } from 'date-fns';
-import { decodeRfc2047 } from '../utils/emailDecoding';
+
+// Import Phase 4 modules (delegated functionality)
+import {
+  fetchGmailMessages as gmailFetchMessages,
+  fetchGmailMessageById as gmailFetchMessageById,
+  fetchLatestMessageInThread as gmailFetchLatestMessageInThread,
+  fetchThreadMessages as gmailFetchThreadMessages,
+} from './gmail/fetch/messages';
+
+import {
+  getAttachmentDownloadUrl as gmailGetAttachmentDownloadUrl,
+} from './gmail/operations/attachments';
+
+import {
+  fetchGmailLabels as gmailFetchLabels,
+  fetchGmailMessagesByLabel as gmailFetchMessagesByLabel,
+  createGmailLabel as gmailCreateLabel,
+  updateGmailLabel as gmailUpdateLabel,
+  deleteGmailLabel as gmailDeleteLabel,
+  applyGmailLabels as gmailApplyLabels,
+} from './gmail/operations/labels';
+
+// Import mutations
+import {
+  markGmailMessageAsTrash as gmailMarkAsTrash,
+  markGmailMessageAsRead as gmailMarkAsRead,
+  markGmailMessageAsUnread as gmailMarkAsUnread,
+  markGmailMessageAsStarred as gmailMarkAsStarred,
+  markGmailMessageAsUnstarred as gmailMarkAsUnstarred,
+  markGmailMessageAsImportant as gmailMarkAsImportant,
+  markGmailMessageAsUnimportant as gmailMarkAsUnimportant,
+} from './gmail/operations/mutations';
+
+// Import filters
+import {
+  listGmailFilters as gmailListFilters,
+  getGmailFilter as gmailGetFilter,
+  createGmailFilter as gmailCreateFilter,
+  deleteGmailFilter as gmailDeleteFilter,
+} from './gmail/operations/filters';
+
+// Import contacts & profile
+import {
+  getGmailUserProfile as gmailGetUserProfile,
+  testPeopleAPI as gmailTestPeopleAPI,
+  fetchPeopleConnections as gmailFetchPeopleConnections,
+  fetchOtherContacts as gmailFetchOtherContacts,
+} from './gmail/contacts/profile';
+
+// Import trash utilities
+import {
+  emptyGmailTrash as gmailEmptyTrash,
+} from './gmail/misc/trash';
+
+// Import Phase 5 modules (send/compose)
+import {
+  sendGmailMessage as gmailSendMessage,
+  saveGmailDraft as gmailSaveDraft,
+} from './gmail/send/compose';
 
 // Type definitions for GIS (Google Identity Services)
 declare global {
@@ -84,6 +141,46 @@ let tokenClient: any = null;
 let currentAccessToken: string | null = null;
 let tokenExpiryTime: number = 0;
 let isInitialized = false;
+let tokenRefreshInterval: NodeJS.Timeout | null = null;
+
+// ============================================================================
+// PHASE 5: DELEGATED WRAPPER FUNCTIONS
+// These functions delegate to the modular gmail service implementations
+// ============================================================================
+
+/**
+ * Send email via Gmail
+ * ⚠️ DELEGATED TO: src/integrations/gmail/send/compose.ts
+ */
+export const sendGmailMessage = async (
+  to: string,
+  cc: string,
+  subject: string,
+  body: string,
+  attachments?: Array<{ name: string; mimeType: string; data: string; cid?: string }>,
+  conversationThreadId?: string
+): Promise<{ success: boolean; threadId?: string }> => {
+  return gmailSendMessage(to, cc, subject, body, attachments, conversationThreadId);
+};
+
+/**
+ * Save email as draft in Gmail
+ * ⚠️ DELEGATED TO: src/integrations/gmail/send/compose.ts
+ */
+export const saveGmailDraft = async (
+  to: string,
+  cc: string,
+  subject: string,
+  body: string,
+  attachments?: Array<{ name: string; mimeType: string; data: string; cid?: string }>,
+  draftId?: string
+): Promise<{ success: boolean; draftId?: string }> => {
+  return gmailSaveDraft(to, cc, subject, body, attachments, draftId);
+};
+
+// ============================================================================
+// INITIALIZATION & AUTHENTICATION
+// ============================================================================
 
 /**
  * Initialize the gapi client and GIS clients
@@ -255,6 +352,54 @@ const getCurrentUserEmail = (): string | null => {
 };
 
 /**
+ * Start automatic token refresh scheduler
+ * Refreshes token every 25 minutes to prevent expiration (tokens expire after 30-60 min)
+ * Best practice: Refresh well before expiration to ensure continuous service
+ */
+export const startTokenRefreshScheduler = (): void => {
+  // Clear any existing interval
+  if (tokenRefreshInterval) {
+    clearInterval(tokenRefreshInterval);
+  }
+  
+  // Refresh every 25 minutes (1,500,000 ms)
+  // This is 5 minutes before typical 30-minute expiration
+  const REFRESH_INTERVAL = 25 * 60 * 1000;
+  
+  console.log('🔄 Starting automatic token refresh scheduler (every 25 minutes)');
+  
+  tokenRefreshInterval = setInterval(async () => {
+    const userEmail = getCurrentUserEmail();
+    
+    if (!userEmail) {
+      console.warn('⚠️ Cannot refresh token: No user email found');
+      return;
+    }
+    
+    console.log('⏰ Scheduled token refresh triggered for:', userEmail);
+    await refreshTokenInBackground();
+  }, REFRESH_INTERVAL);
+  
+  // Also do an immediate check if token is close to expiring
+  const timeUntilExpiry = tokenExpiryTime - Date.now();
+  if (timeUntilExpiry < 10 * 60 * 1000 && timeUntilExpiry > 0) {
+    console.log('⚠️ Token expires soon, refreshing immediately');
+    refreshTokenInBackground();
+  }
+};
+
+/**
+ * Stop automatic token refresh scheduler
+ */
+export const stopTokenRefreshScheduler = (): void => {
+  if (tokenRefreshInterval) {
+    clearInterval(tokenRefreshInterval);
+    tokenRefreshInterval = null;
+    console.log('🛑 Token refresh scheduler stopped');
+  }
+};
+
+/**
  * Sign in to Gmail using Authorization Code Flow for refresh tokens
  */
 export const signInToGmail = async (): Promise<{ access_token: string; expires_in: number; expires_at: number; code?: string }> => {
@@ -337,6 +482,9 @@ export const signInToGmail = async (): Promise<{ access_token: string; expires_i
         
         console.log('Gmail sign-in successful via token client');
         
+        // Start automatic token refresh scheduler
+        startTokenRefreshScheduler();
+        
         // Resolve with the tokens
         resolve({
           access_token: response.access_token,
@@ -384,6 +532,9 @@ export const signInToGmailWithOAuth = async (): Promise<void> => {
         });
       }
       
+      // Start automatic token refresh scheduler
+      startTokenRefreshScheduler();
+      
       console.log('OAuth Gmail sign-in successful');
       resolve();
     };
@@ -396,6 +547,9 @@ export const signInToGmailWithOAuth = async (): Promise<void> => {
 };
 export const signOutFromGmail = async (): Promise<void> => {
   try {
+    // Stop token refresh scheduler
+    stopTokenRefreshScheduler();
+    
     if (currentAccessToken) {
       window.google.accounts.oauth2.revoke(currentAccessToken, () => {
         console.log('Gmail access token revoked');
@@ -476,157 +630,51 @@ export const getCurrentAccessToken = (): string | null => {
 };
 
 /**
- * Decode HTML entities in a string
+ * Fetch messages from Gmail with pagination support
  */
-const decodeHtmlEntities = (text: string): string => {
-  if (!text) return '';
-  const textArea = document.createElement('textarea');
-  textArea.innerHTML = text;
-  return textArea.value;
+export const fetchGmailMessages = async (
+  query: string = 'in:inbox',
+  maxResults: number = 10,
+  pageToken?: string
+): Promise<PaginatedEmailResponse> => {
+  return gmailFetchMessages(query, maxResults, pageToken);
 };
 
 /**
- * Decode RFC 2047 encoded header strings (proper MIME implementation)
+ * Fetch a single message from Gmail by ID
+ * ⚠️ DELEGATED TO: src/integrations/gmail/fetch/messages.ts
  */
-const decodeHeader = (value: string): string => {
-  return decodeRfc2047(value);
+export const fetchGmailMessageById = async (id: string): Promise<Email | undefined> => {
+  return gmailFetchMessageById(id);
 };
 
 /**
- * Convert base64url to byte array (Uint8Array)
+ * Fetch the latest message in a thread
+ * ⚠️ DELEGATED TO: src/integrations/gmail/fetch/messages.ts
  */
-const decodeBase64UrlToBytes = (base64Url: string): Uint8Array => {
-  if (!base64Url) return new Uint8Array(0);
-  
-  try {
-    // Clean input and convert base64url to standard base64
-    let base64 = base64Url.replace(/[\s\r\n\t]+/g, ''); // Remove whitespace
-    base64 = base64.replace(/-/g, '+').replace(/_/g, '/'); // Convert to standard base64
-    
-    // Add padding if needed
-    while (base64.length % 4 !== 0) {
-      base64 += '=';
-    }
-    
-    // Decode base64 to binary string
-    const binaryString = atob(base64);
-    
-    // Convert binary string to byte array
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    
-    return bytes;
-  } catch (e) {
-    console.error('Error in decodeBase64UrlToBytes:', e);
-    return new Uint8Array(0);
-  }
+export const fetchLatestMessageInThread = async (threadId: string): Promise<Email | undefined> => {
+  return gmailFetchLatestMessageInThread(threadId);
 };
 
 /**
- * Decode quoted-printable bytes to bytes
+ * Fetch all messages in a thread
+ * ⚠️ DELEGATED TO: src/integrations/gmail/fetch/messages.ts
  */
-const decodeQuotedPrintableToBytes = (bytes: Uint8Array): Uint8Array => {
-  if (!bytes || bytes.length === 0) return bytes;
-  
-  const result: number[] = [];
-  let i = 0;
-  
-  while (i < bytes.length) {
-    // Handle '=' character (61 in ASCII)
-    if (bytes[i] === 61) { // ASCII for '='
-      // Check for soft line break (=\r\n or =\n)
-      if (i + 2 < bytes.length && bytes[i + 1] === 13 && bytes[i + 2] === 10) { // \r\n
-        i += 3; // Skip the soft line break
-        continue;
-      } else if (i + 1 < bytes.length && bytes[i + 1] === 10) { // \n
-        i += 2; // Skip the soft line break
-        continue;
-      } else if (i + 2 < bytes.length) {
-        // Try to parse as hex sequence
-        const hexStr = String.fromCharCode(bytes[i + 1], bytes[i + 2]);
-        if (/^[0-9A-Fa-f]{2}$/.test(hexStr)) {
-          // Valid hex sequence
-          result.push(parseInt(hexStr, 16));
-          i += 3;
-          continue;
-        }
-      }
-    }
-    
-    // If not a special sequence, just add the byte
-    result.push(bytes[i]);
-    i++;
-  }
-  
-  return new Uint8Array(result);
+export const fetchThreadMessages = async (threadId: string): Promise<Email[]> => {
+  return gmailFetchThreadMessages(threadId);
 };
 
 /**
- * Recursively find the best body part (HTML preferred, then plain text).
+ * Get attachment download URL
+ * ⚠️ DELEGATED TO: src/integrations/gmail/operations/attachments.ts
  */
-const findBodyPart = (payload: EmailPart): EmailPart | undefined => {
-  // Initialize result containers
-  let htmlPart: EmailPart | undefined;
-  let textPart: EmailPart | undefined;
-  
-  // Recursive helper function to search through the part hierarchy
-  const searchPartsRecursively = (part: EmailPart, depth: number = 0): void => {
-    // If we already found an HTML part, no need to continue searching
-    if (htmlPart) return;
-    
-    // Check for direct content in this part
-    if (part.mimeType === 'text/html' && part.body?.data) {
-      htmlPart = part;
-      return;
-    } else if (part.mimeType === 'text/plain' && part.body?.data && !textPart) {
-      textPart = part;
-    }
-    
-    // Check if this is a multipart message
-    if (part.parts && part.parts.length > 0) {
-      // Special handling for multipart/alternative - we want to prioritize HTML over plain text
-      if (part.mimeType === 'multipart/alternative') {
-        // First try to find HTML parts
-        for (const subPart of part.parts) {
-          if (subPart.mimeType === 'text/html' && subPart.body?.data) {
-            htmlPart = subPart;
-            return;
-          }
-        }
-        
-        // If no HTML part found, look for plain text
-        if (!htmlPart) {
-          for (const subPart of part.parts) {
-            if (subPart.mimeType === 'text/plain' && subPart.body?.data && !textPart) {
-              textPart = subPart;
-            }
-          }
-        }
-      }
-      
-      // For other multipart types or if we haven't found content yet, recursively search all parts
-      for (const subPart of part.parts) {
-        // Skip attachments or other non-content parts if we're already at depth > 0
-        if (depth > 0 && 
-            (subPart.filename || 
-             (subPart.mimeType !== 'text/html' && 
-              subPart.mimeType !== 'text/plain' && 
-              !subPart.mimeType.startsWith('multipart/')))) {
-          continue;
-        }
-        
-        searchPartsRecursively(subPart, depth + 1);
-      }
-    }
-  };
-  
-  // Start the recursive search
-  searchPartsRecursively(payload);
-  
-  // Return HTML part if found, otherwise text part
-  return htmlPart || textPart;
+export const getAttachmentDownloadUrl = async (
+  messageId: string,
+  attachmentId: string,
+  _filename: string,
+  mimeType: string
+): Promise<string> => {
+  return gmailGetAttachmentDownloadUrl(messageId, attachmentId, _filename, mimeType);
 };
 
 // Interface for Gmail message parts (payload and its sub-parts)
@@ -642,662 +690,6 @@ interface EmailPart {
   };
   parts?: EmailPart[];
 }
-
-/**
- * Enhanced HTML cleaning for promotional emails
- */
-const cleanPromotionalHTML = (html: string): string => {
-  // Remove problematic elements that cause rendering issues
-  let cleaned = html
-    // Remove style blocks that contain font definitions and CSS
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-    // Remove problematic font declarations
-    .replace(/@font-face[^}]*}/gi, '')
-    // Remove CSS media queries
-    .replace(/@media[^}]*{[^}]*}/gi, '')
-    // Clean up repeated characters (like fffffffff...)
-    .replace(/([a-zA-Z])\1{10,}/g, '') // Remove 10+ repeated chars
-    // Remove excessive CSS properties
-    .replace(/style="[^"]*font-family:[^"]*"/gi, 'style=""')
-    // Clean up malformed CSS
-    .replace(/[{;}]\s*[{;}]/g, ';')
-    // Remove empty style attributes
-    .replace(/style="\s*"/gi, '')
-    // Fix common encoding issues
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"');
-
-  // Extract readable text content while preserving basic structure
-  const tempDiv = document.createElement('div');
-  tempDiv.innerHTML = cleaned;
-  
-  // Remove script tags, style tags, and other non-content elements
-  const unwantedElements = tempDiv.querySelectorAll('script, style, meta, link');
-  unwantedElements.forEach(el => el.remove());
-  
-  // Get clean text content with basic formatting
-  let textContent = tempDiv.innerHTML;
-  
-  // Clean up extra whitespace and line breaks
-  textContent = textContent
-    .replace(/\s+/g, ' ')
-    .replace(/\n\s*\n/g, '\n')
-    .trim();
-    
-  return textContent || cleaned;
-};
-
-/**
- * Detect if this is a promotional/marketing email
- */
-const isPromotionalEmail = (headers: Array<{ name: string; value: string }>, body: string): boolean => {
-  const subject = headers.find(h => h.name.toLowerCase() === 'subject')?.value || '';
-  const from = headers.find(h => h.name.toLowerCase() === 'from')?.value || '';
-  
-  // Check for marketing indicators
-  const marketingKeywords = [
-    'newsletter', 'unsubscribe', 'marketing', 'promotion', 'deal', 'offer',
-    'sale', 'discount', 'limited time', 'exclusive', 'special offer'
-  ];
-  
-  const hasMarketingKeywords = marketingKeywords.some(keyword => 
-    subject.toLowerCase().includes(keyword) || 
-    from.toLowerCase().includes(keyword) ||
-    body.toLowerCase().includes(keyword)
-  );
-  
-  // Check for typical promotional email structures
-  const hasPromotionalStructure = 
-    body.includes('@font-face') ||
-    body.includes('font-family:') ||
-    !!body.match(/([a-zA-Z])\1{8,}/) || // Repeated characters (!! converts to boolean)
-    body.includes('href=') && body.includes('utm_') || // Tracking links
-    body.includes('style=') && body.length > 10000; // Heavy styling
-    
-  return hasMarketingKeywords || hasPromotionalStructure;
-};
-
-/**
- * Extract text from email part, handling different encodings
- */
-const extractTextFromPart = (part: EmailPart): string => {
-  if (!part.body || !part.body.data) {
-    return '';
-  }
-
-  // Heuristic: score a decoded string for likely correctness with Cyrillic text
-  const scoreDecoded = (s: string): number => {
-    const cyr = (s.match(/[\u0400-\u04FF]/g) || []).length; // Cyrillic block
-    const bad = (s.match(/[ÃÂÐÑ�]/g) || []).length; // common mojibake markers + replacement
-    // extra penalty for box-drawing/line chars often seen in mojibake dumps
-    const box = (s.match(/[╔║╚╩╦╣╟╢╧]/g) || []).length;
-    return cyr * 3 - bad * 5 - box * 2;
-  };
-
-  const decodeWithFallbacks = (bytes: Uint8Array, preferred: string): string => {
-    const tried = new Set<string>();
-    const candidates = [preferred, 'utf-8', 'windows-1251', 'koi8-r', 'iso-8859-5', 'windows-1252']
-      .filter((cs) => cs && !tried.has(cs) && (tried.add(cs), true));
-
-    let bestText = '';
-    let bestScore = -Infinity;
-    for (const cs of candidates) {
-      try {
-        const text = new TextDecoder(cs as any).decode(bytes);
-        const score = scoreDecoded(text);
-        if (score > bestScore) {
-          bestScore = score;
-          bestText = text;
-        }
-      } catch {
-        // ignore unsupported charset
-      }
-    }
-    return bestText || new TextDecoder('utf-8').decode(bytes);
-  };
-
-  const charsetMap: Record<string,string> = {
-    'iso-8859-1':  'iso-8859-1',
-    'latin1':      'iso-8859-1',
-    'cp1252':      'iso-8859-1',
-    'windows-1252':'iso-8859-1',
-    'iso-8859-15': 'windows-1252', 
-    'iso-8859-2':  'iso-8859-2',
-    'latin2':      'iso-8859-2',
-    'iso-8859-3':  'iso-8859-3',
-    'latin3':      'iso-8859-3',
-    'iso-8859-4':  'iso-8859-4',
-    'latin4':      'iso-8859-4',
-    'iso-8859-13': 'iso-8859-13',
-    'windows-1250': 'windows-1250',
-    'windows-1251': 'windows-1251',
-    'windows-1253': 'windows-1253',
-    'windows-1254': 'windows-1254',
-    'windows-1257': 'windows-1257',
-    'koi8-r':      'koi8-r',
-    'koi8-u':      'koi8-u',
-    'utf8':        'utf-8',
-    'utf-8':        'utf-8'
-  };
-  
-  let charset = 'utf-8';
-  const ct = part.headers?.find(h => h.name.toLowerCase()==='content-type')?.value;
-  if (ct) {
-    const m = ct.match(/charset=["']?([^"';\s]+)/i);
-    if (m?.[1]) {
-      const det = m[1].trim().toLowerCase();
-      charset = charsetMap[det] || det;
-      // validate
-      try {
-        new TextDecoder(charset);
-      } catch {
-        console.warn(`Unsupported charset "${charset}", falling back to iso-8859-1`);
-        charset = 'iso-8859-1';
-      }
-    }
-  }
-  
-  // Determine content encoding from Content-Transfer-Encoding header
-  const contentTransferEncoding = part.headers?.find(
-    (h) => h.name.toLowerCase() === 'content-transfer-encoding'
-  )?.value?.toLowerCase();
-  
-  try {
-    // STEP 1: base64url → bytes
-    let finalBytes = decodeBase64UrlToBytes(part.body.data);
-
-    // sniff the C-T-E header more loosely
-    const cteHeader = part.headers
-      ?.find(h => h.name.toLowerCase() === 'content-transfer-encoding')
-      ?.value?.toLowerCase() || '';
-
-    // always QP‐decode if it's HTML or if the header mentions "quoted-printable"
-    if (part.mimeType.startsWith('text/html') || cteHeader.includes('quoted-printable')) {
-      finalBytes = decodeQuotedPrintableToBytes(finalBytes);
-    }
-
-  // STEP 3: decode bytes → string with fallbacks for mojibake
-  // If declared charset is wrong (very common for Cyrillic), pick best among candidates
-  const decoded = decodeWithFallbacks(finalBytes, charset);
-    
-    // STEP 4: Final cleanup - decode HTML entities if present
-    let cleanedContent = decodeHtmlEntities(decoded);
-    
-    // STEP 5: Enhanced cleaning for promotional emails (HTML content)
-    if (part.mimeType === 'text/html') {
-      // Check if this looks like a promotional email with styling issues
-      if (isPromotionalEmail(part.headers || [], cleanedContent)) {
-        console.log('Detected promotional email, applying enhanced cleaning...');
-        cleanedContent = cleanPromotionalHTML(cleanedContent);
-      }
-    }
-    
-    // STEP 6: For plain text content, convert newlines to HTML breaks for display
-    if (part.mimeType === 'text/plain') {
-      return cleanedContent
-        .replace(/\r\n/g, '<br>')
-        .replace(/\n/g, '<br>')
-        .replace(/\r/g, '<br>');
-    }
-    
-    return cleanedContent;
-  } catch (e) {
-    console.error('Error decoding content:', e, { 
-      encoding: contentTransferEncoding, 
-      charset, 
-      mimeType: part.mimeType
-    });
-    
-    return `[Error decoding email content. Original encoding: ${contentTransferEncoding || 'unknown'}]`;
-  }
-};
-
-/**
- * Fetch messages from Gmail with pagination support
- */
-export const fetchGmailMessages = async (
-  query: string = 'in:inbox',
-  maxResults: number = 10,
-  pageToken?: string
-): Promise<PaginatedEmailResponse> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-
-    const requestParams: any = {
-      userId: 'me',
-      maxResults: maxResults,
-      q: query
-    };
-
-    // Add pageToken if provided
-    if (pageToken) {
-      requestParams.pageToken = pageToken;
-    }
-
-    const response = await window.gapi.client.gmail.users.messages.list(requestParams);
-
-    if (!response.result.messages || response.result.messages.length === 0) {
-      return {
-        emails: [],
-        nextPageToken: undefined,
-        resultSizeEstimate: response.result.resultSizeEstimate || 0
-      };
-    }
-
-    const emails: Email[] = [];
-    
-    // Fetch emails sequentially to avoid rate limits
-    for (const message of response.result.messages) {
-      if (!message.id) continue;
-
-      try {
-        const msg = await window.gapi.client.gmail.users.messages.get({
-          userId: 'me',
-          id: message.id,
-          format: 'metadata', // Use metadata format for inbox list - much faster
-          metadataHeaders: ['Subject', 'From', 'To', 'Date'] // Only get headers we need
-        });
-
-        if (!msg.result || !msg.result.payload) continue;
-        const payload = msg.result.payload as EmailPart;
-
-        const headers = payload.headers || [];
-        const subject = decodeHeader(headers.find((h) => h.name.toLowerCase() === 'subject')?.value || 'No Subject');
-        const fromHeader = decodeHeader(headers.find((h) => h.name.toLowerCase() === 'from')?.value || '');
-        const toHeader = decodeHeader(headers.find((h) => h.name.toLowerCase() === 'to')?.value || '');
-        const dateHeader = headers.find((h) => h.name.toLowerCase() === 'date')?.value || new Date().toISOString();
-        
-        let fromName = fromHeader;
-        let fromEmail = fromHeader;
-        const fromMatch = fromHeader.match(/(.*)<(.*)>/);
-        if (fromMatch && fromMatch.length === 3) {
-          fromName = fromMatch[1].trim();
-          fromEmail = fromMatch[2].trim();
-        }
-
-        // Parse the To header similar to From header
-        let toName = toHeader;
-        let toEmail = toHeader;
-        const toMatch = toHeader.match(/(.*)<(.*)>/);
-        if (toMatch && toMatch.length === 3) {
-          toName = toMatch[1].trim();
-          toEmail = toMatch[2].trim();
-        }
-
-        let preview = msg.result.snippet ? decodeHtmlEntities(msg.result.snippet) : '';
-        // For inbox list view, use snippet as body to avoid expensive body processing
-        let body = preview;
-
-        // Skip attachment processing for inbox list view (metadata format doesn't include payload)
-        const attachments: NonNullable<Email['attachments']> = [];
-
-        emails.push({
-          id: message.id,
-          from: { name: fromName, email: fromEmail },
-          to: [{ name: toName, email: toEmail }],
-          subject: subject,
-          body: body,
-          preview: preview,
-          isRead: !msg.result.labelIds?.includes('UNREAD'),
-          isImportant: msg.result.labelIds?.includes('IMPORTANT'),
-          isStarred: msg.result.labelIds?.includes('STARRED'),
-          date: format(new Date(dateHeader), "yyyy-MM-dd'T'HH:mm:ss"),
-          labelIds: msg.result.labelIds || [],
-          attachments: attachments.length > 0 ? attachments : undefined,
-          threadId: msg.result.threadId
-        } as Email);
-
-        // Add shorter delay between individual message fetches for speed
-        await new Promise(resolve => setTimeout(resolve, 25));
-      } catch (messageError) {
-        console.warn(`Failed to fetch message ${message.id}:`, messageError);
-        // Continue with other messages if one fails
-      }
-    }
-
-    return {
-      emails: emails,
-      nextPageToken: response.result.nextPageToken,
-      resultSizeEstimate: response.result.resultSizeEstimate || 0
-    };
-  } catch (error) {
-    console.error('Error fetching emails from Gmail:', error);
-    throw error;
-  }
-};
-
-/**
- * Fetch a single message from Gmail by ID
- */
-export const fetchGmailMessageById = async (id: string): Promise<Email | undefined> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-
-    console.log(`Fetching email with ID: ${id}`);
-    
-    const msg = await window.gapi.client.gmail.users.messages.get({
-      userId: 'me',
-      id: id,
-      format: 'full'
-    });
-
-    if (!msg.result || !msg.result.payload) {
-      console.error('Email fetch returned no result or no payload');
-      return undefined;
-    }
-    
-    console.log('Email fetch successful, processing payload');
-    const payload = msg.result.payload as EmailPart;
-
-    const headers = payload.headers || [];
-    const subject = decodeHeader(headers.find((h) => h.name.toLowerCase() === 'subject')?.value || 'No Subject');
-    const fromHeader = decodeHeader(headers.find((h) => h.name.toLowerCase() === 'from')?.value || '');
-    const toHeader = decodeHeader(headers.find((h) => h.name.toLowerCase() === 'to')?.value || '');
-    const dateHeader = headers.find((h) => h.name.toLowerCase() === 'date')?.value || new Date().toISOString();
-
-    let fromName = fromHeader;
-    let fromEmail = fromHeader;
-    const fromMatch = fromHeader.match(/(.*)<(.*)>/);
-    if (fromMatch && fromMatch.length === 3) {
-      fromName = fromMatch[1].trim();
-      fromEmail = fromMatch[2].trim();
-    }
-
-    // Parse the To header similar to From header
-    let toName = toHeader;
-    let toEmail = toHeader;
-    const toMatch = toHeader.match(/(.*)<(.*)>/);
-    if (toMatch && toMatch.length === 3) {
-      toName = toMatch[1].trim();
-      toEmail = toMatch[2].trim();
-    }
-
-    let preview = msg.result.snippet ? decodeHtmlEntities(msg.result.snippet) : '';
-    let body = '';
-
-    console.log('Finding body part...');
-    const bodyPart = findBodyPart(payload);
-    if (bodyPart) {
-      console.log(`Body part found, type: ${bodyPart.mimeType}`);
-      body = extractTextFromPart(bodyPart);
-      
-      // Check for promotional email issues specifically
-      if (isPromotionalEmail(headers, body)) {
-        console.log('Promotional email detected - applying special handling');
-        
-        // If body has repeated characters or styling issues, try alternative approach
-        if (body.match(/([a-zA-Z])\1{8,}/) || body.includes('@font-face')) {
-          console.log('Detected styling corruption in promotional email, trying cleanup...');
-          body = cleanPromotionalHTML(body);
-        }
-      }
-      
-      if (!body || body.length < 20) {
-        console.warn('Body part found but content is empty or very short, trying alternate parsing approach');
-        
-        const allTextParts: EmailPart[] = [];
-        
-        const collectTextParts = (part: EmailPart) => {
-          if ((part.mimeType === 'text/html' || part.mimeType === 'text/plain') && part.body?.data) {
-            allTextParts.push(part);
-          }
-          if (part.parts) {
-            part.parts.forEach(collectTextParts);
-          }
-        };
-        
-        collectTextParts(payload);
-        
-        const htmlParts = allTextParts.filter(p => p.mimeType === 'text/html');
-        const textParts = allTextParts.filter(p => p.mimeType === 'text/plain');
-        
-        if (htmlParts.length > 0) {
-          console.log('Found HTML parts via alternate approach, trying to decode...');
-          let alternateBody = htmlParts.map(p => extractTextFromPart(p)).join('<hr>');
-          
-          // Apply promotional cleaning to alternate approach as well
-          if (isPromotionalEmail(headers, alternateBody)) {
-            alternateBody = cleanPromotionalHTML(alternateBody);
-          }
-          
-          body = alternateBody;
-        } else if (textParts.length > 0) {
-          console.log('Found text parts via alternate approach, trying to decode...');
-          body = textParts.map(p => extractTextFromPart(p)).join('<hr>');
-        }
-      }
-    } else {
-      console.warn(`No suitable body part found for message ID (detail view): ${id}. Snippet: "${preview}"`);
-      if (!body && preview) body = preview.replace(/\n/g, '<br>');
-    }
-
-    // Process inline images and replace CID references with data URIs
-    if (body) {
-      try {
-        body = await processInlineImages(id, body, payload);
-      } catch (error) {
-        console.warn(`Failed to process inline images for message ${id}:`, error);
-        // Continue with original body if inline image processing fails
-      }
-    }
-
-    const attachments: NonNullable<Email['attachments']> = [];
-    function findAttachmentsRecursive(currentPart: EmailPart) {
-      if (currentPart.filename && currentPart.filename.length > 0 && currentPart.body?.attachmentId) {
-        let mimeType = currentPart.mimeType || 'application/octet-stream';
-        
-        if (mimeType === 'application/octet-stream' && currentPart.filename) {
-          const ext = currentPart.filename.split('.').pop()?.toLowerCase();
-          if (ext === 'pdf') mimeType = 'application/pdf';
-          else if (ext === 'doc' || ext === 'docx') mimeType = 'application/msword';
-          else if (ext === 'xls' || ext === 'xlsx') mimeType = 'application/vnd.ms-excel';
-          else if (ext === 'ppt' || ext === 'pptx') mimeType = 'application/vnd.ms-powerpoint';
-          else if (ext === 'jpg' || ext === 'jpeg') mimeType = 'image/jpeg';
-          else if (ext === 'png') mimeType = 'image/png';
-          else if (ext === 'gif') mimeType = 'image/gif';
-          else if (ext === 'zip') mimeType = 'application/zip';
-        }
-        
-        attachments.push({
-          name: decodeHeader(currentPart.filename),
-          url: `https://mail.google.com/mail/u/0/#inbox/${id}`,
-          size: currentPart.body.size || 0,
-          mimeType: mimeType,
-          attachmentId: currentPart.body.attachmentId,
-          partId: currentPart.partId
-        });
-      }
-      if (currentPart.parts) {
-        for (const subPart of currentPart.parts) {
-          findAttachmentsRecursive(subPart);
-        }
-      }
-    }
-    if (payload.parts) findAttachmentsRecursive(payload);
-    else if (payload.filename && payload.body?.attachmentId) findAttachmentsRecursive(payload);
-
-    try {
-      await window.gapi.client.gmail.users.messages.modify({
-        userId: 'me',
-        id: id,
-        resource: {
-          removeLabelIds: ['UNREAD']
-        }
-      });
-    } catch (markError) {
-      console.error('Error marking message as read:', markError);
-    }
-
-    return {
-      id: id,
-      from: { name: fromName, email: fromEmail },
-      to: [{ name: toName, email: toEmail }],
-      subject: subject,
-      body: body,
-      preview: preview,
-      isRead: !msg.result.labelIds?.includes('UNREAD'),
-      isImportant: msg.result.labelIds?.includes('IMPORTANT'),
-      isStarred: msg.result.labelIds?.includes('STARRED'),
-      date: format(new Date(dateHeader), "yyyy-MM-dd'T'HH:mm:ss"),
-      labelIds: msg.result.labelIds || [],
-      attachments: attachments.length > 0 ? attachments : undefined,
-      threadId: msg.result.threadId
-    } as Email;
-
-  } catch (error) {
-    console.error(`Error fetching email (ID: ${id}) from Gmail:`, error);
-    throw error;
-  }
-};
-
-/**
- * Fetch the latest message in a thread
- */
-export const fetchLatestMessageInThread = async (threadId: string): Promise<Email | undefined> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-
-    console.log(`Fetching thread with ID: ${threadId}`);
-    
-    const threadResponse = await window.gapi.client.gmail.users.threads.get({
-      userId: 'me',
-      id: threadId
-    });
-
-    if (!threadResponse.result || !threadResponse.result.messages || threadResponse.result.messages.length === 0) {
-      console.error('Thread fetch returned no messages');
-      return undefined;
-    }
-    
-    // Sort messages by date (newest first) and take the first one
-    const messages = threadResponse.result.messages;
-    const latestMessage = messages.sort((a: { internalDate: any; }, b: { internalDate: any; }) => {
-      const aInternalDate = parseInt(a.internalDate || '0');
-      const bInternalDate = parseInt(b.internalDate || '0');
-      return bInternalDate - aInternalDate;
-    })[0];
-    
-    // Fetch the full message details
-    return await fetchGmailMessageById(latestMessage.id);
-    
-  } catch (error) {
-    console.error(`Error fetching thread (ID: ${threadId}) from Gmail:`, error);
-    throw error;
-  }
-};
-
-/**
- * Fetch all messages in a thread
- */
-export const fetchThreadMessages = async (threadId: string): Promise<Email[]> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-
-    console.log(`Fetching all messages in thread with ID: ${threadId}`);
-    
-    const threadResponse = await window.gapi.client.gmail.users.threads.get({
-      userId: 'me',
-      id: threadId
-    });
-
-    if (!threadResponse.result || !threadResponse.result.messages || threadResponse.result.messages.length === 0) {
-      console.error('Thread fetch returned no messages');
-      return [];
-    }
-    
-    const messages = threadResponse.result.messages;
-    
-    // Sort messages by date (oldest first for chronological thread display)
-    const sortedMessages = messages.sort((a: { internalDate: any; }, b: { internalDate: any; }) => {
-      const aInternalDate = parseInt(a.internalDate || '0');
-      const bInternalDate = parseInt(b.internalDate || '0');
-      return aInternalDate - bInternalDate; // Changed to show oldest first for thread display
-    });
-    
-    // Fetch full message details for all messages
-    const threadEmails: Email[] = [];
-    for (const message of sortedMessages) {
-      const email = await fetchGmailMessageById(message.id);
-      if (email) {
-        threadEmails.push(email);
-      }
-    }
-    
-    return threadEmails;
-    
-  } catch (error) {
-    console.error(`Error fetching thread messages (ID: ${threadId}) from Gmail:`, error);
-    return [];
-  }
-};
-
-/**
- * Get attachment download URL
- */
-export const getAttachmentDownloadUrl = async (
-  messageId: string,
-  attachmentId: string,
-  _filename: string,
-  mimeType: string
-): Promise<string> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-
-    const response = await window.gapi.client.gmail.users.messages.attachments.get({
-      userId: 'me',
-      messageId: messageId,
-      id: attachmentId
-    });
-
-    if (!response.result || !response.result.data) {
-      throw new Error('No attachment data returned from API');
-    }
-
-    // Convert the base64url data to a Blob
-    let base64Data = response.result.data.replace(/-/g, '+').replace(/_/g, '/');
-    
-    // Add padding if needed
-    while (base64Data.length % 4 !== 0) {
-      base64Data += '=';
-    }
-
-    // Decode base64 to binary
-    const binaryString = atob(base64Data);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-
-    // Create a Blob from the binary data
-    const blob = new Blob([bytes], { type: mimeType });
-    
-    // Create an object URL
-    const url = URL.createObjectURL(blob);
-    
-    // Set up cleanup of the URL after it's used
-    window.setTimeout(() => {
-      URL.revokeObjectURL(url);
-    }, 60000);
-    
-    return url;
-  } catch (error) {
-    console.error('Error fetching attachment:', error);
-    throw error;
-  }
-};
 
 /**
  * Interface for inline image information
@@ -1582,7 +974,7 @@ const extractInlineImages = (html: string): {
 /**
  * Send email via Gmail - with perfect inline image handling matching Gmail Compose
  */
-export const sendGmailMessage = async (
+export const _legacy_sendGmailMessage = async (
   to: string,
   cc: string,
   subject: string,
@@ -1919,7 +1311,7 @@ export const sendGmailMessage = async (
 /**
  * Save email as draft in Gmail
  */
-export const saveGmailDraft = async (
+export const _legacy_saveGmailDraft = async (
   to: string,
   cc: string,
   subject: string,
@@ -2260,553 +1652,136 @@ export const deleteGmailDraft = async (draftId: string): Promise<void> => {
 /**
  * Fetch Gmail labels
  */
+/**
+ * Fetch all Gmail labels
+ * ⚠️ DELEGATED TO: src/integrations/gmail/operations/labels.ts
+ */
 export const fetchGmailLabels = async (): Promise<GmailLabel[]> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-
-    console.log('Fetching Gmail labels...');
-
-    // Step 1: Get all labels (this only returns basic info, no counters)
-    const response = await window.gapi.client.gmail.users.labels.list({
-      userId: 'me'
-    });
-
-    if (!response.result || !response.result.labels) {
-      console.warn('No labels found in Gmail account');
-      return [];
-    }
-
-    console.log(' Raw Gmail API response from list:', response.result);
-    console.log(`� Found ${response.result.labels.length} labels, now fetching details with counters...`);
-
-    // Step 2: Get detailed info for ONLY key system labels to avoid rate limits
-    const keySystemLabels = response.result.labels.filter((label: any) => {
-      const keyLabels = ['INBOX', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'IMPORTANT', 'STARRED'];
-      return keyLabels.includes(label.id);
-    });
-
-    console.log(` Fetching detailed info for ${keySystemLabels.length} key system labels only`);
-
-    // Process system labels with delays to avoid rate limiting
-    const labelDetails = [...response.result.labels]; // Start with all basic labels
-    
-    for (let i = 0; i < keySystemLabels.length; i++) {
-      const label = keySystemLabels[i];
-      try {
-        // Add delay between requests to avoid rate limiting
-        if (i > 0) {
-          await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
-        }
-        
-        const detailResponse = await window.gapi.client.gmail.users.labels.get({
-          userId: 'me',
-          id: label.id
-        });
-        
-        // Replace the basic label with detailed info
-        const labelIndex = labelDetails.findIndex(l => l.id === label.id);
-        if (labelIndex !== -1) {
-          labelDetails[labelIndex] = detailResponse.result;
-        }
-        
-        console.log(` Fetched details for ${label.name}`);
-      } catch (error: any) {
-        if (error?.status === 429) {
-          console.warn(` Rate limited for ${label.name}, using basic info`);
-          // Add longer delay if rate limited
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        } else {
-          console.warn(` Failed to fetch details for ${label.name}:`, error?.message || error);
-        }
-      }
-    }
-
-    console.log(' Raw label details with counters:', labelDetails);
-
-    const labels: GmailLabel[] = labelDetails.map((label: any) => ({
-      id: label.id,
-      name: label.name,
-      messageListVisibility: label.messageListVisibility,
-      labelListVisibility: label.labelListVisibility,
-      type: label.type,
-      messagesTotal: label.messagesTotal || 0,
-      messagesUnread: label.messagesUnread || 0,
-      threadsTotal: label.threadsTotal || 0,
-      threadsUnread: label.threadsUnread || 0
-    }));
-
-    // Log statistics
-    const labelsWithCounts = labels.filter(label => 
-      (label.messagesTotal || 0) > 0 || (label.messagesUnread || 0) > 0
-    );
-
-    console.log(`Found ${labelsWithCounts.length} labels with message counts`);
-
-    // Log key system labels only
-    const keyLabels = ['INBOX', 'SENT', 'DRAFT'].map(name => labels.find(l => l.name === name)).filter(Boolean);
-    console.log('KEY SYSTEM LABELS:', keyLabels.map(label => ({
-      name: label?.name,
-      total: label?.messagesTotal,
-      unread: label?.messagesUnread
-    })));
-
-    console.log(`Successfully fetched ${labels.length} Gmail labels`);
-    return labels;
-
-  } catch (error) {
-    console.error('Error fetching Gmail labels:', error);
-    throw error;
-  }
+  return gmailFetchLabels();
 };
 
 /**
  * Fetch emails by label
+ * ⚠️ DELEGATED TO: src/integrations/gmail/operations/labels.ts
  */
 export const fetchGmailMessagesByLabel = async (
   labelId: string,
   maxResults: number = 10,
   pageToken?: string
 ): Promise<PaginatedEmailResponse> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-
-    // Construct query using label ID
-    const query = `label:${labelId}`;
-    
-    console.log(`Fetching Gmail messages for label: ${labelId}`);
-    
-    return await fetchGmailMessages(query, maxResults, pageToken);
-
-  } catch (error) {
-    console.error(`Error fetching Gmail messages by label (${labelId}):`, error);
-    throw error;
-  }
+  return gmailFetchMessagesByLabel(labelId, maxResults, pageToken);
 };
 
 /**
  * Create a new Gmail label
+ * ⚠️ DELEGATED TO: src/integrations/gmail/operations/labels.ts
  */
 export const createGmailLabel = async (name: string): Promise<GmailLabel> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-
-    console.log(`Creating Gmail label: ${name}`);
-
-    const response = await window.gapi.client.gmail.users.labels.create({
-      userId: 'me',
-      resource: {
-        name: name,
-        labelListVisibility: 'labelShow',
-        messageListVisibility: 'show'
-      }
-    });
-
-    if (!response.result) {
-      throw new Error('Failed to create label');
-    }
-
-    const newLabel: GmailLabel = {
-      id: response.result.id,
-      name: response.result.name,
-      messageListVisibility: response.result.messageListVisibility,
-      labelListVisibility: response.result.labelListVisibility,
-      type: response.result.type,
-      messagesTotal: response.result.messagesTotal,
-      messagesUnread: response.result.messagesUnread,
-      threadsTotal: response.result.threadsTotal,
-      threadsUnread: response.result.threadsUnread
-    };
-
-    console.log(`Successfully created Gmail label: ${name}`);
-    return newLabel;
-
-  } catch (error) {
-    console.error('Error creating Gmail label:', error);
-    throw error;
-  }
+  return gmailCreateLabel(name);
 };
 
 /**
  * Update an existing Gmail label
+ * ⚠️ DELEGATED TO: src/integrations/gmail/operations/labels.ts
  */
 export const updateGmailLabel = async (id: string, newName: string): Promise<GmailLabel> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-
-    console.log(`Updating Gmail label ${id} to: ${newName}`);
-
-    const response = await window.gapi.client.gmail.users.labels.update({
-      userId: 'me',
-      id: id,
-      resource: {
-        id: id,
-        name: newName,
-        labelListVisibility: 'labelShow',
-        messageListVisibility: 'show'
-      }
-    });
-
-    if (!response.result) {
-      throw new Error('Failed to update label');
-    }
-
-    const updatedLabel: GmailLabel = {
-      id: response.result.id,
-      name: response.result.name,
-      messageListVisibility: response.result.messageListVisibility,
-      labelListVisibility: response.result.labelListVisibility,
-      type: response.result.type,
-      messagesTotal: response.result.messagesTotal,
-      messagesUnread: response.result.messagesUnread,
-      threadsTotal: response.result.threadsTotal,
-      threadsUnread: response.result.threadsUnread
-    };
-
-    console.log(`Successfully updated Gmail label: ${newName}`);
-    return updatedLabel;
-
-  } catch (error) {
-    console.error('Error updating Gmail label:', error);
-    throw error;
-  }
+  return gmailUpdateLabel(id, newName);
 };
 
 /**
  * Delete a Gmail label
+ * ⚠️ DELEGATED TO: src/integrations/gmail/operations/labels.ts
  */
 export const deleteGmailLabel = async (id: string): Promise<void> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-
-    // Prevent deletion of system labels
-    const systemLabels = ['INBOX', 'SENT', 'DRAFT', 'SPAM', 'TRASH', 'STARRED', 'IMPORTANT', 'UNREAD'];
-    if (systemLabels.includes(id)) {
-      throw new Error('Cannot delete system labels');
-    }
-
-    console.log(`Attempting to delete Gmail label with ID: ${id}`);
-
-    const response = await window.gapi.client.gmail.users.labels.delete({
-      userId: 'me',
-      id: id
-    });
-
-    console.log(`Gmail API delete response:`, response);
-    console.log(`Successfully deleted Gmail label: ${id}`);
-
-  } catch (error) {
-    console.error('Error deleting Gmail label:', error);
-    console.error('Error details:', JSON.stringify(error, null, 2));
-    throw error;
-  }
+  return gmailDeleteLabel(id);
 };
 
 /**
  * Apply labels to a Gmail message
+ * ⚠️ DELEGATED TO: src/integrations/gmail/operations/labels.ts
  */
 export const applyGmailLabels = async (
   messageId: string,
   addLabelIds: string[],
   removeLabelIds: string[] = []
 ): Promise<void> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-
-    console.log(`Applying labels to message ${messageId}:`, { addLabelIds, removeLabelIds });
-
-    await window.gapi.client.gmail.users.messages.modify({
-      userId: 'me',
-      id: messageId,
-      resource: {
-        addLabelIds,
-        removeLabelIds
-      }
-    });
-
-    console.log(`Successfully applied labels to message ${messageId}`);
-  } catch (error) {
-    console.error('Error applying labels to Gmail message:', error);
-    throw error;
-  }
+  return gmailApplyLabels(messageId, addLabelIds, removeLabelIds);
 };
 
 /**
  * Mark a Gmail message as trash
+ * ⚠️ DELEGATED TO: src/integrations/gmail/operations/mutations.ts
  */
 export const markGmailMessageAsTrash = async (messageId: string): Promise<void> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-
-    console.log(`Moving message ${messageId} to trash`);
-
-    await window.gapi.client.gmail.users.messages.modify({
-      userId: 'me',
-      id: messageId,
-      resource: {
-        addLabelIds: ['TRASH'],
-        removeLabelIds: ['INBOX']
-      }
-    });
-
-    console.log(`Successfully moved message ${messageId} to trash`);
-  } catch (error) {
-    console.error('Error moving message to trash:', error);
-    throw error;
-  }
+  return gmailMarkAsTrash(messageId);
 };
 
 /**
  * Mark a Gmail message as read
+ * ⚠️ DELEGATED TO: src/integrations/gmail/operations/mutations.ts
  */
 export const markGmailMessageAsRead = async (messageId: string): Promise<void> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-
-    console.log(`Marking message ${messageId} as read`);
-
-    await window.gapi.client.gmail.users.messages.modify({
-      userId: 'me',
-      id: messageId,
-      resource: {
-        removeLabelIds: ['UNREAD']
-      }
-    });
-
-    console.log(`Successfully marked message ${messageId} as read`);
-  } catch (error) {
-    console.error('Error marking message as read:', error);
-    throw error;
-  }
+  return gmailMarkAsRead(messageId);
 };
 
 /**
  * Mark a Gmail message as unread
+ * ⚠️ DELEGATED TO: src/integrations/gmail/operations/mutations.ts
  */
 export const markGmailMessageAsUnread = async (messageId: string): Promise<void> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-
-    console.log(`Marking message ${messageId} as unread`);
-
-    await window.gapi.client.gmail.users.messages.modify({
-      userId: 'me',
-      id: messageId,
-      resource: {
-        addLabelIds: ['UNREAD']
-      }
-    });
-
-    console.log(`Successfully marked message ${messageId} as unread`);
-  } catch (error) {
-    console.error('Error marking message as unread:', error);
-    throw error;
-  }
+  return gmailMarkAsUnread(messageId);
 };
 
 /**
  * Mark a Gmail message as starred
+ * ⚠️ DELEGATED TO: src/integrations/gmail/operations/mutations.ts
  */
 export const markGmailMessageAsStarred = async (messageId: string): Promise<void> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-
-  console.log(`Marking message ${messageId} as STARRED`);
-
-    await window.gapi.client.gmail.users.messages.modify({
-      userId: 'me',
-      id: messageId,
-      resource: { addLabelIds: ['STARRED'] }
-    });
-
-    console.log(`Successfully marked message ${messageId} as STARRED`);
-  } catch (error) {
-    console.error('Error marking message as STARRED:', error);
-    throw error;
-  }
+  return gmailMarkAsStarred(messageId);
 };
 
 /**
  * Mark a Gmail message as unstarred
+ * ⚠️ DELEGATED TO: src/integrations/gmail/operations/mutations.ts
  */
 export const markGmailMessageAsUnstarred = async (messageId: string): Promise<void> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-
-  console.log(`Marking message ${messageId} as UNSTARRED`);
-
-    await window.gapi.client.gmail.users.messages.modify({
-      userId: 'me',
-      id: messageId,
-      resource: { removeLabelIds: ['STARRED'] }
-    });
-
-    console.log(`Successfully marked message ${messageId} as UNSTARRED`);
-  } catch (error) {
-    console.error('Error marking message as UNSTARRED:', error);
-    throw error;
-  }
+  return gmailMarkAsUnstarred(messageId);
 };
 
 /**
  * Mark a Gmail message as IMPORTANT
+ * ⚠️ DELEGATED TO: src/integrations/gmail/operations/mutations.ts
  */
 export const markGmailMessageAsImportant = async (messageId: string): Promise<void> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-    console.log(`Marking message ${messageId} as IMPORTANT`);
-    await window.gapi.client.gmail.users.messages.modify({
-      userId: 'me',
-      id: messageId,
-      resource: { addLabelIds: ['IMPORTANT'] }
-    });
-    console.log(`Successfully marked message ${messageId} as IMPORTANT`);
-  } catch (error) {
-    console.error('Error marking message as IMPORTANT:', error);
-    throw error;
-  }
+  return gmailMarkAsImportant(messageId);
 };
 
 /**
  * Remove IMPORTANT label
+ * ⚠️ DELEGATED TO: src/integrations/gmail/operations/mutations.ts
  */
 export const markGmailMessageAsUnimportant = async (messageId: string): Promise<void> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-    console.log(`Marking message ${messageId} as NOT IMPORTANT`);
-    await window.gapi.client.gmail.users.messages.modify({
-      userId: 'me',
-      id: messageId,
-      resource: { removeLabelIds: ['IMPORTANT'] }
-    });
-    console.log(`Successfully removed IMPORTANT from ${messageId}`);
-  } catch (error) {
-    console.error('Error removing IMPORTANT label:', error);
-    throw error;
-  }
+  return gmailMarkAsUnimportant(messageId);
 };
 
 /**
  * Get Gmail user profile information
  */
+/**
+ * Get Gmail user profile information
+ * ⚠️ DELEGATED TO: src/integrations/gmail/contacts/profile.ts
+ */
 export const getGmailUserProfile = async (): Promise<{ name: string; email: string; picture?: string } | null> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-
-    console.log('Fetching Gmail user profile...');
-    
-    // Use the Gmail API to get user's profile (which includes email address)
-    const response = await window.gapi.client.request({
-      path: 'https://gmail.googleapis.com/gmail/v1/users/me/profile'
-    });
-
-    if (!response.result) {
-      throw new Error('No profile data returned from Gmail API');
-    }
-
-    // Get the email address from the profile
-    const emailAddress = response.result.emailAddress;
-    
-    // For now, we'll extract name from email or use email as name
-    // In a real app, you might want to use Google People API for more detailed profile info
-    let name = emailAddress;
-    if (emailAddress) {
-      // Try to extract name from email (e.g., "john.doe@gmail.com" -> "John Doe")
-      const localPart = emailAddress.split('@')[0];
-      name = localPart.split(/[._]/).map((part: string) => 
-        part.charAt(0).toUpperCase() + part.slice(1)
-      ).join(' ');
-    }
-
-    console.log('Gmail user profile fetched:', { name, email: emailAddress });
-    
-    return {
-      name: name,
-      email: emailAddress || '',
-      picture: undefined // Gmail API doesn't provide profile pictures directly
-    };
-
-  } catch (error) {
-    console.error('Error fetching Gmail user profile:', error);
-    return null;
-  }
+  return gmailGetUserProfile();
 };
 
 /**
  * Test function to verify People API connectivity
  * Can be called from browser console: window.testPeopleAPI()
+ * ⚠️ DELEGATED TO: src/integrations/gmail/contacts/profile.ts
  */
 export const testPeopleAPI = async (): Promise<void> => {
-  console.log('=== Testing People API ===');
-  
-  try {
-    // Check basic authentication
-    console.log('1. Checking Gmail sign-in status:', isGmailSignedIn());
-    
-    if (!isGmailSignedIn()) {
-      console.error('Not signed in to Gmail - cannot test People API');
-      return;
-    }
-    
-    // Check if gapi is available
-    console.log('2. Checking gapi availability:', !!window.gapi);
-    console.log('3. Checking gapi.client availability:', !!window.gapi?.client);
-    
-    // List all available APIs
-    console.log('4. Available APIs:', Object.keys(window.gapi?.client || {}));
-    
-    // Check if People API is available
-    console.log('5. Checking People API availability:', !!window.gapi?.client?.people);
-    
-    if (window.gapi?.client?.people) {
-      console.log('6. People API object:', window.gapi.client.people);
-      console.log('7. People connections method available:', 
-        !!window.gapi.client.people.people?.connections?.list);
-    }
-    
-    // Test People API calls
-    console.log('8. Testing fetchPeopleConnections...');
-    const peopleConnections = await fetchPeopleConnections();
-    console.log('9. People connections result:', peopleConnections);
-    
-    console.log('10. Testing fetchOtherContacts...');
-    const otherContacts = await fetchOtherContacts();
-    console.log('11. Other contacts result:', otherContacts);
-    
-    console.log('=== People API Test Complete ===');
-    console.log(`Results: ${peopleConnections.length} people connections, ${otherContacts.length} other contacts`);
-    
-  } catch (error) {
-    console.error('=== People API Test Failed ===');
-    console.error('Error:', error);
-  }
+  return gmailTestPeopleAPI();
 };
 
 // Make it available globally for testing
@@ -2816,224 +1791,59 @@ if (typeof window !== 'undefined') {
 
 /**
  * Fetch frequently contacted people and my contacts from Google People API
+ * ⚠️ DELEGATED TO: src/integrations/gmail/contacts/profile.ts
  */
 export const fetchPeopleConnections = async (): Promise<any[]> => {
-  try {
-    if (!isGmailSignedIn()) {
-      console.warn('fetchPeopleConnections: Not signed in to Gmail');
-      throw new Error('Not signed in to Gmail');
-    }
-
-    console.log('fetchPeopleConnections: Starting to fetch...');
-    console.log('fetchPeopleConnections: gapi.client available:', !!window.gapi?.client);
-    console.log('fetchPeopleConnections: people API available:', !!window.gapi?.client?.people);
-
-    // Check if People API is available
-    if (!window.gapi?.client?.people) {
-      console.warn('fetchPeopleConnections: People API not available - checking what is available');
-      console.log('Available APIs:', Object.keys(window.gapi?.client || {}));
-      return [];
-    }
-
-    console.log('fetchPeopleConnections: Calling People API...');
-    
-    const response = await window.gapi.client.people.people.connections.list({
-      resourceName: 'people/me',
-      pageSize: 1000,
-      sortOrder: 'LAST_MODIFIED_DESCENDING',
-      personFields: 'names,emailAddresses,photos,metadata'
-    });
-
-    console.log('fetchPeopleConnections: API response received:', response);
-    const connections = response.result?.connections || [];
-    console.log(`fetchPeopleConnections: Found ${connections.length} connections`);
-    
-    return connections;
-  } catch (error) {
-    console.error('fetchPeopleConnections: Error fetching people connections:', error);
-    return []; // Return empty array instead of throwing
-  }
+  return gmailFetchPeopleConnections();
 };
 
 /**
  * Fetch other contacts from Google People API
+ * ⚠️ DELEGATED TO: src/integrations/gmail/contacts/profile.ts
  */
 export const fetchOtherContacts = async (): Promise<any[]> => {
-  try {
-    if (!isGmailSignedIn()) {
-      console.warn('fetchOtherContacts: Not signed in to Gmail');
-      throw new Error('Not signed in to Gmail');
-    }
-
-    console.log('fetchOtherContacts: Starting to fetch...');
-    
-    const response = await window.gapi.client.request({
-      path: 'https://people.googleapis.com/v1/otherContacts',
-      params: {
-        readMask: 'names,emailAddresses,photos',
-        pageSize: 1000
-      }
-    });
-
-    console.log('fetchOtherContacts: API response received:', response);
-    const otherContacts = response.result.otherContacts || [];
-    console.log(`fetchOtherContacts: Found ${otherContacts.length} other contacts`);
-
-    return otherContacts;
-  } catch (error) {
-    console.error('fetchOtherContacts: Error fetching other contacts:', error);
-    if (error instanceof Error) {
-      console.error('fetchOtherContacts: Error details:', {
-        message: error.message,
-        status: (error as any).status,
-        details: (error as any).result
-      });
-    }
-    return []; // Return empty array instead of throwing for this function too
-  }
+  return gmailFetchOtherContacts();
 };
 
 /**
  * List Gmail filters
  */
+/**
+ * List all Gmail filters
+ * ⚠️ DELEGATED TO: src/integrations/gmail/operations/filters.ts
+ */
 export const listGmailFilters = async (): Promise<any[]> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-
-    const response = await window.gapi.client.request({
-      path: 'https://gmail.googleapis.com/gmail/v1/users/me/settings/filters'
-    });
-
-    return response.result.filter || [];
-  } catch (error) {
-    console.error('Error listing Gmail filters:', error);
-    throw error;
-  }
+  return gmailListFilters();
 };
 
 /**
  * Get a specific Gmail filter
+ * ⚠️ DELEGATED TO: src/integrations/gmail/operations/filters.ts
  */
 export const getGmailFilter = async (filterId: string): Promise<any> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-
-    const response = await window.gapi.client.request({
-      path: `https://gmail.googleapis.com/gmail/v1/users/me/settings/filters/${filterId}`
-    });
-
-    return response.result;
-  } catch (error) {
-    console.error('Error getting Gmail filter:', error);
-    throw error;
-  }
+  return gmailGetFilter(filterId);
 };
 
 /**
  * Create a new Gmail filter
+ * ⚠️ DELEGATED TO: src/integrations/gmail/operations/filters.ts
  */
 export const createGmailFilter = async (criteria: any, action: any): Promise<any> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-
-    const response = await window.gapi.client.request({
-      path: 'https://gmail.googleapis.com/gmail/v1/users/me/settings/filters',
-      method: 'POST',
-      body: {
-        criteria,
-        action
-      }
-    });
-
-    return response.result;
-  } catch (error) {
-    console.error('Error creating Gmail filter:', error);
-    throw error;
-  }
+  return gmailCreateFilter(criteria, action);
 };
 
 /**
  * Delete a Gmail filter
+ * ⚠️ DELEGATED TO: src/integrations/gmail/operations/filters.ts
  */
 export const deleteGmailFilter = async (filterId: string): Promise<void> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-
-    await window.gapi.client.request({
-      path: `https://gmail.googleapis.com/gmail/v1/users/me/settings/filters/${filterId}`,
-      method: 'DELETE'
-    });
-  } catch (error) {
-    console.error('Error deleting Gmail filter:', error);
-    throw error;
-  }
+  return gmailDeleteFilter(filterId);
 };
 
 /**
  * Permanently delete all messages in trash (empty trash)
+ * ⚠️ DELEGATED TO: src/integrations/gmail/misc/trash.ts
  */
 export const emptyGmailTrash = async (): Promise<void> => {
-  try {
-    if (!isGmailSignedIn()) {
-      throw new Error('Not signed in to Gmail');
-    }
-
-    console.log('Emptying Gmail trash...');
-
-    // First, get all messages in trash
-    const trashResponse = await window.gapi.client.gmail.users.messages.list({
-      userId: 'me',
-      q: 'in:trash',
-      maxResults: 500 // Process in batches
-    });
-
-    const messages = trashResponse.result.messages || [];
-    
-    if (messages.length === 0) {
-      console.log('Trash is already empty');
-      return;
-    }
-
-    console.log(`Found ${messages.length} messages in trash. Permanently deleting...`);
-
-    // Delete messages in batches to avoid API limits
-    const batchSize = 100;
-    for (let i = 0; i < messages.length; i += batchSize) {
-      const batch = messages.slice(i, i + batchSize);
-      
-      // Use Promise.allSettled to handle partial failures gracefully
-      const deletePromises = batch.map(async (message: any) => {
-        try {
-          await window.gapi.client.request({
-            path: `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}`,
-            method: 'DELETE'
-          });
-          return { success: true, messageId: message.id };
-        } catch (error: any) {
-          console.warn(`Failed to delete message ${message.id}:`, error);
-          return { success: false, messageId: message.id, error };
-        }
-      });
-
-      await Promise.allSettled(deletePromises);
-      
-      // Add a small delay between batches to be respectful to the API
-      if (i + batchSize < messages.length) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-    }
-
-    console.log(` Successfully emptied trash - deleted ${messages.length} messages`);
-  } catch (error) {
-    console.error('Error emptying Gmail trash:', error);
-    throw error;
-  }
+  return gmailEmptyTrash();
 };

@@ -98,7 +98,6 @@ export function getTabDisplayName(tab: TabKey): string {
     important: 'Important',
     starred: 'Starred',
     spam: 'Spam',
-    archive: 'Archive',
     allmail: 'All Mail',
   };
   return names[tab] || tab;
@@ -174,7 +173,6 @@ export function getEmptyStateMessage(tab: TabKey): string {
     important: 'No important emails',
     starred: 'No starred emails',
     spam: 'No spam emails',
-    archive: 'No archived emails',
     allmail: 'No emails',
   };
   return messages[tab] || 'No emails';

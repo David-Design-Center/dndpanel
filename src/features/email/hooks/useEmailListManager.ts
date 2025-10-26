@@ -36,7 +36,6 @@ const initialState: EmailListState = {
     important: { pageIndex: 0, hasMore: true, isLoading: false },
     starred: { pageIndex: 0, hasMore: true, isLoading: false },
     spam: { pageIndex: 0, hasMore: true, isLoading: false },
-    archive: { pageIndex: 0, hasMore: true, isLoading: false },
     allmail: { pageIndex: 0, hasMore: true, isLoading: false },
   },
   selectedEmails: new Set(),
@@ -134,8 +133,6 @@ function getEmailsForTab(tab: TabName): Email[] {
       return emailRepository.getStarredEmails();
     case 'spam':
       return emailRepository.getSpamEmails();
-    case 'archive':
-      return emailRepository.getArchiveEmails();
     case 'allmail':
       return emailRepository.getAllMailEmails();
     default:
