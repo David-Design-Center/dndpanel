@@ -796,11 +796,19 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
         emailRepository.addEmails(newEmails);
 
         setAllTabEmails(prev => {
-          const newAll = [...(force ? [] : prev.all), ...newEmails];
+          // Deduplicate: filter out emails that already exist in prev.all
+          const existingIds = new Set((force ? [] : prev.all).map(e => e.id));
+          const uniqueNewEmails = newEmails.filter(e => !existingIds.has(e.id));
+          const newAll = [...(force ? [] : prev.all), ...uniqueNewEmails];
+          
+          // Same for unread
+          const existingUnreadIds = new Set((force ? [] : prev.unread).map(e => e.id));
+          const uniqueNewUnread = newEmails.filter(email => !email.isRead && !existingUnreadIds.has(email.id));
+          
           return {
             ...prev,
             all: newAll,
-            unread: [...(force ? [] : prev.unread), ...newEmails.filter(email => !email.isRead)]
+            unread: [...(force ? [] : prev.unread), ...uniqueNewUnread]
           };
         });
         setTabLoaded(prev => ({ ...prev, all: true, unread: true }));

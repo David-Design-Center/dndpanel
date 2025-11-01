@@ -678,10 +678,12 @@ function Compose() {
   };
 
   const removeCcRecipient = (email: string) => {
-    // Allow David to remove any CC recipients, including himself
+    // Allow David and Marti to remove any CC recipients
     // For other users, don't allow removing the hardcoded David email
-    if (email === 'david.v@dnddesigncenter.com' && currentProfile?.name !== 'David') {
-      return; // Non-David users cannot remove David's CC
+    if (email === 'david.v@dnddesigncenter.com' && 
+        currentProfile?.name !== 'David' && 
+        currentProfile?.name !== 'Marti') {
+      return; // Only David and Marti can remove David's CC
     }
     setCcRecipients(prev => prev.filter(recipient => recipient !== email));
   };
@@ -1111,7 +1113,10 @@ function Compose() {
                                 : email}
                             </span>
                             {/* Show remove button based on user permissions */}
-                            {(email !== 'david.v@dnddesigncenter.com' || currentProfile?.name === 'David') && (
+                            {(email !== 'david.v@dnddesigncenter.com' || 
+                              currentProfile?.name === 'David' || 
+                              currentProfile?.name === 'Marti' ||
+                              currentProfile?.userEmail === 'info@effidigi.com') && (
                               <button
                                 type="button"
                                 onClick={() => removeCcRecipient(email)}

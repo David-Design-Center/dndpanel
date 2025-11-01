@@ -77,7 +77,7 @@ export default {
   			}
 		},
 		fontFamily: {
-			sans: ['Urbanist', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'sans-serif'],
+			sans: ['Roboto', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Helvetica Neue', 'sans-serif'],
 		},
 		spacing: {
   			'18': '4.5rem'
