@@ -40,6 +40,11 @@ export interface Email {
     attachmentId?: string;
     partId?: string;
   }[];
+  inlineAttachments?: {
+    cid: string;
+    attachmentId: string;
+    mimeType: string;
+  }[];
   threadId?: string;
 }
 

@@ -154,8 +154,8 @@ async function fetchMessageMetadataBatch(messageList: any[]): Promise<Email[]> {
       // @ts-ignore - Gmail batch API exists but not in TypeScript definitions
       const batch = window.gapi.client.newBatch();
       
-      // Optimized fields to minimize payload size
-      const fields = 'id,threadId,internalDate,labelIds,payload/headers';
+      // Optimized fields to include snippet for preview
+      const fields = 'id,threadId,internalDate,labelIds,snippet,payload/headers';
       const headers = ['Subject', 'From', 'To', 'Date'];
       
       // Add each message to the batch
@@ -192,7 +192,6 @@ async function fetchMessageMetadataBatch(messageList: any[]): Promise<Email[]> {
           const subject = responseHeaders.find((h: any) => h.name.toLowerCase() === 'subject')?.value || 'No Subject';
           const from = responseHeaders.find((h: any) => h.name.toLowerCase() === 'from')?.value || '';
           const to = responseHeaders.find((h: any) => h.name.toLowerCase() === 'to')?.value || '';
-          const dateHeader = responseHeaders.find((h: any) => h.name.toLowerCase() === 'date')?.value;
           
           // Parse from header with fallbacks for drafts
           let fromName = '';
@@ -233,6 +232,12 @@ async function fetchMessageMetadataBatch(messageList: any[]): Promise<Email[]> {
           const isRead = !labelIds.includes('UNREAD');
           const isImportant = labelIds.includes('IMPORTANT');
           const isStarred = labelIds.includes('STARRED');
+          const snippet = response.result.snippet || '';
+          
+          // Use internalDate (milliseconds) for consistent ISO format
+          // This ensures proper date parsing in the UI
+          const dateMs = parseInt(response.result.internalDate);
+          const dateISO = new Date(dateMs).toISOString();
           
           emails.push({
             id: response.result.id,
@@ -241,11 +246,11 @@ async function fetchMessageMetadataBatch(messageList: any[]): Promise<Email[]> {
             to: toRecipients,
             subject,
             body: '', // Will be loaded on demand
-            preview: '', // Will be loaded on demand
+            preview: snippet, // Now includes preview text
             isRead,
             isImportant,
             isStarred,
-            date: dateHeader || new Date(parseInt(response.result.internalDate)).toISOString(),
+            date: dateISO, // Always use ISO format for consistent parsing
             internalDate: response.result.internalDate,
             labelIds
           });
@@ -321,76 +326,57 @@ async function fetchLabelsOptimized(): Promise<GmailLabel[]> {
   });
 }
 
-/**
- * Helper function to dedupe message IDs (remove recent IDs that are already in unread)
- */
-function dedupeIds(recentMessages: any[], unreadIds: string[]): string[] {
-  const unreadSet = new Set(unreadIds);
-  return (recentMessages || [])
-    .map(m => m.id!)
-    .filter(id => !unreadSet.has(id));
-}
 
 /**
- * STEP 1: Critical first paint - minimal calls for instant UI
- * Only fetch metadata for unread emails to avoid 429 errors
- * OPTIMIZED: Reduced batch size to 20 to avoid rate limits
+ * STEP 1: Critical first paint - SINGLE COMPLETE FETCH
+ * Fetch inbox with ALL data needed - no fast-then-slow approach
+ * This provides correct unread counts and timestamps immediately
  */
 export async function loadCriticalInboxData(): Promise<CriticalInboxData> {
-  console.log('🚀 STEP 1: Loading critical inbox data (unread metadata only)...');
+  console.log('🚀 STEP 1: Loading complete inbox data (single reliable fetch)...');
   
-  const INSTANT_LOAD_SIZE = 20; // ⚡ Reduced from 50 to avoid rate limits
+  const INBOX_SIZE = 30; // Reduced to 30 to avoid rate limits (was 50)
   
   try {
-    // Parallel fetch of message lists (IDs only)
-    const [unreadResponse, recentResponse] = await Promise.all([
-      // ✅ Primary unread emails using correct CATEGORY_PERSONAL label
-      fetchMessagesByLabelIds([GMAIL_SYSTEM_LABELS.INBOX, GMAIL_SYSTEM_LABELS.CATEGORY.PRIMARY, GMAIL_SYSTEM_LABELS.UNREAD], INSTANT_LOAD_SIZE),
-      
-      // ✅ Recent primary emails using correct CATEGORY_PERSONAL label  
-      fetchMessagesByLabelIds([GMAIL_SYSTEM_LABELS.INBOX, GMAIL_SYSTEM_LABELS.CATEGORY.PRIMARY], INSTANT_LOAD_SIZE)
-    ]);
+    // Single fetch: Get complete inbox with proper metadata
+    console.log(`📧 Fetching ${INBOX_SIZE} inbox emails with complete metadata...`);
+    
+    const inboxResponse = await fetchMessagesByLabelIds(
+      [GMAIL_SYSTEM_LABELS.INBOX], 
+      INBOX_SIZE
+    );
+    
+    // fetchMessagesByLabelIds already includes metadata - no need to fetch again!
+    const allEmails = inboxResponse.emails || [];
+    
+    console.log(`✅ Loaded ${allEmails.length} inbox emails with complete data`);
+    
+    // Separate unread from all emails
+    const unreadEmails = allEmails.filter((e: Email) => !e.isRead);
+    const inboxUnreadCount = unreadEmails.length;
 
-    // Extract IDs from both lists
-    const unreadIds = (unreadResponse.emails || []).map(e => e.id);
-    const recentIds = dedupeIds((recentResponse as any).messages, unreadIds);
+    console.log(`📊 Inbox loaded: ${allEmails.length} total, ${unreadEmails.length} unread`);
     
-    // Cache recent IDs for later lazy loading
-    sessionCache.recentPrimaryIds = recentIds;
-    
-    console.log(`📧 Lists loaded: ${unreadIds.length} unread IDs, ${recentIds.length} additional recent IDs (cached)`);
-    
-    // ⚡ INSTANT UI: Fetch metadata for ALL recent emails (not just unread)
-    // This ensures the inbox shows emails immediately even if no unread
-    const allEmailIds = recentResponse.emails || [];
-    const allEmails = allEmailIds.length > 0 
-      ? await fetchMessageMetadataBatch(allEmailIds.map((e: any) => ({ id: e.id })))
-      : [];
-    
-    console.log(`⚡ INSTANT: Loaded ${allEmails.length} recent emails with full metadata`);
-
     const finalUnreadResponse: PaginatedEmailResponse = {
-      ...unreadResponse,
-      emails: allEmails.filter((e: Email) => !e.isRead) // Filter unread from all emails
+      emails: unreadEmails,
+      nextPageToken: inboxResponse.nextPageToken,
+      resultSizeEstimate: unreadEmails.length
     };
     
-    const finalRecentResponse: PaginatedEmailResponse = {
-      ...recentResponse,
-      emails: allEmails // Use all emails with metadata
+    const finalInboxResponse: PaginatedEmailResponse = {
+      emails: allEmails,
+      nextPageToken: inboxResponse.nextPageToken,
+      resultSizeEstimate: allEmails.length
     };
 
-    const inboxUnreadCount = finalUnreadResponse.emails.length;
-
-    console.log(`✅ Critical data loaded: ${finalUnreadResponse.emails.length} unread, ${allEmails.length} total recent, unread count: ${inboxUnreadCount}`);
-    
     return {
       unreadList: finalUnreadResponse,
-      recentList: finalRecentResponse,
+      recentList: finalInboxResponse,
       inboxUnreadCount
     };
 
   } catch (error) {
-    console.error('❌ Failed to load critical data:', error);
+    console.error('❌ Failed to load inbox data:', error);
     throw error;
   }
 }
@@ -429,40 +415,41 @@ export async function processAutoReplyOptimized(critical: CriticalInboxData): Pr
 }
 
 /**
- * STEP 2: Background prefetch - load IDs only for essential folders 
- * Metadata will be fetched on tab open to avoid 429 errors
+ * STEP 2: Background prefetch - ONLY DRAFTS for counter
+ * Sent/Important/Starred load on-demand when user clicks tab
+ * This avoids rate limiting and speeds up initial load
  */
-export async function prefetchEssentialFolders(): Promise<{
-  sent: string[];
-  drafts: string[];  
-  important: string[];
-}> {
-  console.log('🔄 STEP 2: Prefetching essential folder IDs (metadata on-demand)...');
+export async function prefetchDraftsOnly(): Promise<{ drafts: PaginatedEmailResponse }> {
+  console.log('🔄 STEP 2: Prefetching drafts only (for counter)...');
   
   try {
-    // Load IDs only using correct system label IDs
-    const [sentResponse, draftsResponse, importantResponse] = await Promise.all([
-      fetchMessagesByLabelIds([GMAIL_SYSTEM_LABELS.SENT], 15),
-      fetchMessagesByLabelIds([GMAIL_SYSTEM_LABELS.DRAFT], 15), 
-      fetchMessagesByLabelIds([GMAIL_SYSTEM_LABELS.IMPORTANT], 15)
-    ]);
+    // Wait 1 second after inbox to avoid rate limit
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    console.log('📧 Fetching draft emails...');
+    
+    // Fetch draft IDs
+    const draftsResponse = await fetchMessagesByLabelIds([GMAIL_SYSTEM_LABELS.DRAFT], 15);
+    
+    // fetchMessagesByLabelIds already includes metadata - no need to fetch again!
+    const draftEmails = draftsResponse.emails || [];
 
-    // Extract IDs only - no metadata fetching to avoid rate limits
-    const sentIds = sentResponse.emails.map(e => e.id);
-    const draftIds = draftsResponse.emails.map(e => e.id);
-    const importantIds = importantResponse.emails.map(e => e.id);
-
-    console.log(`✅ Essential folder IDs cached: ${sentIds.length} sent, ${draftIds.length} drafts, ${importantIds.length} important`);
+    console.log(`✅ Drafts loaded: ${draftEmails.length} drafts`);
+    
+    const finalDraftsResponse: PaginatedEmailResponse = {
+      emails: draftEmails,
+      nextPageToken: draftsResponse.nextPageToken,
+      resultSizeEstimate: draftEmails.length
+    };
     
     return {
-      sent: sentIds,
-      drafts: draftIds,
-      important: importantIds
+      drafts: finalDraftsResponse
     };
-
   } catch (error) {
-    console.error('❌ Failed to prefetch essential folders:', error);
-    return { sent: [], drafts: [], important: [] };
+    console.error('❌ Failed to prefetch drafts:', error);
+    return {
+      drafts: { emails: [], nextPageToken: undefined, resultSizeEstimate: 0 }
+    };
   }
 }
 

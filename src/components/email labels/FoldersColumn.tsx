@@ -93,6 +93,7 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
   const [newLabelName, setNewLabelName] = useState('');
+  const [inboxUnreadOverride, setInboxUnreadOverride] = useState<number | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [parentLabel, setParentLabel] = useState('');
   const [nestUnder, setNestUnder] = useState(false);
@@ -101,6 +102,19 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
   // Default to 'inbox' so the Inbox button starts in an active/disabled state
   const [selectedSystemFolder, setSelectedSystemFolder] = useState<string | null>('inbox');
   const navigate = useNavigate();
+
+  // Listen for inbox unread count updates from EmailPageLayout split view
+  useEffect(() => {
+    const handleInboxUnreadCount = (event: CustomEvent<{ count: number }>) => {
+      setInboxUnreadOverride(event.detail.count);
+    };
+    
+    window.addEventListener('inbox-unread-count', handleInboxUnreadCount as EventListener);
+    
+    return () => {
+      window.removeEventListener('inbox-unread-count', handleInboxUnreadCount as EventListener);
+    };
+  }, []);
 
   // Build hierarchical tree structure from flat labels
   const labelTree = useMemo(() => {
@@ -310,17 +324,21 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
       
       const systemLabelId = systemLabelIdMap[folder.name];
       if (systemLabelId) {
-        // Use the system count from Gmail labels for ALL folders (including Inbox)
-        // This ensures consistency: what Gmail says = what we show
-        const systemCount = systemCounts[systemLabelId];
-        const fallbackCount = matchingLabel?.messagesUnread ?? 0;
-        unreadCount = systemCount ?? fallbackCount;
+        // For Inbox, use the override from split view if available (only shows recent 24h unread)
+        // For other folders, use the system count from Gmail labels
+        if (folder.name === 'Inbox' && inboxUnreadOverride !== null) {
+          unreadCount = inboxUnreadOverride;
+        } else {
+          const systemCount = systemCounts[systemLabelId];
+          const fallbackCount = matchingLabel?.messagesUnread ?? 0;
+          unreadCount = systemCount ?? fallbackCount;
+        }
         overLimit = unreadCount > 99;
       }
 
       // Debug logging
       if (folder.name === 'Inbox') {
-        console.log('Inbox unread count:', unreadCount, 'systemCounts:', systemCounts);
+        console.log('Inbox unread count:', unreadCount, 'override:', inboxUnreadOverride, 'systemCounts:', systemCounts);
       }
 
       return {
@@ -333,7 +351,7 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
         color: selectedSystemFolder === folder.folderType ? '#272727ff' : '#4d4d4dff'
       };
     });
-  }, [labels, systemCounts, selectedSystemFolder, recentCounts]); // include recentCounts
+  }, [labels, systemCounts, selectedSystemFolder, recentCounts, inboxUnreadOverride]); // include inboxUnreadOverride
 
   // (Removed explicit refresh effect to avoid duplicate rapid refresh loops; context handles initial load)
 

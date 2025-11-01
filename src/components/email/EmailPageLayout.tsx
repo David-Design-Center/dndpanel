@@ -31,7 +31,6 @@ import { type SearchSuggestion } from '../../services/searchService';
 import EmailListItem from './EmailListItem';
 import ThreeColumnLayout from '../layout/ThreeColumnLayout';
 import { Email } from '../../types';
-import { useLabel } from '../../contexts/LabelContext';
 import {
   getEmails,
   getCategoryEmailsForFolder,
@@ -62,7 +61,7 @@ import {
   loadCriticalInboxData,
   loadLabelsBasic,
   processAutoReplyOptimized,
-  prefetchEssentialFolders,
+  prefetchDraftsOnly,
   clearOptimizedCaches
 } from '../../services/optimizedInitialLoad';
 // Import DND packages
@@ -93,13 +92,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   const { isGmailSignedIn, loading: authLoading, isGmailInitializing } = useAuth();
   const { selectEmail } = useInboxLayout();
   const { setSystemFolderFilterHandler } = useFoldersColumn();
-  const { systemCounts } = useLabel(); // Get total counts from Gmail labels (metadata)
-
-  // Calculate total unread and read counts from Gmail metadata (no fetching needed)
-  const totalUnreadInbox = useMemo(() => {
-    // Get unread count for INBOX from system labels
-    return systemCounts['INBOX'] || 0;
-  }, [systemCounts]);
 
   // Get unread count from repository (single source of truth) 
   const getUnreadFromRepository = useCallback((): number => {
@@ -155,6 +147,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshCooldown, setRefreshCooldown] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchSuggestions, setSearchSuggestions] = useState<SearchSuggestion[]>([]);
@@ -164,6 +157,15 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   const [hasEverLoaded, setHasEverLoaded] = useState(false); // Track if we've ever successfully loaded
   // Inbox split view mode: show Unread and Everything Else side-by-side vertically, or expand one
   const [inboxViewMode, setInboxViewMode] = useState<'split' | 'unread' | 'read'>('split');
+  
+  // Wrapper function to switch view mode and clear selections
+  const switchInboxViewMode = (mode: 'split' | 'unread' | 'read') => {
+    console.log(`📋 Switching inbox view mode: ${inboxViewMode} → ${mode}`);
+    // Clear all selections when switching views to avoid confusion
+    setSectionSelectedEmails(new Set());
+    setSelectedEmails(new Set());
+    setInboxViewMode(mode);
+  };
   
   // Toolbar filter state
   const [] = useState(false);
@@ -549,65 +551,35 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
         console.error('Auto-reply processing failed:', error);
       });
 
-      // Quick step: replace primary-only with unified inbox (All Mail except Sent/Trash/Spam) for accuracy
-      try {
-        const unified = await getAllInboxEmails(true, 100);
-        // Defensive filter: remove any items that still carry SENT label (bcc/self edge cases)
-        const filteredUnified = (unified.emails || []).filter(e => !e.labelIds?.includes('SENT'));
+      // STEP 2: Background prefetch - ONLY drafts (for counter, with 1s delay to avoid rate limit)
+      prefetchDraftsOnly().then(({ drafts }) => {
+        console.log(`📧 Drafts loaded in background: ${drafts.emails.length} drafts`);
+        
+        // Update drafts in state
         setAllTabEmails(prev => ({
           ...prev,
-            all: filteredUnified,
-            unread: filteredUnified.filter(e => !e.isRead)
+          drafts: drafts.emails
         }));
 
-        setPageTokens(prev => ({
-          ...prev,
-          all: unified.nextPageToken
-        }));
-
-        setHasMoreForTabs(prev => ({
-          ...prev,
-          all: !!unified.nextPageToken,
-          unread: !!unified.nextPageToken
-        }));
-      } catch (e) {
-        console.warn('Unified inbox warm replacement failed; staying on critical primary set', e);
-      }
-
-      // STEP 2: Background prefetch - load commonly accessed folders (3 API calls)  
-      prefetchEssentialFolders().then(({ sent, drafts, important }) => {
-        console.log(`📧 Essential folders loaded: ${sent.length} sent, ${drafts.length} drafts, ${important.length} important`);
-        
-        // Note: These are IDs only - actual Email objects will be loaded when user clicks tabs
-        // So we don't update setAllTabEmails here to avoid TypeScript errors
-        // The IDs will be used for on-demand loading when tabs are accessed
-
-        // Update draft count using the ID count
+        // Update draft count
         setEmailCounts(prev => ({
           ...prev,
-          drafts: drafts.length
+          drafts: drafts.emails.length
         }));
-
-        // Update page tokens and has more flags
+        
+        // Update pagination for drafts
         setPageTokens(prev => ({
           ...prev,
-          all: primaryRecent.length === 100 ? 'has-more' : undefined,
-          sent: sent.length === 15 ? 'has-more' : undefined,
-          important: important.length === 15 ? 'has-more' : undefined,
-          starred: prev.starred
+          drafts: drafts.nextPageToken
         }));
 
         setHasMoreForTabs(prev => ({
           ...prev,
-          all: primaryRecent.length === 100,
-          unread: primaryUnread.length >= 10,
-          sent: sent.length === 15,
-          drafts: drafts.length > 10,
-          important: important.length === 15
+          drafts: !!drafts.nextPageToken
         }));
 
       }).catch(error => {
-        console.error('❌ Failed to prefetch essential folders:', error);
+        console.error('❌ Failed to prefetch drafts:', error);
       });
 
       // Mark as loaded after critical data is shown
@@ -800,9 +772,19 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       setLoadingMore(true);
 
       if (tabType === 'all' || tabType === 'unread') {
-        // Load more inbox emails (shared for all/unread tabs)
+        // DON'T fetch on initial load - we already have data from optimized load
+        // Only fetch when user explicitly scrolls for more
+        if (force && !pageTokens.all) {
+          console.log('⚡ Skipping fetch - already have initial data from optimized load');
+          setLoadingMore(false);
+          return;
+        }
+        
+        // Load more inbox emails (shared for all/unread tabs) - only when paginating
         const pageToken = force ? undefined : (pageTokens.all === 'has-more' ? undefined : pageTokens.all);
-        const response = await getAllInboxEmails(force, 100, pageToken);
+        
+        // Fetch 30 emails at a time for faster loading (instead of 100)
+        const response = await getAllInboxEmails(force, 30, pageToken);
         const newEmails = response.emails || [];
 
         // Debug: log what we fetched
@@ -1136,8 +1118,10 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   };
 
   const handleRefresh = async () => {
-    if (!isGmailSignedIn) return;
+    if (!isGmailSignedIn || refreshCooldown) return;
+    
     setRefreshing(true);
+    setRefreshCooldown(true);
     setIsRefreshLoading(true);
     setAllTabEmails({ all: [], unread: [], sent: [], drafts: [], trash: [], important: [], starred: [], spam: [], allmail: [] });
     
@@ -1154,11 +1138,18 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     
     setRefreshing(false);
     setIsRefreshLoading(false);
+    
+    // 2 second cooldown before allowing another refresh
+    setTimeout(() => {
+      setRefreshCooldown(false);
+    }, 2000);
   };
 
   const handleRefreshCurrentTab = async () => {
-    if (!isGmailSignedIn || refreshing) return;
+    if (!isGmailSignedIn || refreshing || refreshCooldown) return;
+    
     setRefreshing(true);
+    setRefreshCooldown(true);
     
     try {
       // Clear relevant caches to ensure fresh data
@@ -1223,6 +1214,11 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       });
     } finally {
       setRefreshing(false);
+      
+      // 2 second cooldown before allowing another refresh
+      setTimeout(() => {
+        setRefreshCooldown(false);
+      }, 2000);
     }
   };
 
@@ -1538,7 +1534,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   const [isLoadingUnreadShowAll, setIsLoadingUnreadShowAll] = useState(false);
   const [isLoadingReadShowAll, setIsLoadingReadShowAll] = useState(false);
   const [isRefreshLoading, setIsRefreshLoading] = useState(false);
-  const SECTION_PAGE_SIZE = 60; // Load 60 per page in Show All mode
+  const SECTION_PAGE_SIZE = 25; // Show 25 emails per page
   
   // Old handleLoadMore removed; pagination now via toolbar chevrons fetching more when needed.
 
@@ -1676,6 +1672,16 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     const result = splitSource.filter(e => e.isRead || (e.isRead === false && !isWithin24h(e)));
     return result;
   }, [splitSource, twentyFourHoursAgoMs]);
+
+  // Emit the actual split unread count for FoldersColumn to use
+  useEffect(() => {
+    if (pageType === 'inbox' && !labelName) {
+      // Emit event with the actual unread count shown in split view
+      window.dispatchEvent(new CustomEvent('inbox-unread-count', { 
+        detail: { count: splitUnread.length } 
+      }));
+    }
+  }, [splitUnread.length, pageType, labelName]);
 
   const totalLoadedEmails = baseVisible.length;
   const maxPageIndex = Math.max(0, Math.floor(Math.max(0, totalLoadedEmails - 1) / PAGE_SIZE));
@@ -2327,33 +2333,42 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
             )}
           </form>
 
-          {/* Toolbar */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-1">
-              {/* Select All Checkbox */}
-              <label className="flex items-center mr-3">
+          {/* Toolbar - Only show in split view, hide in Show All mode */}
+          {(!isSplitInbox || inboxViewMode === 'split') && (
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-1">
+                {/* Select All Checkbox */}
+                <label className="flex items-center mr-3">
                 <input
                   ref={selectAllCheckboxRef}
                   type="checkbox"
-                  checked={isSplitInbox ? (splitUnread.length > 0 && splitRead.length > 0 && splitUnread.every(e => selectedEmails.has(e.id)) && splitRead.every(e => selectedEmails.has(e.id))) : allVisibleSelected}
+                  checked={isSplitInbox ? 
+                    // Check if all VISIBLE emails in both sections are selected
+                    (splitUnread.slice(0, 25).length > 0 || splitRead.slice(0, 25).length > 0) &&
+                    splitUnread.slice(0, 25).every(e => selectedEmails.has(e.id)) && 
+                    splitRead.slice(0, 25).every(e => selectedEmails.has(e.id))
+                    : allVisibleSelected}
                   onChange={() => {
                     setSelectedEmails(prev => {
                       const next = new Set(prev);
                       
                       if (isSplitInbox) {
-                        // In split view, select/deselect all from both sections
-                        const allInBoth = splitUnread.length > 0 && splitRead.length > 0 && 
-                                         splitUnread.every(e => next.has(e.id)) && 
-                                         splitRead.every(e => next.has(e.id));
+                        // ✅ Split view: only select/deselect VISIBLE emails (first 25 from each section)
+                        const visibleUnread = splitUnread.slice(0, 25);
+                        const visibleRead = splitRead.slice(0, 25);
                         
-                        if (allInBoth) {
-                          // Deselect all
-                          splitUnread.forEach(email => next.delete(email.id));
-                          splitRead.forEach(email => next.delete(email.id));
+                        const allVisibleSelected = 
+                          (visibleUnread.length === 0 || visibleUnread.every(e => next.has(e.id))) &&
+                          (visibleRead.length === 0 || visibleRead.every(e => next.has(e.id)));
+                        
+                        if (allVisibleSelected) {
+                          // Deselect all visible
+                          visibleUnread.forEach(email => next.delete(email.id));
+                          visibleRead.forEach(email => next.delete(email.id));
                         } else {
-                          // Select all
-                          splitUnread.forEach(email => next.add(email.id));
-                          splitRead.forEach(email => next.add(email.id));
+                          // Select all visible
+                          visibleUnread.forEach(email => next.add(email.id));
+                          visibleRead.forEach(email => next.add(email.id));
                         }
                       } else {
                         // Regular view, select/deselect visible page
@@ -2368,7 +2383,9 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                   }}
                   className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
-                <span className="ml-1 text-xs text-gray-600">All</span>
+                <span className="ml-1 text-xs text-gray-600">
+                  {selectedEmails.size > 0 ? `${selectedEmails.size} selected` : 'All'}
+                </span>
               </label>
               
               <button
@@ -2406,12 +2423,12 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
               
               <button
                 onClick={handleRefreshCurrentTab}
-                disabled={refreshing}
+                disabled={refreshing || refreshCooldown}
                 className="group flex items-center px-2 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors relative"
               >
                 <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
                 <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
-                  Refresh emails
+                  {refreshCooldown && !refreshing ? 'Please wait...' : 'Refresh emails'}
                 </div>
               </button>
             </div>
@@ -2424,6 +2441,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
               )}
             </div>
           </div>
+          )}
         </div>
 
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -2510,8 +2528,8 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                   <button 
                     onClick={handleRefresh}
                     className="p-2 hover:bg-gray-100 rounded-md transition-colors flex items-center justify-center"
-                    disabled={refreshing || isSearching}
-                    title="Refresh emails"
+                    disabled={refreshing || refreshCooldown || isSearching}
+                    title={refreshCooldown && !refreshing ? 'Please wait...' : 'Refresh emails'}
                   >
                     <RefreshCw size={16} className={`text-gray-500 hover:text-gray-700 ${refreshing ? 'animate-spin' : ''}`} />
                   </button>
@@ -2534,17 +2552,19 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
               <div className="flex-1 flex flex-col min-h-0">
                 {inboxViewMode === 'split' && (
                   <div className="flex-1 min-h-0 flex flex-col divide-y divide-gray-200">
-                    {/* Unread section */}
-                    <div className="flex-1 min-h-0 flex flex-col">
-                      <div className="flex items-center justify-between px-4 py-2 bg-gray-50">
+                    {/* Unread section - flexible height based on content */}
+                    <div className={`flex flex-col min-h-0 ${splitUnread.length > 0 ? 'flex-shrink-0' : ''}`} style={{ 
+                      maxHeight: splitUnread.length > 0 ? `${Math.min(splitUnread.slice(0, 25).length * 60 + 50, 400)}px` : '120px'
+                    }}>
+                      <div className="flex items-center justify-between px-4 py-2 bg-gray-50 flex-shrink-0">
                         <div className="text-sm font-medium text-gray-800">
-                          Unread ({Math.min(30, splitUnread.length)} of {totalUnreadInbox})
+                          Unread ({Math.min(25, splitUnread.length)} of {splitUnread.length})
                         </div>
                         <div className="flex items-center gap-2">
                           <button
                             className="px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded"
                             title="Show all unread emails"
-                            onClick={() => setInboxViewMode('unread')}
+                            onClick={() => switchInboxViewMode('unread')}
                           >
                             Show All
                           </button>
@@ -2558,7 +2578,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                         ) : (
                           <Table>
                             <TableBody>
-                              {splitUnread.slice(0, 30).map(email => (
+                              {splitUnread.slice(0, 25).map(email => (
                                 <EmailListItem
                                   key={email.id}
                                   email={email}
@@ -2575,22 +2595,22 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                           </Table>
                         )}
                         {!isRefreshLoading && splitUnread.length === 0 && (
-                          <div className="p-6 text-center text-gray-500 text-sm">No unread emails</div>
+                          <div className="p-6 text-center text-gray-500 text-sm">All done for now 🎉</div>
                         )}
                       </div>
                     </div>
 
-                    {/* Everything else section */}
+                    {/* Everything else section - takes remaining space */}
                     <div className="flex-1 min-h-0 flex flex-col">
-                      <div className="flex items-center justify-between px-4 py-2 bg-gray-50">
+                      <div className="flex items-center justify-between px-4 py-2 bg-gray-50 flex-shrink-0">
                         <div className="text-sm font-medium text-gray-800">
-                          Everything else ({Math.min(30, splitRead.length)} of many)
+                          Everything else ({Math.min(25, splitRead.length)} of many)
                         </div>
                         <div className="flex items-center gap-2">
                           <button
                             className="px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded"
                             title="Show all read emails"
-                            onClick={() => setInboxViewMode('read')}
+                            onClick={() => switchInboxViewMode('read')}
                           >
                             Show All
                           </button>
@@ -2604,7 +2624,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                         ) : (
                           <Table>
                             <TableBody>
-                              {splitRead.slice(0, 30).map(email => (
+                              {splitRead.slice(0, 25).map(email => (
                                 <EmailListItem
                                   key={email.id}
                                   email={email}
@@ -2634,7 +2654,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                     <div className="flex-shrink-0 bg-[#F9FAFB] border-b border-gray-200 p-2.5">
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
-                          <button className="p-1 rounded hover:bg-gray-200" title="Back to split" onClick={() => setInboxViewMode('split')}>
+                          <button className="p-1 rounded hover:bg-gray-200" title="Back to split" onClick={() => switchInboxViewMode('split')}>
                             <ArrowLeft size={14} className="text-gray-600" />
                           </button>
                           <div className="text-sm font-medium text-gray-800">Unread ({splitUnread.length})</div>
@@ -2655,7 +2675,10 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                             {isLoadingUnreadShowAll && <span className="text-xs text-blue-600 animate-pulse">Loading...</span>}
                             <button 
                               onClick={handleUnreadShowAllNextPage}
-                              disabled={isLoadingUnreadShowAll}
+                              disabled={
+                                isLoadingUnreadShowAll || 
+                                (unreadShowAllPage >= Math.ceil(splitUnread.length / SECTION_PAGE_SIZE) - 1 && !hasMoreForTabs.unread)
+                              }
                               className="p-1 hover:bg-gray-100 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                               title="Next page"
                             >
@@ -2664,19 +2687,35 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                           </div>
 
                           {/* Select all */}
-                          <label className="flex items-center px-2 py-1 hover:bg-gray-100 rounded" title="Select all in this view">
+                          <label className="flex items-center px-2 py-1 hover:bg-gray-100 rounded" title="Select all visible in this page">
                             <input
                               type="checkbox"
-                              checked={splitUnread.length > 0 && splitUnread.every(e => sectionSelectedEmails.has(e.id))}
+                              checked={
+                                splitUnread
+                                  .slice(unreadShowAllPage * SECTION_PAGE_SIZE, (unreadShowAllPage + 1) * SECTION_PAGE_SIZE)
+                                  .length > 0 &&
+                                splitUnread
+                                  .slice(unreadShowAllPage * SECTION_PAGE_SIZE, (unreadShowAllPage + 1) * SECTION_PAGE_SIZE)
+                                  .every(e => sectionSelectedEmails.has(e.id))
+                              }
                               onChange={(e) => {
+                                const visibleEmails = splitUnread.slice(
+                                  unreadShowAllPage * SECTION_PAGE_SIZE,
+                                  (unreadShowAllPage + 1) * SECTION_PAGE_SIZE
+                                );
                                 if (e.target.checked) {
-                                  setSectionSelectedEmails(new Set(splitUnread.map(e => e.id)));
+                                  setSectionSelectedEmails(new Set([...sectionSelectedEmails, ...visibleEmails.map(e => e.id)]));
                                 } else {
-                                  setSectionSelectedEmails(new Set());
+                                  const newSet = new Set(sectionSelectedEmails);
+                                  visibleEmails.forEach(e => newSet.delete(e.id));
+                                  setSectionSelectedEmails(newSet);
                                 }
                               }}
                               className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                             />
+                            <span className="ml-1 text-xs text-gray-600">
+                              {sectionSelectedEmails.size > 0 ? `${sectionSelectedEmails.size} selected` : 'All'}
+                            </span>
                           </label>
 
                           {/* Delete */}
@@ -2721,9 +2760,9 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                           {/* Refresh */}
                           <button
                             onClick={handleRefreshCurrentTab}
-                            disabled={refreshing}
+                            disabled={refreshing || refreshCooldown}
                             className="p-1 hover:bg-gray-100 disabled:opacity-50 rounded"
-                            title="Refresh this section"
+                            title={refreshCooldown && !refreshing ? 'Please wait...' : 'Refresh this section'}
                           >
                             <RefreshCw size={14} className={`text-gray-600 ${refreshing ? 'animate-spin' : ''}`} />
                           </button>
@@ -2773,7 +2812,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                     <div className="flex-shrink-0 bg-[#F9FAFB] border-b border-gray-200 p-2.5">
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
-                          <button className="p-1 rounded hover:bg-gray-200" title="Back to split" onClick={() => setInboxViewMode('split')}>
+                          <button className="p-1 rounded hover:bg-gray-200" title="Back to split" onClick={() => switchInboxViewMode('split')}>
                             <ArrowLeft size={14} className="text-gray-600" />
                           </button>
                           <div className="text-sm font-medium text-gray-800">Everything else ({splitRead.length})</div>
@@ -2803,19 +2842,35 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                           </div>
 
                           {/* Select all */}
-                          <label className="flex items-center px-2 py-1 hover:bg-gray-100 rounded" title="Select all in this view">
+                          <label className="flex items-center px-2 py-1 hover:bg-gray-100 rounded" title="Select all visible in this page">
                             <input
                               type="checkbox"
-                              checked={splitRead.length > 0 && splitRead.every(e => sectionSelectedEmails.has(e.id))}
+                              checked={
+                                splitRead
+                                  .slice(readShowAllPage * SECTION_PAGE_SIZE, (readShowAllPage + 1) * SECTION_PAGE_SIZE)
+                                  .length > 0 &&
+                                splitRead
+                                  .slice(readShowAllPage * SECTION_PAGE_SIZE, (readShowAllPage + 1) * SECTION_PAGE_SIZE)
+                                  .every(e => sectionSelectedEmails.has(e.id))
+                              }
                               onChange={(e) => {
+                                const visibleEmails = splitRead.slice(
+                                  readShowAllPage * SECTION_PAGE_SIZE,
+                                  (readShowAllPage + 1) * SECTION_PAGE_SIZE
+                                );
                                 if (e.target.checked) {
-                                  setSectionSelectedEmails(new Set(splitRead.map(e => e.id)));
+                                  setSectionSelectedEmails(new Set([...sectionSelectedEmails, ...visibleEmails.map(e => e.id)]));
                                 } else {
-                                  setSectionSelectedEmails(new Set());
+                                  const newSet = new Set(sectionSelectedEmails);
+                                  visibleEmails.forEach(e => newSet.delete(e.id));
+                                  setSectionSelectedEmails(newSet);
                                 }
                               }}
                               className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                             />
+                            <span className="ml-1 text-xs text-gray-600">
+                              {sectionSelectedEmails.size > 0 ? `${sectionSelectedEmails.size} selected` : 'All'}
+                            </span>
                           </label>
 
                           {/* Delete */}
@@ -2860,9 +2915,9 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                           {/* Refresh */}
                           <button
                             onClick={handleRefreshCurrentTab}
-                            disabled={refreshing}
+                            disabled={refreshing || refreshCooldown}
                             className="p-1 hover:bg-gray-100 disabled:opacity-50 rounded"
-                            title="Refresh this section"
+                            title={refreshCooldown && !refreshing ? 'Please wait...' : 'Refresh this section'}
                           >
                             <RefreshCw size={14} className={`text-gray-600 ${refreshing ? 'animate-spin' : ''}`} />
                           </button>

@@ -9,7 +9,7 @@ import { extractCharsetFromPart, decodeHtmlEntities } from './charset';
 
 /**
  * Extract text content from an email part
- * CRITICAL FIX: Preserves all styling, no aggressive cleaning
+ * Returns raw HTML/text - sanitization happens in the frontend
  */
 export function extractTextFromPart(part: EmailPart): string {
   if (!part.body?.data) {
@@ -17,30 +17,38 @@ export function extractTextFromPart(part: EmailPart): string {
   }
 
   try {
-    // Get charset (forces UTF-8 for HTML to prevent mojibake)
+    // Get charset from Content-Type header
     const charset = extractCharsetFromPart(part);
+    console.log(`📧 Decoding email part: mimeType=${part.mimeType}, charset=${charset}`);
 
-    // Decode base64url to bytes
+    // Step 1: Decode base64url to bytes (Gmail always base64url-encodes the body)
     let bytes = decodeBase64UrlToBytes(part.body.data);
+    console.log(`📦 Decoded ${bytes.length} bytes from base64url`);
 
-    // Check for quoted-printable encoding
+    // Step 2: Check Content-Transfer-Encoding header
     const cte = part.headers
       ?.find(h => h.name.toLowerCase() === 'content-transfer-encoding')
       ?.value?.toLowerCase() || '';
+    console.log(`🔐 Content-Transfer-Encoding: ${cte || '(none)'}`);
 
-    // Decode quoted-printable if needed
-    if (part.mimeType.startsWith('text/html') || cte.includes('quoted-printable')) {
+    // Step 3: ONLY decode quoted-printable if explicitly set in CTE header
+    if (cte.includes('quoted-printable')) {
+      console.log(`🔄 Decoding quoted-printable...`);
       bytes = decodeQuotedPrintableToBytes(bytes);
+      console.log(`📦 After QP decode: ${bytes.length} bytes`);
     }
 
-    // Decode bytes to string
+    // Step 4: Decode bytes to string using detected charset
     let text = new TextDecoder(charset).decode(bytes);
+    console.log(`📝 Decoded to ${text.length} characters`);
+    
+    // Log first 200 chars to see what we got
+    console.log(`📄 First 200 chars: ${text.substring(0, 200)}`);
 
-    // Decode HTML entities
+    // Step 5: Decode HTML entities (e.g., &amp; → &)
     text = decodeHtmlEntities(text);
 
-    // ⚠️ NO AGGRESSIVE CLEANING - Preserve styles and formatting!
-    // For plain text, just convert newlines to <br>
+    // Step 6: For plain text, convert newlines to <br>
     if (part.mimeType === 'text/plain') {
       return text
         .replace(/\r\n/g, '<br>')

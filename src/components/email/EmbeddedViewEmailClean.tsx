@@ -20,6 +20,7 @@ import {
 } from '../../services/emailService';
 import { createGmailFilter } from '../../integrations/gapiService';
 import { optimizedEmailService } from '../../services/optimizedEmailService';
+import { replaceCidReferences } from '../../integrations/gmail/fetch/messages';
 import { Email } from '../../types';
 import { useInboxLayout } from '../../contexts/InboxLayoutContext';
 import { useLabel } from '../../contexts/LabelContext';
@@ -60,11 +61,20 @@ const formatEmailTime = (dateString: string): { time: string; relative: string }
 // Extract initials for avatar
 const getInitials = (name: string): string => {
   if (!name) return '?';
-  const parts = name.trim().split(' ');
+  // Remove angle brackets if present
+  const cleanName = name.replace(/[<>]/g, '').trim();
+  const parts = cleanName.split(' ');
   if (parts.length >= 2) {
     return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   }
-  return name.substring(0, 2).toUpperCase();
+  return cleanName.substring(0, 2).toUpperCase();
+};
+
+// Clean display name by removing angle brackets
+const cleanDisplayName = (name: string): string => {
+  if (!name) return '';
+  // Remove < and > brackets
+  return name.replace(/[<>]/g, '').trim();
 };
 
 // Generate consistent color for sender
@@ -106,6 +116,10 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const [forwardTo, setForwardTo] = useState('');
   const [sending, setSending] = useState(false);
   const [expandedMessages, setExpandedMessages] = useState<Set<string>>(new Set());
+  const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set()); // Track which messages have images loaded
+  
+  // Attachment preview modal state
+  const [previewAttachment, setPreviewAttachment] = useState<{ url: string; name: string; type: string } | null>(null);
   
   // Three-dot menu state (same as context menu in EmailListItem)
   const [showMoreMenu, setShowMoreMenu] = useState(false);
@@ -343,8 +357,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       } else {
         await markAsUnread(email.id);
       }
-      // Refresh from server to ensure consistency
-      await fetchEmailAndThread();
+      // ✅ No refresh needed - optimistic update already done
     } catch (err) {
       console.error('Failed to update read status:', err);
       // Revert on error
@@ -396,7 +409,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       } else {
         await markAsUnimportant(email.id);
       }
-      await fetchEmailAndThread();
+      // ✅ No refresh needed - optimistic update already done
     } catch (err) {
       console.error('Failed to update important status:', err);
       // Revert on error
@@ -448,7 +461,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       } else {
         await markAsUnstarred(email.id);
       }
-      await fetchEmailAndThread();
+      // ✅ No refresh needed - optimistic update already done
     } catch (err) {
       console.error('Failed to update starred status:', err);
       // Revert on error
@@ -754,7 +767,9 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     return filteredLabels.some(l => (l as any).displayName.toLowerCase() === q);
   })();
 
-  const toggleMessageExpansion = (messageId: string) => {
+  const toggleMessageExpansion = async (messageId: string) => {
+    const wasExpanded = expandedMessages.has(messageId);
+    
     setExpandedMessages(prev => {
       const next = new Set(prev);
       if (next.has(messageId)) {
@@ -764,6 +779,124 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       }
       return next;
     });
+    
+    // If expanding and images not loaded yet, load them now
+    if (!wasExpanded && !loadedImages.has(messageId)) {
+      const message = threadMessages.find(m => m.id === messageId);
+      if (message?.inlineAttachments && message.inlineAttachments.length > 0) {
+        console.log(`🖼️ Lazy loading ${message.inlineAttachments.length} inline images for message ${messageId}`);
+        
+        try {
+          // Replace cid: references with actual data URIs
+          const updatedBody = await replaceCidReferences(
+            message.body,
+            message.inlineAttachments,
+            messageId
+          );
+          
+          // Update the message with loaded images
+          setThreadMessages(prev => 
+            prev.map(m => m.id === messageId ? { ...m, body: updatedBody } : m)
+          );
+          
+          // Mark as loaded
+          setLoadedImages(prev => new Set(prev).add(messageId));
+          console.log(`✅ Inline images loaded for message ${messageId}`);
+        } catch (error) {
+          console.error(`❌ Failed to load inline images for message ${messageId}:`, error);
+        }
+      }
+    }
+  };
+
+  const handleDownloadAttachment = async (messageId: string, attachmentId: string, filename: string) => {
+    try {
+      console.log(`⬇️ Downloading attachment: ${filename}`);
+      
+      const response = await window.gapi.client.gmail.users.messages.attachments.get({
+        userId: 'me',
+        messageId: messageId,
+        id: attachmentId
+      });
+      
+      if (response.result?.data) {
+        // Convert base64url to base64
+        const base64Data = response.result.data
+          .replace(/-/g, '+')
+          .replace(/_/g, '/');
+        
+        // Add padding
+        const padding = '='.repeat((4 - base64Data.length % 4) % 4);
+        const paddedBase64 = base64Data + padding;
+        
+        // Convert to blob and download
+        const byteCharacters = atob(paddedBase64);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray]);
+        
+        // Create download link
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+        
+        toast({ title: `Downloaded ${filename}` });
+      }
+    } catch (error) {
+      console.error('Failed to download attachment:', error);
+      toast({ 
+        title: 'Download failed',
+        description: 'Please try again',
+        variant: 'destructive'
+      });
+    }
+  };
+
+  const handlePreviewAttachment = async (messageId: string, attachmentId: string, filename: string, mimeType: string) => {
+    try {
+      console.log(`👁️ Previewing attachment: ${filename}`);
+      
+      const response = await window.gapi.client.gmail.users.messages.attachments.get({
+        userId: 'me',
+        messageId: messageId,
+        id: attachmentId
+      });
+      
+      if (response.result?.data) {
+        // Convert base64url to base64
+        const base64Data = response.result.data
+          .replace(/-/g, '+')
+          .replace(/_/g, '/');
+        
+        // Add padding
+        const padding = '='.repeat((4 - base64Data.length % 4) % 4);
+        const paddedBase64 = base64Data + padding;
+        
+        // Create data URL
+        const dataUrl = `data:${mimeType};base64,${paddedBase64}`;
+        
+        setPreviewAttachment({
+          url: dataUrl,
+          name: filename,
+          type: mimeType
+        });
+      }
+    } catch (error) {
+      console.error('Failed to preview attachment:', error);
+      toast({ 
+        title: 'Preview failed',
+        description: 'Please try again',
+        variant: 'destructive'
+      });
+    }
   };
 
   const renderMessageBody = (message: Email) => {
@@ -773,19 +906,72 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       return <div className="text-gray-500 text-sm italic">No content</div>;
     }
 
-    // Sanitize HTML
+    console.log('🖼️ Rendering email body, length:', htmlBody.length);
+    console.log('🖼️ First 300 chars:', htmlBody.substring(0, 300));
+
+    // Sanitize with email-safe config - preserve formatting and images
     const clean = DOMPurify.sanitize(htmlBody, {
-      ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'u', 'a', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div', 'span', 'img'],
-      ALLOWED_ATTR: ['href', 'src', 'alt', 'class', 'style', 'target'],
+      ADD_TAGS: ['style', 'link'],
+      ADD_ATTR: ['target', 'style', 'class', 'id', 'width', 'height', 'src', 'href', 'alt', 'title', 'align', 'valign', 'border', 'cellpadding', 'cellspacing', 'bgcolor', 'color', 'size', 'face'],
+      ALLOW_DATA_ATTR: false,
     });
 
+    // Wrap in constrained HTML with forced responsive CSS
+    const wrappedHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+          * { 
+            font-size: 14px !important; 
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+          }
+          body { 
+            margin: 0; 
+            padding: 16px; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            overflow-x: hidden;
+            word-wrap: break-word;
+          }
+          img { 
+            max-width: 100% !important; 
+            height: auto !important; 
+            display: block;
+          }
+          table { 
+            max-width: 100% !important;
+            border-collapse: collapse;
+          }
+          td, th {
+            word-wrap: break-word;
+          }
+          a {
+            color: #1a73e8;
+          }
+        </style>
+      </head>
+      <body>
+        ${clean}
+      </body>
+      </html>
+    `;
+
     return (
-      <div 
-        className="email-body text-sm text-gray-800 leading-relaxed"
-        dangerouslySetInnerHTML={{ __html: clean }}
-        style={{
-          wordWrap: 'break-word',
-          overflowWrap: 'break-word',
+      <iframe
+        srcDoc={wrappedHtml}
+        title="Email content"
+        className="w-full border-0"
+        style={{ minHeight: '400px', height: 'auto' }}
+        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+        onLoad={(e) => {
+          const iframe = e.target as HTMLIFrameElement;
+          if (iframe.contentDocument) {
+            const height = iframe.contentDocument.documentElement.scrollHeight;
+            iframe.style.height = `${height + 20}px`;
+          }
         }}
       />
     );
@@ -882,7 +1068,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           >
             <Flag 
               size={18} 
-              className={email?.labelIds?.includes('IMPORTANT') ? 'text-yellow-500 fill-yellow-500' : 'text-gray-700'}
+              className={email?.labelIds?.includes('IMPORTANT') ? 'text-orange-500 fill-orange-500' : 'text-gray-700'}
             />
           </button>
 
@@ -1120,21 +1306,23 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       </div>
 
       {/* Email Header - Gmail style */}
-      <div className="px-8 py-6 border-b border-gray-200">
-        <h1 className="text-[22px] font-normal text-gray-900 mb-6">{latestMessage.subject || '(no subject)'}</h1>
+      <div className="px-6 py-3 border-b border-gray-200">
+        <h1 className="text-lg font-normal text-gray-900 mb-3 break-words overflow-wrap-anywhere whitespace-pre-wrap" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
+          {latestMessage.subject || '(no subject)'}
+        </h1>
         
-        <div className="flex items-start justify-between mb-4">
-          <div className="flex items-start gap-4 flex-1">
+        <div className="flex items-start justify-between mb-2">
+          <div className="flex items-start gap-3 flex-1">
             {/* Sender Avatar */}
-            <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-medium text-sm ${getSenderColor(latestMessage.from.email)}`}>
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-medium text-xs ${getSenderColor(latestMessage.from.email)}`}>
               {getInitials(latestMessage.from.name)}
             </div>
 
             {/* Sender Info */}
             <div className="flex-1 min-w-0">
-              <div className="flex items-baseline gap-2 mb-1">
-                <span className="font-medium text-sm text-gray-900">{latestMessage.from.name}</span>
-                <span className="text-xs text-gray-600">&lt;{cleanEmailAddress(latestMessage.from.email)}&gt;</span>
+              <div className="flex items-baseline gap-2 mb-0.5">
+                <span className="font-medium text-sm text-gray-900">{cleanDisplayName(latestMessage.from.name)}</span>
+                <span className="text-xs text-gray-500">{cleanEmailAddress(latestMessage.from.email)}</span>
               </div>
               <div className="flex items-center gap-1 text-xs text-gray-600">
                 <span>to me</span>
@@ -1148,47 +1336,13 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
             <div className="text-gray-500">({relative})</div>
           </div>
         </div>
-
-        {/* Attachments Preview */}
-        {latestMessage.attachments && latestMessage.attachments.length > 0 && (
-          <div className="mt-6 pt-4 border-t border-gray-100">
-            <div className="flex items-center gap-2 text-xs font-medium text-gray-700 mb-3">
-              <Paperclip size={14} />
-              <span>{latestMessage.attachments.length} Attachment{latestMessage.attachments.length > 1 ? 's' : ''}</span>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              {latestMessage.attachments.map((att, idx) => {
-                const ext = att.name.split('.').pop()?.toUpperCase() || 'FILE';
-                const isImage = att.mimeType?.startsWith('image/');
-                
-                return (
-                  <div
-                    key={idx}
-                    className="flex items-center gap-3 px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 cursor-pointer transition-colors group"
-                  >
-                    <div className={`w-10 h-10 ${isImage ? 'bg-green-100' : 'bg-red-100'} rounded flex items-center justify-center flex-shrink-0`}>
-                      <span className={`text-xs font-semibold ${isImage ? 'text-green-700' : 'text-red-700'}`}>{ext}</span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-gray-900 truncate">{att.name}</div>
-                      <div className="text-xs text-gray-500">{formatFileSize(att.size || 0)}</div>
-                    </div>
-                    <button className="p-1.5 opacity-0 group-hover:opacity-100 hover:bg-gray-200 rounded transition-opacity">
-                      <Download size={16} className="text-gray-600" />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Email Body - Scrollable */}
       <div className="flex-1 overflow-y-auto">
-        <div className="px-8 py-6">
+        <div className="px-6 py-3">
           {threadMessages.length > 1 ? (
-            <div className="space-y-4">
+            <div className="space-y-2">
               {threadMessages.map((message) => {
                 const isExpanded = expandedMessages.has(message.id);
                 const { time: msgTime } = formatEmailTime(message.date);
@@ -1203,15 +1357,22 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                     {/* Collapsed Header */}
                     <button
                       onClick={() => toggleMessageExpansion(message.id)}
-                      className="w-full px-4 py-3 flex items-center gap-3 hover:bg-gray-50 transition-colors text-left"
+                      className="w-full px-3 py-2 flex items-center gap-2 hover:bg-gray-50 transition-colors text-left"
                     >
-                      <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-medium ${getSenderColor(message.from.email)}`}>
+                      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-medium ${getSenderColor(message.from.email)}`}>
                         {getInitials(message.from.name)}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-gray-900">{message.from.name}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-gray-900">{cleanDisplayName(message.from.name)}</span>
+                          {message.attachments && message.attachments.length > 0 && (
+                            <Paperclip size={12} className="text-gray-400" />
+                          )}
+                        </div>
                         {!isExpanded && (
-                          <div className="text-xs text-gray-500 truncate mt-0.5">{message.preview || 'No preview'}</div>
+                          <div className="text-xs text-gray-500 truncate mt-0.5">
+                            {message.preview ? message.preview.substring(0, 100) : 'No preview'}
+                          </div>
                         )}
                       </div>
                       <div className="text-xs text-gray-500">{msgTime}</div>
@@ -1219,8 +1380,134 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
                     {/* Expanded Body */}
                     {isExpanded && (
-                      <div className="px-4 pb-4 pt-2 border-t border-gray-100">
+                      <div className="px-3 pb-3 pt-2 border-t border-gray-100">
                         {renderMessageBody(message)}
+                        
+                        {/* Attachments Section */}
+                        {message.attachments && message.attachments.length > 0 && (
+                          <div className="mt-4 pt-3 border-t border-gray-100">
+                            <div className="flex items-center gap-2 text-xs font-medium text-gray-700 mb-2">
+                              <Paperclip size={12} />
+                              <span>{message.attachments.length} Attachment{message.attachments.length > 1 ? 's' : ''}</span>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {message.attachments.map((att, idx) => {
+                                const ext = att.name.split('.').pop()?.toUpperCase() || 'FILE';
+                                const isImage = att.mimeType?.startsWith('image/');
+                                const isPdf = att.mimeType === 'application/pdf';
+                                const isDoc = att.mimeType?.includes('word') || att.mimeType?.includes('document');
+                                const isSpreadsheet = att.mimeType?.includes('spreadsheet') || att.mimeType?.includes('excel');
+                                const isPresentation = att.mimeType?.includes('presentation') || att.mimeType?.includes('powerpoint');
+                                const isZip = att.mimeType?.includes('zip') || att.mimeType?.includes('compressed');
+                                const isPreviewable = isImage || isPdf || 
+                                  att.mimeType?.startsWith('text/') ||
+                                  isDoc || isSpreadsheet;
+                                
+                                // Determine background color and icon
+                                let bgColor = 'bg-gray-100';
+                                let textColor = 'text-gray-700';
+                                let icon = ext;
+                                
+                                if (isPdf) {
+                                  bgColor = 'bg-red-50';
+                                  textColor = 'text-red-700';
+                                  icon = 'PDF';
+                                } else if (isDoc) {
+                                  bgColor = 'bg-blue-50';
+                                  textColor = 'text-blue-700';
+                                  icon = 'DOC';
+                                } else if (isSpreadsheet) {
+                                  bgColor = 'bg-green-50';
+                                  textColor = 'text-green-700';
+                                  icon = 'XLS';
+                                } else if (isPresentation) {
+                                  bgColor = 'bg-orange-50';
+                                  textColor = 'text-orange-700';
+                                  icon = 'PPT';
+                                } else if (isZip) {
+                                  bgColor = 'bg-purple-50';
+                                  textColor = 'text-purple-700';
+                                  icon = 'ZIP';
+                                }
+                                
+                                // Truncate filename to max 25 characters
+                                const truncatedName = att.name.length > 25 
+                                  ? att.name.substring(0, 22) + '...' 
+                                  : att.name;
+                                
+                                return (
+                                  <div
+                                    key={idx}
+                                    className="relative group w-24 h-24 flex-shrink-0"
+                                  >
+                                    {/* Thumbnail - Clickable for preview */}
+                                    <button
+                                      onClick={() => {
+                                        console.log(`🖱️ Clicked attachment: ${att.name}, isPdf: ${isPdf}, isPreviewable: ${isPreviewable}, attachmentId: ${att.attachmentId}`);
+                                        if (isPreviewable) {
+                                          handlePreviewAttachment(message.id, att.attachmentId!, att.name, att.mimeType!);
+                                        }
+                                      }}
+                                      className={`w-full h-full rounded-lg flex items-center justify-center overflow-hidden border border-gray-200 ${bgColor} ${isPreviewable ? 'cursor-pointer hover:opacity-90 hover:ring-2 hover:ring-blue-500' : 'cursor-default'}`}
+                                      title={isPreviewable ? `Click to preview ${att.name}` : att.name}
+                                    >
+                                      {isImage && att.attachmentId ? (
+                                        <img
+                                          src={`data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7`}
+                                          alt={att.name}
+                                          className="w-full h-full object-contain"
+                                          onLoad={async (e) => {
+                                            try {
+                                              const response = await window.gapi.client.gmail.users.messages.attachments.get({
+                                                userId: 'me',
+                                                messageId: message.id,
+                                                id: att.attachmentId!
+                                              });
+                                              if (response.result?.data) {
+                                                const base64Data = response.result.data.replace(/-/g, '+').replace(/_/g, '/');
+                                                const padding = '='.repeat((4 - base64Data.length % 4) % 4);
+                                                (e.target as HTMLImageElement).src = `data:${att.mimeType};base64,${base64Data}${padding}`;
+                                              }
+                                            } catch (err) {
+                                              console.error('Failed to load thumbnail:', err);
+                                            }
+                                          }}
+                                        />
+                                      ) : (
+                                        <div className="flex flex-col items-center justify-center gap-1">
+                                          <span className={`text-lg font-bold ${textColor}`}>{icon}</span>
+                                          {ext !== icon && (
+                                            <span className={`text-[8px] ${textColor} opacity-70`}>{ext}</span>
+                                          )}
+                                        </div>
+                                      )}
+                                    </button>
+                                    
+                                    {/* Hover overlay with filename and download */}
+                                    <div className="absolute inset-0 bg-black bg-opacity-75 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-2 pointer-events-none">
+                                      <div className="text-white text-[10px] text-center break-words w-full mb-1 px-1 line-clamp-2">
+                                        {truncatedName}
+                                      </div>
+                                      <div className="text-white text-[10px] mb-2">
+                                        {formatFileSize(att.size || 0)}
+                                      </div>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleDownloadAttachment(message.id, att.attachmentId!, att.name);
+                                        }}
+                                        className="p-1.5 bg-white bg-opacity-20 hover:bg-opacity-30 rounded transition-colors pointer-events-auto"
+                                        title="Download"
+                                      >
+                                        <Download size={14} className="text-white" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1228,123 +1515,261 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
               })}
             </div>
           ) : (
-            renderMessageBody(latestMessage)
+            <div>
+              {renderMessageBody(latestMessage)}
+              
+              {/* Attachments Section for single email */}
+              {latestMessage.attachments && latestMessage.attachments.length > 0 && (
+                <div className="mt-4 pt-3 border-t border-gray-100">
+                  <div className="flex items-center gap-2 text-xs font-medium text-gray-700 mb-2">
+                    <Paperclip size={12} />
+                    <span>{latestMessage.attachments.length} Attachment{latestMessage.attachments.length > 1 ? 's' : ''}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {latestMessage.attachments.map((att, idx) => {
+                      const ext = att.name.split('.').pop()?.toUpperCase() || 'FILE';
+                      const isImage = att.mimeType?.startsWith('image/');
+                      const isPdf = att.mimeType === 'application/pdf';
+                      const isDoc = att.mimeType?.includes('word') || att.mimeType?.includes('document');
+                      const isSpreadsheet = att.mimeType?.includes('spreadsheet') || att.mimeType?.includes('excel');
+                      const isPresentation = att.mimeType?.includes('presentation') || att.mimeType?.includes('powerpoint');
+                      const isZip = att.mimeType?.includes('zip') || att.mimeType?.includes('compressed');
+                      const isPreviewable = isImage || isPdf || 
+                        att.mimeType?.startsWith('text/') ||
+                        isDoc || isSpreadsheet;
+                      
+                      // Determine background color and icon
+                      let bgColor = 'bg-gray-100';
+                      let textColor = 'text-gray-700';
+                      let icon = ext;
+                      
+                      if (isPdf) {
+                        bgColor = 'bg-red-50';
+                        textColor = 'text-red-700';
+                        icon = 'PDF';
+                      } else if (isDoc) {
+                        bgColor = 'bg-blue-50';
+                        textColor = 'text-blue-700';
+                        icon = 'DOC';
+                      } else if (isSpreadsheet) {
+                        bgColor = 'bg-green-50';
+                        textColor = 'text-green-700';
+                        icon = 'XLS';
+                      } else if (isPresentation) {
+                        bgColor = 'bg-orange-50';
+                        textColor = 'text-orange-700';
+                        icon = 'PPT';
+                      } else if (isZip) {
+                        bgColor = 'bg-purple-50';
+                        textColor = 'text-purple-700';
+                        icon = 'ZIP';
+                      }
+                      
+                      const truncatedName = att.name.length > 25 
+                        ? att.name.substring(0, 22) + '...' 
+                        : att.name;
+                      
+                      return (
+                        <div
+                          key={idx}
+                          className="relative group w-24 h-24 flex-shrink-0"
+                        >
+                          <button
+                            onClick={() => {
+                              console.log(`🖱️ Clicked attachment: ${att.name}, isPdf: ${isPdf}, isPreviewable: ${isPreviewable}, attachmentId: ${att.attachmentId}`);
+                              if (isPreviewable) {
+                                handlePreviewAttachment(latestMessage.id, att.attachmentId!, att.name, att.mimeType!);
+                              }
+                            }}
+                            className={`w-full h-full rounded-lg flex items-center justify-center overflow-hidden border border-gray-200 ${bgColor} ${isPreviewable ? 'cursor-pointer hover:opacity-90 hover:ring-2 hover:ring-blue-500' : 'cursor-default'}`}
+                            title={isPreviewable ? `Click to preview ${att.name}` : att.name}
+                          >
+                            {isImage && att.attachmentId ? (
+                              <img
+                                src={`data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7`}
+                                alt={att.name}
+                                className="w-full h-full object-contain"
+                                onLoad={async (e) => {
+                                  try {
+                                    const response = await window.gapi.client.gmail.users.messages.attachments.get({
+                                      userId: 'me',
+                                      messageId: latestMessage.id,
+                                      id: att.attachmentId!
+                                    });
+                                    if (response.result?.data) {
+                                      const base64Data = response.result.data.replace(/-/g, '+').replace(/_/g, '/');
+                                      const padding = '='.repeat((4 - base64Data.length % 4) % 4);
+                                      (e.target as HTMLImageElement).src = `data:${att.mimeType};base64,${base64Data}${padding}`;
+                                    }
+                                  } catch (err) {
+                                    console.error('Failed to load thumbnail:', err);
+                                  }
+                                }}
+                              />
+                            ) : (
+                              <div className="flex flex-col items-center justify-center gap-1">
+                                <span className={`text-lg font-bold ${textColor}`}>{icon}</span>
+                                {ext !== icon && (
+                                  <span className={`text-[8px] ${textColor} opacity-70`}>{ext}</span>
+                                )}
+                              </div>
+                            )}
+                          </button>
+                          
+                          <div className="absolute inset-0 bg-black bg-opacity-75 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-2 pointer-events-none">
+                            <div className="text-white text-[10px] text-center break-words w-full mb-1 px-1 line-clamp-2">
+                              {truncatedName}
+                            </div>
+                            <div className="text-white text-[10px] mb-2">
+                              {formatFileSize(att.size || 0)}
+                            </div>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDownloadAttachment(latestMessage.id, att.attachmentId!, att.name);
+                              }}
+                              className="p-1.5 bg-white bg-opacity-20 hover:bg-opacity-30 rounded transition-colors pointer-events-auto"
+                              title="Download"
+                            >
+                              <Download size={14} className="text-white" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </div>
-      </div>
+        
+        {/* Reply Composer - Inline with thread */}
+        {showReplyComposer && (
+          <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
+              <div className="px-4 py-3 border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium text-gray-900">
+                    {replyMode === 'reply' && 'Reply'}
+                    {replyMode === 'replyAll' && 'Reply all'}
+                    {replyMode === 'forward' && 'Forward'}
+                  </h3>
+                  <button
+                    onClick={() => {
+                      setShowReplyComposer(false);
+                      setReplyContent('');
+                      setForwardTo('');
+                    }}
+                    className="p-1 hover:bg-gray-100 rounded"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              </div>
 
-      {/* Action Bar */}
-      {!showReplyComposer && (
-        <div className="px-8 py-4 border-t border-gray-200 flex items-center gap-2 bg-white">
-          <button
-            onClick={() => {
-              setReplyMode('reply');
-              setShowReplyComposer(true);
-            }}
-            className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-medium transition-colors shadow-sm"
-          >
-            <Reply size={16} />
-            Reply
-          </button>
-          <button
-            onClick={() => {
-              setReplyMode('replyAll');
-              setShowReplyComposer(true);
-            }}
-            className="flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-gray-50 text-gray-700 rounded-md text-sm font-medium transition-colors border border-gray-300"
-          >
-            <ReplyAll size={16} />
-            Reply all
-          </button>
-          <button
-            onClick={() => {
-              setReplyMode('forward');
-              setShowReplyComposer(true);
-            }}
-            className="flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-gray-50 text-gray-700 rounded-md text-sm font-medium transition-colors border border-gray-300"
-          >
-            <Forward size={16} />
-            Forward
-          </button>
-        </div>
-      )}
+              <div className="p-4">
+                {replyMode === 'forward' && (
+                  <input
+                    type="email"
+                    value={forwardTo}
+                    onChange={(e) => setForwardTo(e.target.value)}
+                    placeholder="To:"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                )}
 
-      {/* Reply Composer */}
-      {showReplyComposer && (
-        <div className="border-t border-gray-200 bg-white">
-          <div className="px-8 py-5">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-medium text-gray-900">
-                {replyMode === 'reply' && 'Reply'}
-                {replyMode === 'replyAll' && 'Reply all'}
-                {replyMode === 'forward' && 'Forward'}
-              </h3>
-              <button
-                onClick={() => {
-                  setShowReplyComposer(false);
-                  setReplyContent('');
-                }}
-                className="p-1 hover:bg-gray-100 rounded"
-              >
-                <X size={18} />
-              </button>
-            </div>
+                <div className="border border-gray-300 rounded-md overflow-hidden mb-3" style={{ minHeight: '100px' }}>
+                  <RichTextEditor
+                    value={replyContent}
+                    onChange={setReplyContent}
+                    placeholder="Type your message..."
+                  />
+                </div>
 
-            {replyMode === 'forward' && (
-              <input
-                type="email"
-                value={forwardTo}
-                onChange={(e) => setForwardTo(e.target.value)}
-                placeholder="To:"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-            )}
-
-            <div className="border border-gray-300 rounded-md overflow-hidden mb-4">
-              <RichTextEditor
-                value={replyContent}
-                onChange={setReplyContent}
-                placeholder="Type your message..."
-              />
-            </div>
-
-            <div className="flex items-center gap-3">
-              <button
-                onClick={handleSendReply}
-                disabled={sending || !replyContent.trim() || (replyMode === 'forward' && !forwardTo.trim())}
-                className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-md text-sm font-medium transition-colors shadow-sm"
-              >
-                {sending ? 'Sending...' : 'Send now'}
-              </button>
-              <button
-                onClick={() => {
-                  setShowReplyComposer(false);
-                  setReplyContent('');
-                  setForwardTo('');
-                }}
-                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900"
-              >
-                Cancel
-              </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleSendReply}
+                    disabled={sending || !replyContent.trim() || (replyMode === 'forward' && !forwardTo.trim())}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-md text-sm font-medium transition-colors shadow-sm"
+                  >
+                    {sending ? 'Sending...' : 'Send'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowReplyComposer(false);
+                      setReplyContent('');
+                      setForwardTo('');
+                    }}
+                    className="px-3 py-2 text-sm text-gray-600 hover:text-gray-900"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
+
+      {/* Action Bar - Always visible */}
+      <div className="px-6 py-2 border-t border-gray-200 flex items-center gap-2 bg-white flex-shrink-0">
+        <button
+          onClick={() => {
+            setReplyMode('reply');
+            setShowReplyComposer(true);
+          }}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-medium transition-colors shadow-sm"
+        >
+          <Reply size={14} />
+          Reply
+        </button>
+        <button
+          onClick={() => {
+            setReplyMode('replyAll');
+            setShowReplyComposer(true);
+          }}
+          className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-gray-50 text-gray-700 rounded-md text-sm font-medium transition-colors border border-gray-300"
+        >
+          <ReplyAll size={14} />
+          Reply all
+        </button>
+        <button
+          onClick={() => {
+            setReplyMode('forward');
+            setShowReplyComposer(true);
+          }}
+          className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-gray-50 text-gray-700 rounded-md text-sm font-medium transition-colors border border-gray-300"
+        >
+          <Forward size={14} />
+          Forward
+        </button>
+      </div>
 
       <style>{`
         .email-body {
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
           line-height: 1.6;
+          max-width: 100%;
+          overflow-wrap: break-word;
+          word-wrap: break-word;
+          word-break: break-word;
+        }
+        /* Force consistent small font size (max 14px) */
+        .email-body,
+        .email-body * {
+          font-size: 14px !important;
+          max-width: 100%;
+          box-sizing: border-box;
         }
         .email-body p {
-          margin-bottom: 1em;
-        }
-        .email-body p:last-child {
-          margin-bottom: 0;
+          margin-bottom: 0.5em;
+          font-size: 14px !important;
         }
         .email-body a {
           color: #1a73e8;
           text-decoration: none;
+          font-size: 14px !important;
         }
         .email-body a:hover {
           text-decoration: underline;
@@ -1352,27 +1777,27 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         .email-body img {
           max-width: 100%;
           height: auto;
-          border-radius: 4px;
+          display: block;
+        }
+        .email-body table {
+          max-width: 100%;
+          font-size: 14px !important;
+        }
+        .email-body td,
+        .email-body th {
+          font-size: 14px !important;
+          overflow-wrap: break-word;
         }
         .email-body blockquote {
           border-left: 3px solid #e5e7eb;
           padding-left: 1rem;
           margin: 1rem 0;
           color: #6b7280;
-          font-style: italic;
+          font-size: 14px !important;
         }
-        .email-body code {
-          background-color: #f3f4f6;
-          padding: 0.125rem 0.375rem;
-          border-radius: 0.25rem;
-          font-size: 0.875em;
-        }
-        .email-body pre {
-          background-color: #f3f4f6;
-          padding: 1rem;
-          border-radius: 0.375rem;
-          overflow-x: auto;
-          margin: 1rem 0;
+        .email-body div,
+        .email-body span {
+          font-size: 14px !important;
         }
       `}</style>
 
@@ -1557,6 +1982,86 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
               >
                 Create
               </Button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Attachment Preview Modal */}
+      {previewAttachment && createPortal(
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-[10000]"
+          onClick={() => setPreviewAttachment(null)}
+        >
+          <div 
+            className="relative max-w-7xl max-h-[90vh] w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="absolute top-0 left-0 right-0 bg-black bg-opacity-75 px-4 py-3 flex items-center justify-between z-10">
+              <div className="flex items-center gap-3 text-white">
+                <h3 className="text-sm font-medium truncate">{previewAttachment.name}</h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    const link = document.createElement('a');
+                    link.href = previewAttachment.url;
+                    link.download = previewAttachment.name;
+                    link.click();
+                  }}
+                  className="p-2 hover:bg-white hover:bg-opacity-20 rounded transition-colors text-white"
+                  title="Download"
+                >
+                  <Download size={18} />
+                </button>
+                <button
+                  onClick={() => setPreviewAttachment(null)}
+                  className="p-2 hover:bg-white hover:bg-opacity-20 rounded transition-colors text-white"
+                  title="Close"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="bg-white rounded-lg overflow-hidden mt-14 max-h-[calc(90vh-56px)]">
+              {previewAttachment.type.startsWith('image/') ? (
+                <img
+                  src={previewAttachment.url}
+                  alt={previewAttachment.name}
+                  className="w-full h-full object-contain"
+                />
+              ) : previewAttachment.type === 'application/pdf' ? (
+                <iframe
+                  src={previewAttachment.url}
+                  className="w-full h-[calc(90vh-56px)]"
+                  title={previewAttachment.name}
+                />
+              ) : previewAttachment.type.startsWith('text/') ? (
+                <iframe
+                  src={previewAttachment.url}
+                  className="w-full h-[calc(90vh-56px)]"
+                  title={previewAttachment.name}
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center h-96 text-gray-500">
+                  <p className="mb-4">Preview not available for this file type</p>
+                  <button
+                    onClick={() => {
+                      const link = document.createElement('a');
+                      link.href = previewAttachment.url;
+                      link.download = previewAttachment.name;
+                      link.click();
+                    }}
+                    className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                  >
+                    Download File
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>,

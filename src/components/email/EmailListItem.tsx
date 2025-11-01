@@ -1,4 +1,4 @@
-import { format, parseISO, isToday, isThisYear } from 'date-fns';
+import { format, parseISO, isThisYear } from 'date-fns';
 import { Email } from '@/types';
 import { Paperclip, Mail, MailOpen, Star, Trash2, Tag, Filter, ChevronRight, Search, Settings, X, Plus, Flag } from 'lucide-react';
 import { useSortable } from '@dnd-kit/sortable';
@@ -11,6 +11,7 @@ import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { useLabel } from '@/contexts/LabelContext';
+import { useInboxLayout } from '@/contexts/InboxLayoutContext';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
@@ -35,9 +36,13 @@ interface EmailListItemProps {
 
 function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEmailDelete, isDraft = false, onCreateFilter, isSelected = false, onToggleSelect, renderAsTableRow = true }: EmailListItemProps) {
   const navigate = useNavigate();
+  const { selectedEmailId } = useInboxLayout(); // Get currently viewed email ID
   // const { startFilterCreation } = useFilterCreation();
   const [isToggling, setIsToggling] = useState(false);
   const [isTogglingImportance, setIsTogglingImportance] = useState(false);
+  
+  // Check if this email is currently being viewed
+  const isActiveEmail = selectedEmailId === email.id;
   const [isTogglingStar, setIsTogglingStar] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; show: boolean }>({ x: 0, y: 0, show: false });
   const [showLabelSubmenu, setShowLabelSubmenu] = useState(false);
@@ -64,8 +69,20 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
   const formattedDate = (() => {
     try {
       const d = parseISO(email.date);
-      if (isToday(d)) return format(d, 'h:mm a');
-      if (isThisYear(d)) return format(d, 'MMM d');
+      const now = new Date();
+      const hoursDiff = (now.getTime() - d.getTime()) / (1000 * 60 * 60);
+      
+      // Within 24 hours: show time only (12-hour format with AM/PM)
+      if (hoursDiff < 24 && hoursDiff >= 0) {
+        return format(d, 'h:mm a');
+      }
+      
+      // This year but older than 24h: show date without year
+      if (isThisYear(d)) {
+        return format(d, 'MMM d');
+      }
+      
+      // Older than this year: show date with year
       return format(d, 'MMM d, yyyy');
     } catch {
       return email.date;
@@ -989,8 +1006,14 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
       onClick={handleEmailClick}
       onContextMenu={handleContextMenu}
       className={`group flex items-center px-4 pr-4 overflow-hidden border-b border-gray-100 cursor-pointer select-none transition-colors ${
-        !email.isRead ? 'bg-blue-50 hover:bg-blue-100/60' : 'bg-white hover:bg-gray-50'
-      } ${isDragging ? 'opacity-50 z-10' : ''} ${isSelected ? 'bg-blue-100' : ''}`}
+        isActiveEmail
+          ? 'bg-blue-200 hover:bg-blue-200'      // Active/viewing
+          : isSelected 
+            ? 'bg-blue-200 hover:bg-blue-200'    // Selected
+            : !email.isRead 
+              ? 'bg-blue-100 hover:bg-blue-150 font-semibold' // Unread - darker blue + bold
+              : 'bg-white hover:bg-gray-50'       // Read
+      } ${isDragging ? 'opacity-50 z-10' : ''}`}
       data-dragging={isDragging}
     >
       {/* Selection Checkbox */}
@@ -1108,8 +1131,14 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
         onClick={handleEmailClick}
         onContextMenu={handleContextMenu}
         className={`group cursor-pointer select-none transition-colors ${
-          !email.isRead ? 'bg-blue-50 hover:bg-blue-100/60' : ''
-        } ${isDragging ? 'opacity-50 z-10' : ''} ${isSelected ? 'bg-blue-100' : ''}`}
+          isActiveEmail
+            ? 'bg-blue-200 hover:bg-blue-200'      // Active/viewing
+            : isSelected 
+              ? 'bg-blue-200 hover:bg-blue-200'    // Selected
+              : !email.isRead 
+                ? 'bg-blue-100 hover:bg-blue-150 font-semibold' // Unread - darker blue + bold
+                : 'hover:bg-gray-50'                // Read
+        } ${isDragging ? 'opacity-50 z-10' : ''}`}
         data-dragging={isDragging}
         style={{ height: '32px' }}
       >
@@ -1171,7 +1200,7 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
               {/* Subject + Snippet row */}
               <div className="min-w-0 flex items-center gap-2">
                 <span
-                  className={`subject block ${!email.isRead ? 'font-medium text-gray-900' : 'text-gray-700'} shrink-0 max-w-[45%] truncate whitespace-nowrap leading-5`}
+                  className={`subject block ${!email.isRead ? 'font-medium text-gray-900' : 'text-gray-700'} shrink-0 max-w-[100%] truncate whitespace-nowrap leading-5`}
                   title={email.subject || 'No Subject'}
                 >
                   {cleanEmailSubject(email.subject || 'No Subject')}
@@ -1191,7 +1220,7 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
         </TableCell>
 
         {/* RIGHT cell: fixed width wall */}
-  <TableCell className="p-0 w-40 sm:w-44 align-middle">
+  <TableCell className="p-0 w-28 sm:w-32 align-middle">
     <div className="flex items-center justify-end gap-1 pr-2" style={{ height: '32px' }} onContextMenu={handleContextMenu}>
             <span className="text-xs text-gray-500 whitespace-nowrap tabular-nums group-hover:hidden">
               {formattedDate}

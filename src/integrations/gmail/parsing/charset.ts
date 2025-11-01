@@ -26,40 +26,31 @@ const CHARSET_MAP: Record<string, string> = {
 
 /**
  * Extract charset from Content-Type header
- * CRITICAL FIX: Force UTF-8 for HTML emails to prevent mojibake
  */
 export function extractCharsetFromPart(part: EmailPart): string {
-  // ⚠️ CRITICAL: Modern HTML emails are UTF-8
-  // Forcing other charsets creates "вЂ™" mojibake artifacts
-  if (part.mimeType === 'text/html') {
-    return 'utf-8';
-  }
-
-  // For plain text, check the Content-Type header
+  // Check the Content-Type header for charset
   const contentType = part.headers?.find(
     h => h.name.toLowerCase() === 'content-type'
   )?.value;
 
-  if (!contentType) {
-    return 'utf-8'; // Default to UTF-8
+  if (contentType) {
+    const charsetMatch = contentType.match(/charset=["']?([^"';\s]+)/i);
+    if (charsetMatch?.[1]) {
+      const detectedCharset = charsetMatch[1].trim().toLowerCase();
+      const mappedCharset = CHARSET_MAP[detectedCharset] || detectedCharset;
+
+      // Validate charset is supported
+      try {
+        new TextDecoder(mappedCharset);
+        return mappedCharset;
+      } catch {
+        console.warn(`Unsupported charset "${mappedCharset}", falling back to utf-8`);
+      }
+    }
   }
 
-  const charsetMatch = contentType.match(/charset=["']?([^"';\s]+)/i);
-  if (!charsetMatch?.[1]) {
-    return 'utf-8';
-  }
-
-  const detectedCharset = charsetMatch[1].trim().toLowerCase();
-  const mappedCharset = CHARSET_MAP[detectedCharset] || detectedCharset;
-
-  // Validate charset is supported
-  try {
-    new TextDecoder(mappedCharset);
-    return mappedCharset;
-  } catch {
-    console.warn(`Unsupported charset "${mappedCharset}", falling back to utf-8`);
-    return 'utf-8';
-  }
+  // Default to UTF-8
+  return 'utf-8';
 }
 
 /**

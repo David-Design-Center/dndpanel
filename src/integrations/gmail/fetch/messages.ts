@@ -15,6 +15,150 @@ import {
 } from '../index';
 import type { EmailPart } from '../types';
 
+/**
+ * Extract real attachments (files that are NOT inline images)
+ * These are files that should be shown in the attachments section
+ */
+const extractAttachments = (part: EmailPart, inlineCids: string[]): Array<{ name: string; mimeType: string; size: number; attachmentId: string }> => {
+  const attachments: Array<{ name: string; mimeType: string; size: number; attachmentId: string }> = [];
+  
+  const processPart = (p: EmailPart) => {
+    // Check if this part has a filename and attachmentId
+    const filename = p.filename;
+    const contentId = p.headers?.find(h => h.name.toLowerCase() === 'content-id')?.value?.replace(/^<|>$/g, '');
+    
+    // Include this as an attachment if:
+    // 1. It has a filename AND
+    // 2. It has an attachmentId AND
+    // 3. Either it has NO Content-ID, OR its Content-ID is NOT in the inline list
+    if (filename && p.body?.attachmentId) {
+      const isInline = contentId && inlineCids.includes(contentId);
+      
+      if (!isInline) {
+        console.log(`📎 Found attachment: ${filename} (${p.mimeType}, ${(p.body.size || 0) / 1024}KB)`);
+        attachments.push({
+          name: filename,
+          mimeType: p.mimeType || 'application/octet-stream',
+          size: p.body.size || 0,
+          attachmentId: p.body.attachmentId
+        });
+      } else {
+        console.log(`🖼️ Skipping inline image: ${filename}`);
+      }
+    }
+    
+    // Recursively process child parts
+    if (p.parts) {
+      p.parts.forEach(processPart);
+    }
+  };
+  
+  processPart(part);
+  console.log(`📎 Total attachments found: ${attachments.length}`);
+  return attachments;
+};
+
+/**
+ * Extract inline attachments (images) from email parts
+ * Recursively finds all parts with Content-ID headers
+ */
+const extractInlineAttachments = (part: EmailPart): Array<{ cid: string; attachmentId: string; mimeType: string }> => {
+  const inlineAttachments: Array<{ cid: string; attachmentId: string; mimeType: string }> = [];
+  
+  const processPart = (p: EmailPart) => {
+    // Check if this part has both Content-ID header AND an attachmentId
+    const contentIdHeader = p.headers?.find(h => h.name.toLowerCase() === 'content-id');
+    const contentType = p.mimeType || 'image/png';
+    
+    if (contentIdHeader && p.body?.attachmentId) {
+      // Clean the Content-ID (remove < > brackets)
+      const cid = contentIdHeader.value.replace(/^<|>$/g, '');
+      console.log(`📎 Found inline attachment: cid:${cid}, attachmentId: ${p.body.attachmentId}, type: ${contentType}`);
+      
+      inlineAttachments.push({
+        cid: cid,
+        attachmentId: p.body.attachmentId,
+        mimeType: contentType
+      });
+    }
+    
+    // Recursively process child parts
+    if (p.parts) {
+      p.parts.forEach(processPart);
+    }
+  };
+  
+  processPart(part);
+  console.log(`📎 Total inline attachments found: ${inlineAttachments.length}`);
+  return inlineAttachments;
+};
+
+/**
+ * Replace cid: references in HTML with base64 data URIs
+ * Exported for lazy loading on message expand
+ */
+export const replaceCidReferences = async (
+  html: string, 
+  inlineAttachments: Array<{ cid: string; attachmentId: string; mimeType: string }>,
+  messageId: string
+): Promise<string> => {
+  if (inlineAttachments.length === 0) {
+    return html;
+  }
+  
+  console.log(`🔄 Replacing ${inlineAttachments.length} cid: references in HTML...`);
+  
+  let modifiedHtml = html;
+  
+  // Process each inline attachment
+  for (const attachment of inlineAttachments) {
+    try {
+      console.log(`⏳ Fetching attachment: ${attachment.attachmentId} for cid:${attachment.cid}`);
+      
+      // Fetch the attachment data from Gmail API
+      const response = await window.gapi.client.gmail.users.messages.attachments.get({
+        userId: 'me',
+        messageId: messageId,
+        id: attachment.attachmentId
+      });
+      
+      if (response.result?.data) {
+        // Gmail returns base64url - convert to standard base64
+        const base64Data = response.result.data
+          .replace(/-/g, '+')
+          .replace(/_/g, '/');
+        
+        // Pad if needed
+        const padding = '='.repeat((4 - base64Data.length % 4) % 4);
+        const paddedBase64 = base64Data + padding;
+        
+        // Create data URI
+        const dataUri = `data:${attachment.mimeType};base64,${paddedBase64}`;
+        
+        // Replace ALL occurrences of this cid in the HTML
+        // Match both cid:xxxxx and cid:"xxxxx" formats
+        const cidPatterns = [
+          new RegExp(`cid:${attachment.cid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'gi'),
+          new RegExp(`cid:"${attachment.cid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`, 'gi'),
+          new RegExp(`cid:'${attachment.cid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`, 'gi')
+        ];
+        
+        cidPatterns.forEach(pattern => {
+          modifiedHtml = modifiedHtml.replace(pattern, dataUri);
+        });
+        
+        console.log(`✅ Replaced cid:${attachment.cid} with data URI (${(paddedBase64.length / 1024).toFixed(1)}KB)`);
+      } else {
+        console.warn(`⚠️ No data returned for attachment ${attachment.attachmentId}`);
+      }
+    } catch (error) {
+      console.error(`❌ Failed to fetch attachment for cid:${attachment.cid}:`, error);
+    }
+  }
+  
+  return modifiedHtml;
+};
+
 export interface PaginatedEmailResponse {
   emails: Email[];
   nextPageToken?: string;
@@ -180,13 +324,55 @@ export const fetchGmailMessageById = async (id: string): Promise<Email | undefin
     if (bodyPart) {
       console.log(`Body part found, type: ${bodyPart.mimeType}`);
       body = gmailExtractTextFromPart(bodyPart);
+      
+      // Extract inline attachments metadata (DON'T fetch data yet for performance)
+      console.log('🔍 Searching for inline attachments...');
+      const inlineAttachments = extractInlineAttachments(payload);
+      
+      // SKIP cid: replacement for faster loading - will be done on expand
+      if (inlineAttachments.length > 0) {
+        console.log(`🖼️ Found ${inlineAttachments.length} inline attachments (lazy loading enabled)`);
+      } else {
+        console.log('ℹ️ No inline attachments found');
+      }
+      
+      // Extract real attachments (exclude inline images)
+      console.log('🔍 Searching for real attachments...');
+      const inlineCids = inlineAttachments.map(a => a.cid);
+      const extractedAttachments = extractAttachments(payload, inlineCids);
+      
+      // Convert to Email attachment format
+      const attachments: NonNullable<Email['attachments']> = extractedAttachments.map(att => ({
+        name: att.name,
+        mimeType: att.mimeType,
+        size: att.size,
+        attachmentId: att.attachmentId,
+        url: '' // Will be populated when user downloads
+      }));
+      
+      return {
+        id: id,
+        from: { name: fromName, email: fromEmail },
+        to: [{ name: toName, email: toEmail }],
+        subject: subject,
+        body: body,
+        preview: preview,
+        isRead: !msg.result.labelIds?.includes('UNREAD'),
+        isImportant: msg.result.labelIds?.includes('IMPORTANT'),
+        isStarred: msg.result.labelIds?.includes('STARRED'),
+        date: format(new Date(dateHeader), "yyyy-MM-dd'T'HH:mm:ss"),
+        labelIds: msg.result.labelIds || [],
+        attachments: attachments.length > 0 ? attachments : undefined,
+        threadId: msg.result.threadId,
+        // Store inline attachment metadata for lazy loading
+        inlineAttachments: inlineAttachments.length > 0 ? inlineAttachments : undefined
+      } as Email;
     } else {
       console.warn(`No suitable body part found for message ID (detail view): ${id}. Snippet: "${preview}"`);
       if (!body && preview) body = preview.replace(/\n/g, '<br>');
     }
 
-    const attachments: NonNullable<Email['attachments']> = [];
-
+    // Fallback: no body part found
     return {
       id: id,
       from: { name: fromName, email: fromEmail },
@@ -199,7 +385,7 @@ export const fetchGmailMessageById = async (id: string): Promise<Email | undefin
       isStarred: msg.result.labelIds?.includes('STARRED'),
       date: format(new Date(dateHeader), "yyyy-MM-dd'T'HH:mm:ss"),
       labelIds: msg.result.labelIds || [],
-      attachments: attachments.length > 0 ? attachments : undefined,
+      attachments: undefined,
       threadId: msg.result.threadId
     } as Email;
   } catch (error) {
