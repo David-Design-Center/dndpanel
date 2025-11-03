@@ -185,7 +185,7 @@ export function TreeView({
 
           {/* Expand Icon - Left clickable for expand/collapse */}
           <motion.div
-            className="flex items-center justify-center w-4 h-3 mr-0.5 cursor-pointer"
+            className="flex items-center justify-center w-6 h-5 mr-0.5 cursor-pointer"
             onClick={(e) => {
               e.stopPropagation();
               if (hasChildren) toggleExpanded(node.id);
@@ -194,7 +194,7 @@ export function TreeView({
             transition={{ duration: 0.2, ease: "easeInOut" }}
           >
             {hasChildren && (
-              <ChevronRight className="h-2.5 w-2.5 text-muted-foreground" />
+              <ChevronRight className="h-4 w-4 text-muted-foreground" />
             )}
           </motion.div>
 

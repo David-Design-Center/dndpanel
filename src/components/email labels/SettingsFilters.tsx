@@ -10,23 +10,19 @@ import {
   fetchGmailLabels 
 } from '../../integrations/gapiService';
 import { Button } from '../ui/button';
-import { Input } from '../ui/input';
 import { Label } from '../ui/label';
-import { Checkbox } from '../ui/checkbox';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
-import { Separator } from '../ui/separator';
+import { Card, CardContent } from '../ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '../ui/sheet';
 import LabelSelector from './LabelSelector'; // Expert's isolated component solution
+import EmailContactsDropdown from '../common/EmailContactsDropdown';
 import { 
   Filter, 
   Plus, 
   Trash2, 
-  Settings, 
   AlertCircle, 
   CheckCircle2,
   Loader2,
-  Mail,
   Edit
 } from 'lucide-react';
 
@@ -118,11 +114,12 @@ const FilterItem = memo(({
   return (
     <TableRow className="hover:bg-gray-50">
       <TableCell className="w-12">
-        <Checkbox
+        <input
+          type="checkbox"
           checked={isSelected}
           disabled={isDeleting === 'bulk'}
-          onCheckedChange={(checked) => onSelect(filter.id, !!checked)}
-          className="w-4 h-4 rounded-sm border-2 border-gray-400 data-[state=checked]:border-blue-600 data-[state=checked]:bg-transparent data-[state=checked]:text-blue-600"
+          onChange={(e) => onSelect(filter.id, e.target.checked)}
+          className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer disabled:opacity-50"
         />
       </TableCell>
       <TableCell>
@@ -556,10 +553,6 @@ function SettingsFilters() {
   return (
     <div className="bg-white p-6 rounded-lg shadow-sm">
       <div className="flex items-center justify-between mb-6 pb-6">
-        <div className="flex items-center">
-          <Filter className="w-5 h-5 mr-2 text-gray-600" />
-          <h2 className="text-lg font-semibold text-gray-800">Gmail Filters</h2>
-        </div>
         <Button
           onClick={() => setShowCreateForm(!showCreateForm)}
           disabled={isLoading}
@@ -633,79 +626,59 @@ function SettingsFilters() {
         {/* Create Filter Form */}
         {showCreateForm && (
           <Card>
-            <CardHeader>
-              <CardTitle>Create New Filter</CardTitle>
-              <CardDescription>
-                Define criteria and actions for your new Gmail filter
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
+            <CardContent className="space-y-8">
               {/* Filter Criteria */}
               <div>
-                <h3 className="text-sm font-medium mb-3 flex items-center">
-                  <Mail className="w-4 h-4 mr-2" />
-                  Filter Criteria
-                </h3>
                 {formErrors.criteria && (
                   <p className="text-red-500 text-xs mb-2">{formErrors.criteria}</p>
                 )}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-4 pt-4">
                   <div>
                     <Label htmlFor="from">From</Label>
-                    <Input
-                      id="from"
-                      value={formData.criteria.from}
-                      onChange={(e) => updateCriteria('from', e.target.value)}
-                      placeholder="sender@example.com"
+                    <EmailContactsDropdown
+                      value={formData.criteria.from || ''}
+                      onChange={(email) => updateCriteria('from', email)}
                     />
                   </div>
                   <div className="flex items-center space-x-2">
-                    <Checkbox
+                    <input
+                      type="checkbox"
                       id="hasAttachment"
                       checked={formData.criteria.hasAttachment}
-                      onCheckedChange={(checked) => updateCriteria('hasAttachment', checked)}
-                      className="w-4 h-4 rounded-sm border-2 border-gray-400 data-[state=checked]:border-blue-600 data-[state=checked]:bg-transparent data-[state=checked]:text-blue-600"
+                      onChange={(e) => updateCriteria('hasAttachment', e.target.checked)}
+                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                     />
-                    <Label htmlFor="hasAttachment">Has attachment</Label>
+                    <Label htmlFor="hasAttachment" className="cursor-pointer">Has attachment</Label>
                   </div>
                 </div>
               </div>
 
-              <Separator />
-
               {/* Filter Actions */}
               <div>
-                <h3 className="text-sm font-medium mb-3 flex items-center">
-                  <Settings className="w-4 h-4 mr-2" />
-                  Filter Actions
-                </h3>
                 {formErrors.action && (
                   <p className="text-red-500 text-xs mb-2">{formErrors.action}</p>
                 )}
-                <div className="space-y-4">
-                  {/* Expert's solution: Only one LabelSelector component for adding labels */}
-                  <div className="grid grid-cols-1 gap-4">
-                    <LabelSelector
-                      type="add"
-                      allLabels={labelsMap}
-                      availableLabels={availableLabelsForAdd}
-                      selectedLabelIds={formData.action.addLabelIds || []}
-                      onLabelChange={handleAddLabelsChange}
-                      disabled={isCreating}
-                    />
-                  </div>
+                <div className="space-y-4 pt-4">
+                  {/* Add Labels */}
+                  <LabelSelector
+                    type="add"
+                    allLabels={labelsMap}
+                    availableLabels={availableLabelsForAdd}
+                    selectedLabelIds={formData.action.addLabelIds || []}
+                    onLabelChange={handleAddLabelsChange}
+                    disabled={isCreating}
+                  />
 
                   {/* Delete Action */}
-                  <div className="grid grid-cols-1 gap-4">
-                    <div className="flex items-center space-x-2">
-                      <Checkbox
-                        id="delete"
-                        checked={formData.action.delete}
-                        onCheckedChange={(checked) => updateAction('delete', checked)}
-                        className="w-4 h-4 rounded-sm border-2 border-gray-400 data-[state=checked]:border-blue-600 data-[state=checked]:bg-transparent data-[state=checked]:text-blue-600"
-                      />
-                      <Label htmlFor="delete">Delete</Label>
-                    </div>
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      id="delete"
+                      checked={formData.action.delete}
+                      onChange={(e) => updateAction('delete', e.target.checked)}
+                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    />
+                    <Label htmlFor="delete" className="cursor-pointer">Delete</Label>
                   </div>
                 </div>
               </div>
@@ -754,17 +727,18 @@ function SettingsFilters() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-12">
-                    <Checkbox
+                    <input
+                      type="checkbox"
                       checked={selectedFilters.size === filters.length && filters.length > 0}
                       disabled={isDeleting === 'bulk'}
-                      onCheckedChange={(checked) => {
-                        if (checked) {
+                      onChange={(e) => {
+                        if (e.target.checked) {
                           setSelectedFilters(new Set(filters.map(f => f.id)));
                         } else {
                           setSelectedFilters(new Set());
                         }
                       }}
-                      className="w-4 h-4 rounded-sm border-2 border-gray-400 data-[state=checked]:border-blue-600 data-[state=checked]:bg-transparent data-[state=checked]:text-blue-600"
+                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer disabled:opacity-50"
                     />
                   </TableHead>
                   <TableHead>Filter Rules</TableHead>
@@ -798,67 +772,55 @@ function SettingsFilters() {
               Update the criteria and actions for your Gmail filter
             </SheetDescription>
           </SheetHeader>
-          <div className="space-y-6 py-6">
+          <div className="space-y-8 py-6">
             {/* Filter Criteria */}
             <div>
-              <h3 className="text-sm font-medium mb-3 flex items-center">
-                <Mail className="w-4 h-4 mr-2" />
-                Filter Criteria
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <h3 className="text-sm font-semibold mb-4">Filter Criteria</h3>
+              <div className="space-y-4">
                 <div>
                   <Label htmlFor="edit-from">From</Label>
-                  <Input
-                    id="edit-from"
-                    value={editFormData.criteria.from}
-                    onChange={(e) => updateEditCriteria('from', e.target.value)}
-                    placeholder="sender@example.com"
+                  <EmailContactsDropdown
+                    value={editFormData.criteria.from || ''}
+                    onChange={(email) => updateEditCriteria('from', email)}
                   />
                 </div>
                 <div className="flex items-center space-x-2">
-                  <Checkbox
+                  <input
+                    type="checkbox"
                     id="edit-hasAttachment"
                     checked={editFormData.criteria.hasAttachment}
-                    onCheckedChange={(checked) => updateEditCriteria('hasAttachment', checked)}
-                    className="w-4 h-4 rounded-sm border-2 border-gray-400 data-[state=checked]:border-blue-600 data-[state=checked]:bg-transparent data-[state=checked]:text-blue-600"
+                    onChange={(e) => updateEditCriteria('hasAttachment', e.target.checked)}
+                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                   />
-                  <Label htmlFor="edit-hasAttachment">Has attachment</Label>
+                  <Label htmlFor="edit-hasAttachment" className="cursor-pointer">Has attachment</Label>
                 </div>
               </div>
             </div>
 
-            <Separator />
-
             {/* Filter Actions */}
             <div>
-              <h3 className="text-sm font-medium mb-3 flex items-center">
-                <Settings className="w-4 h-4 mr-2" />
-                Filter Actions
-              </h3>
+              <h3 className="text-sm font-semibold mb-4">Filter Actions</h3>
               <div className="space-y-4">
                 {/* Add Labels */}
-                <div className="grid grid-cols-1 gap-4">
-                  <LabelSelector
-                    type="add"
-                    allLabels={labelsMap}
-                    availableLabels={labels.filter(label => !(editFormData.action.addLabelIds || []).includes(label.id))}
-                    selectedLabelIds={editFormData.action.addLabelIds || []}
-                    onLabelChange={(newLabelIds) => updateEditAction('addLabelIds', newLabelIds)}
-                    disabled={false}
-                  />
-                </div>
+                <LabelSelector
+                  type="add"
+                  allLabels={labelsMap}
+                  availableLabels={labels.filter(label => !(editFormData.action.addLabelIds || []).includes(label.id))}
+                  selectedLabelIds={editFormData.action.addLabelIds || []}
+                  onLabelChange={(newLabelIds) => updateEditAction('addLabelIds', newLabelIds)}
+                  disabled={false}
+                />
 
                 {/* Delete Action */}
-                <div className="grid grid-cols-1 gap-4">
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="edit-delete"
-                      checked={editFormData.action.delete}
-                      onCheckedChange={(checked) => updateEditAction('delete', checked)}
-                      className="w-4 h-4 rounded-sm border-2 border-gray-400 data-[state=checked]:border-blue-600 data-[state=checked]:bg-transparent data-[state=checked]:text-blue-600"
-                    />
-                    <Label htmlFor="edit-delete">Delete</Label>
-                  </div>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="edit-delete"
+                    checked={editFormData.action.delete}
+                    onChange={(e) => updateEditAction('delete', e.target.checked)}
+                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                  />
+                  <Label htmlFor="edit-delete" className="cursor-pointer">Delete</Label>
                 </div>
               </div>
             </div>
@@ -877,7 +839,7 @@ function SettingsFilters() {
                 setEditStep(null);
               }}
             >
-              Update filter
+              Update Filter
             </Button>
           </SheetFooter>
         </SheetContent>
