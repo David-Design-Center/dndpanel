@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Reply, ReplyAll, Forward, Trash, MoreVertical, Star, Paperclip, Download, ChevronLeft, Mail, MailOpen, Flag, MailWarning, Filter, Tag, Search, ChevronRight, Settings, Plus } from 'lucide-react';
 import { parseISO, format, formatDistanceToNow } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
@@ -18,7 +18,12 @@ import {
   markAsUnstarred,
   applyLabelsToEmail
 } from '../../services/emailService';
-import { createGmailFilter } from '../../integrations/gapiService';
+import { 
+  createGmailFilter,
+  createReplyDraft,
+  updateReplyDraft,
+  deleteReplyDraft,
+} from '../../integrations/gapiService';
 import { optimizedEmailService } from '../../services/optimizedEmailService';
 import { replaceCidReferences } from '../../integrations/gmail/fetch/messages';
 import { Email } from '../../types';
@@ -117,6 +122,20 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const [sending, setSending] = useState(false);
   const [expandedMessages, setExpandedMessages] = useState<Set<string>>(new Set());
   const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set()); // Track which messages have images loaded
+  const [forwardingMessage, setForwardingMessage] = useState<Email | null>(null); // Track which message is being forwarded
+  const [forwardType, setForwardType] = useState<'single' | 'all'>('single'); // Track forward type
+  
+  // Draft saving state
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const [draftVersion, setDraftVersion] = useState<number>(0);
+  const [isDirty, setIsDirty] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const [lastHash, setLastHash] = useState<string>('');
+  const [isSaving, setIsSaving] = useState(false);
+  const debounceSaveTimerRef = useRef<number | null>(null);
+  const failsafeSaveTimerRef = useRef<number | null>(null);
+  const lastSaveTimeRef = useRef<number>(0);
+  const isDirtyRef = useRef(false); // Add ref to avoid stale closures
   
   // Attachment preview modal state
   const [previewAttachment, setPreviewAttachment] = useState<{ url: string; name: string; type: string } | null>(null);
@@ -146,6 +165,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const labelSearchRef = useRef<HTMLInputElement>(null);
   const filterModalRef = useRef<HTMLDivElement>(null);
   const createLabelModalRef = useRef<HTMLDivElement>(null);
+  const replyComposerRef = useRef<HTMLDivElement>(null); // Add ref for reply composer
 
   // Remove old add label modal state
   // const [showAddLabelModal, setShowAddLabelModal] = useState(false);
@@ -250,9 +270,26 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         toast({ title: 'Email forwarded successfully' });
       }
 
+      // Delete draft after successful send
+      if (draftId) {
+        try {
+          await deleteReplyDraft(draftId);
+          console.log('🗑️ Draft deleted after send');
+        } catch (err) {
+          console.error('Failed to delete draft after send:', err);
+          // Non-critical error, don't show to user
+        }
+      }
+
+      // Reset composer state
       setShowReplyComposer(false);
       setReplyContent('');
       setForwardTo('');
+      setDraftId(null);
+      setIsDirty(false);
+      isDirtyRef.current = false;
+      setDraftVersion(0);
+      
       await fetchEmailAndThread();
     } catch (err) {
       console.error('Error sending reply:', err);
@@ -767,6 +804,276 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     return filteredLabels.some(l => (l as any).displayName.toLowerCase() === q);
   })();
 
+  // Forward handlers
+  const handleForwardSingle = (message: Email) => {
+    setForwardingMessage(message);
+    setForwardType('single');
+    setReplyMode('forward');
+    setShowReplyComposer(true);
+  };
+
+  const handleForwardAll = () => {
+    setForwardingMessage(email);
+    setForwardType('all');
+    setReplyMode('forward');
+    setShowReplyComposer(true);
+  };
+
+  // Format forwarded message content
+  useEffect(() => {
+    if (replyMode === 'forward' && forwardingMessage && showReplyComposer) {
+      let forwardedContent = '';
+      
+      if (forwardType === 'single') {
+        // Format single message forward
+        const { time } = formatEmailTime(forwardingMessage.date);
+        const date = new Date(forwardingMessage.date).toLocaleDateString('en-US', { 
+          weekday: 'short', 
+          year: 'numeric', 
+          month: 'short', 
+          day: 'numeric' 
+        });
+        
+        forwardedContent = `<br><br>---------- Forwarded message ---------<br>` +
+          `From: &lt;${forwardingMessage.from.email}&gt;<br>` +
+          `Date: ${date} at ${time}<br>` +
+          `Subject: ${forwardingMessage.subject}<br>` +
+          `To: &lt;${forwardingMessage.to?.[0]?.email || ''}&gt;<br><br>` +
+          `${forwardingMessage.body || ''}`;
+      } else if (forwardType === 'all') {
+        // Format all messages in thread
+        forwardedContent = '<br><br>';
+        threadMessages.forEach((msg, index) => {
+          const { time } = formatEmailTime(msg.date);
+          const date = new Date(msg.date).toLocaleDateString('en-US', { 
+            weekday: 'short', 
+            year: 'numeric', 
+            month: 'short', 
+            day: 'numeric' 
+          });
+          
+          if (index > 0) forwardedContent += '<br><br>';
+          forwardedContent += `---------- Forwarded message ---------<br>` +
+            `From: &lt;${msg.from.email}&gt;<br>` +
+            `Date: ${date} at ${time}<br>` +
+            `Subject: ${msg.subject}<br>` +
+            `To: &lt;${msg.to?.[0]?.email || ''}&gt;<br><br>` +
+            `${msg.body || ''}`;
+        });
+      }
+      
+      setReplyContent(forwardedContent);
+    } else if (replyMode !== 'forward') {
+      setReplyContent('');
+    }
+  }, [replyMode, forwardingMessage, forwardType, showReplyComposer, threadMessages]);
+
+  // Draft saving utilities
+  const hashDraftState = useCallback(() => {
+    const state = {
+      to: forwardTo,
+      body: replyContent,
+      mode: replyMode
+    };
+    return btoa(JSON.stringify(state));
+  }, [forwardTo, replyContent, replyMode]);
+
+  const isEmpty = useCallback(() => {
+    // For forward mode, check if both to and body are empty
+    if (replyMode === 'forward') {
+      return !forwardTo.trim() && !replyContent.trim();
+    }
+    // For reply/replyAll mode, only check body
+    return !replyContent.trim();
+  }, [forwardTo, replyContent, replyMode]);
+
+  const saveDraft = useCallback(async () => {
+    console.log('🔍 saveDraft called, isDirty:', isDirty, 'isDirtyRef:', isDirtyRef.current);
+    
+    if (!isDirtyRef.current) {
+      console.log('❌ Not dirty (ref check), skipping save');
+      return;
+    }
+    
+    // Check if empty - delete if exists
+    const emptyCheck = isEmpty();
+    console.log('🔍 isEmpty check:', emptyCheck);
+    
+    if (emptyCheck) {
+      if (draftId) {
+        try {
+          // Delete empty draft
+          await deleteReplyDraft(draftId);
+          console.log('🗑️ Deleted empty draft:', draftId);
+          setDraftId(null);
+          setDraftVersion(0);
+        } catch (err) {
+          console.error('Failed to delete draft:', err);
+        }
+      }
+      setIsDirty(false);
+      isDirtyRef.current = false;
+      return;
+    }
+
+    // Check if content actually changed
+    const currentHash = hashDraftState();
+    console.log('🔍 Current hash:', currentHash, 'Last hash:', lastHash);
+    
+    if (currentHash === lastHash) {
+      console.log('❌ Hash unchanged, skipping save');
+      return;
+    }
+
+    // Rate limit: ensure at least 2s between saves
+    const now = Date.now();
+    const timeSinceLastSave = now - lastSaveTimeRef.current;
+    console.log('🔍 Time since last save:', timeSinceLastSave, 'ms');
+    
+    if (timeSinceLastSave < 2000) {
+      console.log('❌ Rate limited, skipping save');
+      return;
+    }
+
+    console.log('✅ All checks passed, saving draft...');
+    setIsSaving(true);
+    lastSaveTimeRef.current = now;
+
+    try {
+      const payload = {
+        to: forwardTo,
+        body: replyContent,
+        mode: replyMode,
+        threadId: email?.threadId,
+        inReplyTo: email?.id
+      };
+
+      let response;
+      if (!draftId) {
+        // Create new draft
+        response = await createReplyDraft(payload);
+        console.log('📝 Created draft:', response);
+        setDraftId(response.id);
+        setDraftVersion(response.version);
+      } else {
+        // Update existing draft
+        response = await updateReplyDraft(draftId, payload, draftVersion);
+        console.log('📝 Updated draft:', response);
+        setDraftVersion(response.version);
+      }
+
+      setLastHash(currentHash);
+      setIsDirty(false);
+      isDirtyRef.current = false;
+      setLastSavedAt(new Date());
+      console.log('✅ Draft saved:', response.id);
+    } catch (err: any) {
+      console.error('Failed to save draft:', err);
+      
+      // Handle version conflict (412)
+      if (err.status === 412) {
+        console.log('⚠️ Version conflict, will retry');
+        // TODO: Implement conflict resolution
+      }
+      
+      // Handle draft not found (404) - recreate
+      if (err.status === 404) {
+        setDraftId(null);
+        setDraftVersion(0);
+        // Will retry on next trigger
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  }, [isDirty, isEmpty, draftId, draftVersion, lastHash, hashDraftState, forwardTo, replyContent, replyMode, email]);
+
+  const scheduleDebouncedSave = useCallback(() => {
+    console.log('⏰ scheduleDebouncedSave called');
+    
+    // Clear existing timers
+    if (debounceSaveTimerRef.current) {
+      clearTimeout(debounceSaveTimerRef.current);
+      console.log('⏰ Cleared existing debounce timer');
+    }
+
+    // Schedule debounced save (3s after last change)
+    debounceSaveTimerRef.current = window.setTimeout(() => {
+      console.log('⏰ Debounce timer fired, calling saveDraft');
+      saveDraft();
+    }, 3000);
+    console.log('⏰ Scheduled debounced save in 3s');
+
+    // Schedule failsafe save (30s if user never idles)
+    if (!failsafeSaveTimerRef.current) {
+      failsafeSaveTimerRef.current = window.setTimeout(() => {
+        console.log('⏰ Failsafe timer fired, calling saveDraft');
+        saveDraft();
+        failsafeSaveTimerRef.current = null;
+      }, 30000);
+      console.log('⏰ Scheduled failsafe save in 30s');
+    }
+  }, [saveDraft]);
+
+  const handleDraftChange = useCallback(() => {
+    console.log('📝 handleDraftChange called');
+    setIsDirty(true);
+    isDirtyRef.current = true;
+    scheduleDebouncedSave();
+  }, [scheduleDebouncedSave]);
+
+  // Save on beforeunload
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isDirty && showReplyComposer) {
+        // Attempt synchronous save
+        saveDraft();
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [isDirty, showReplyComposer, saveDraft]);
+
+  // Cleanup timers on unmount or when composer closes
+  useEffect(() => {
+    if (!showReplyComposer) {
+      if (debounceSaveTimerRef.current) {
+        clearTimeout(debounceSaveTimerRef.current);
+        debounceSaveTimerRef.current = null;
+      }
+      if (failsafeSaveTimerRef.current) {
+        clearTimeout(failsafeSaveTimerRef.current);
+        failsafeSaveTimerRef.current = null;
+      }
+      
+      // Final save when closing if dirty
+      if (isDirty) {
+        saveDraft();
+      }
+    } else {
+      // Scroll to reply composer when it opens
+      setTimeout(() => {
+        replyComposerRef.current?.scrollIntoView({ 
+          behavior: 'smooth', 
+          block: 'start' 
+        });
+      }, 100);
+    }
+    
+    return () => {
+      if (debounceSaveTimerRef.current) {
+        clearTimeout(debounceSaveTimerRef.current);
+      }
+      if (failsafeSaveTimerRef.current) {
+        clearTimeout(failsafeSaveTimerRef.current);
+      }
+    };
+  }, [showReplyComposer, isDirty, saveDraft]);
+
   const toggleMessageExpansion = async (messageId: string) => {
     const wasExpanded = expandedMessages.has(messageId);
     
@@ -923,9 +1230,10 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <base target="_blank">
         <style>
           * { 
-            font-size: 14px !important; 
+            font-size: 12px !important; 
             max-width: 100% !important;
             box-sizing: border-box !important;
           }
@@ -935,6 +1243,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             overflow-x: hidden;
             word-wrap: break-word;
+            font-size: 12px !important;
           }
           img { 
             max-width: 100% !important; 
@@ -947,11 +1256,30 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           }
           td, th {
             word-wrap: break-word;
+            font-size: 12px !important;
           }
           a {
             color: #1a73e8;
+            font-size: 12px !important;
+          }
+          p, div, span, li {
+            font-size: 12px !important;
           }
         </style>
+        <script>
+          // Ensure all links open in new tab
+          document.addEventListener('DOMContentLoaded', function() {
+            document.addEventListener('click', function(e) {
+              if (e.target.tagName === 'A' || e.target.closest('a')) {
+                const link = e.target.tagName === 'A' ? e.target : e.target.closest('a');
+                if (link.href) {
+                  e.preventDefault();
+                  window.open(link.href, '_blank', 'noopener,noreferrer');
+                }
+              }
+            });
+          });
+        </script>
       </head>
       <body>
         ${clean}
@@ -1008,7 +1336,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   return (
     <div className="flex flex-col h-full bg-white">
       {/* Top Toolbar - Gmail style */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-white">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 bg-white">
         <div className="flex items-center gap-1">
           <button
             onClick={() => {
@@ -1306,21 +1634,21 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       </div>
 
       {/* Email Header - Gmail style */}
-      <div className="px-6 py-3 border-b border-gray-200">
-        <h1 className="text-lg font-normal text-gray-900 mb-3 break-words overflow-wrap-anywhere whitespace-pre-wrap" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
+      <div className="px-4 py-2 border-b border-gray-200">
+        <h1 className="text-base font-normal text-gray-900 mb-2 break-words overflow-wrap-anywhere whitespace-pre-wrap" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
           {latestMessage.subject || '(no subject)'}
         </h1>
         
-        <div className="flex items-start justify-between mb-2">
-          <div className="flex items-start gap-3 flex-1">
+        <div className="flex items-start justify-between mb-1">
+          <div className="flex items-start gap-2 flex-1">
             {/* Sender Avatar */}
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-medium text-xs ${getSenderColor(latestMessage.from.email)}`}>
+            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white font-medium text-xs ${getSenderColor(latestMessage.from.email)}`}>
               {getInitials(latestMessage.from.name)}
             </div>
 
             {/* Sender Info */}
             <div className="flex-1 min-w-0">
-              <div className="flex items-baseline gap-2 mb-0.5">
+              <div className="flex items-baseline gap-2">
                 <span className="font-medium text-sm text-gray-900">{cleanDisplayName(latestMessage.from.name)}</span>
                 <span className="text-xs text-gray-500">{cleanEmailAddress(latestMessage.from.email)}</span>
               </div>
@@ -1331,7 +1659,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           </div>
 
           {/* Time */}
-          <div className="text-xs text-gray-600 whitespace-nowrap ml-4">
+          <div className="text-xs text-gray-600 whitespace-nowrap ml-3">
             <div>{time}</div>
             <div className="text-gray-500">({relative})</div>
           </div>
@@ -1340,9 +1668,9 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
       {/* Email Body - Scrollable */}
       <div className="flex-1 overflow-y-auto">
-        <div className="px-6 py-3">
+        <div className="px-4 py-2">
           {threadMessages.length > 1 ? (
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               {threadMessages.map((message) => {
                 const isExpanded = expandedMessages.has(message.id);
                 const { time: msgTime } = formatEmailTime(message.date);
@@ -1350,42 +1678,83 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                 return (
                   <div
                     key={message.id}
-                    className={`border border-gray-200 rounded-lg overflow-hidden transition-all ${
+                    className={`border border-gray-200 rounded overflow-hidden transition-all ${
                       isExpanded ? 'shadow-sm' : ''
                     }`}
                   >
                     {/* Collapsed Header */}
-                    <button
-                      onClick={() => toggleMessageExpansion(message.id)}
-                      className="w-full px-3 py-2 flex items-center gap-2 hover:bg-gray-50 transition-colors text-left"
-                    >
-                      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-medium ${getSenderColor(message.from.email)}`}>
-                        {getInitials(message.from.name)}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-gray-900">{cleanDisplayName(message.from.name)}</span>
-                          {message.attachments && message.attachments.length > 0 && (
-                            <Paperclip size={12} className="text-gray-400" />
+                    <div className="w-full px-2 py-1.5 flex items-center gap-2 hover:bg-gray-50 transition-colors">
+                      <button
+                        onClick={() => toggleMessageExpansion(message.id)}
+                        className="flex items-center gap-2 flex-1 min-w-0 text-left"
+                      >
+                        <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-medium ${getSenderColor(message.from.email)}`}>
+                          {getInitials(message.from.name)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-gray-900">{cleanDisplayName(message.from.name)}</span>
+                            {message.attachments && message.attachments.length > 0 && (
+                              <Paperclip size={12} className="text-gray-400" />
+                            )}
+                          </div>
+                          {!isExpanded && (
+                            <div className="text-xs text-gray-500 truncate mt-0.5">
+                              {message.preview ? message.preview.substring(0, 100) : 'No preview'}
+                            </div>
                           )}
                         </div>
-                        {!isExpanded && (
-                          <div className="text-xs text-gray-500 truncate mt-0.5">
-                            {message.preview ? message.preview.substring(0, 100) : 'No preview'}
-                          </div>
+                        <div className="text-xs text-gray-500">{msgTime}</div>
+                      </button>
+                      
+                      {/* Action Icons */}
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleForwardSingle(message);
+                          }}
+                          className="p-1.5 hover:bg-gray-200 rounded transition-colors"
+                          title="Forward"
+                        >
+                          <Forward size={16} className="text-gray-600" />
+                        </button>
+                        {threadMessages.length > 1 && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                onClick={(e) => e.stopPropagation()}
+                                className="p-1.5 hover:bg-gray-200 rounded transition-colors"
+                                title="Forward all"
+                              >
+                                <MoreVertical size={16} className="text-gray-600" />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" side="bottom" sideOffset={4} className="z-[10001]">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleForwardAll();
+                                }}
+                                className="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 transition-colors flex items-center gap-2"
+                              >
+                                <Forward size={14} />
+                                Forward entire thread ({threadMessages.length} messages)
+                              </button>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         )}
                       </div>
-                      <div className="text-xs text-gray-500">{msgTime}</div>
-                    </button>
+                    </div>
 
                     {/* Expanded Body */}
                     {isExpanded && (
-                      <div className="px-3 pb-3 pt-2 border-t border-gray-100">
+                      <div className="px-2 pb-2 pt-1.5 border-t border-gray-100">
                         {renderMessageBody(message)}
                         
                         {/* Attachments Section */}
                         {message.attachments && message.attachments.length > 0 && (
-                          <div className="mt-4 pt-3 border-t border-gray-100">
+                          <div className="mt-3 pt-2 border-t border-gray-100">
                             <div className="flex items-center gap-2 text-xs font-medium text-gray-700 mb-2">
                               <Paperclip size={12} />
                               <span>{message.attachments.length} Attachment{message.attachments.length > 1 ? 's' : ''}</span>
@@ -1644,107 +2013,140 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           )}
         </div>
         
-        {/* Reply Composer - Inline with thread */}
+        {/* Reply Composer - Clean, minimal design */}
         {showReplyComposer && (
-          <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
-            <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
-              <div className="px-4 py-3 border-b border-gray-200">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-medium text-gray-900">
-                    {replyMode === 'reply' && 'Reply'}
-                    {replyMode === 'replyAll' && 'Reply all'}
-                    {replyMode === 'forward' && 'Forward'}
-                  </h3>
-                  <button
-                    onClick={() => {
-                      setShowReplyComposer(false);
-                      setReplyContent('');
-                      setForwardTo('');
-                    }}
-                    className="p-1 hover:bg-gray-100 rounded"
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
-              </div>
-
-              <div className="p-4">
-                {replyMode === 'forward' && (
-                  <input
-                    type="email"
-                    value={forwardTo}
-                    onChange={(e) => setForwardTo(e.target.value)}
-                    placeholder="To:"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
+          <div ref={replyComposerRef} className="mt-6 mb-20 px-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-3">
+                <h3 className="text-sm font-semibold text-gray-800">
+                  {replyMode === 'reply' && 'Reply'}
+                  {replyMode === 'replyAll' && 'Reply all'}
+                  {replyMode === 'forward' && 'Forward'}
+                </h3>
+                {/* Draft status indicator - More visible */}
+                {isSaving && (
+                  <span className="flex items-center gap-1.5 text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                    <span className="animate-pulse">●</span>
+                    Saving...
+                  </span>
                 )}
-
-                <div className="border border-gray-300 rounded-md overflow-hidden mb-3" style={{ minHeight: '100px' }}>
-                  <RichTextEditor
-                    value={replyContent}
-                    onChange={setReplyContent}
-                    placeholder="Type your message..."
-                  />
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={handleSendReply}
-                    disabled={sending || !replyContent.trim() || (replyMode === 'forward' && !forwardTo.trim())}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-md text-sm font-medium transition-colors shadow-sm"
-                  >
-                    {sending ? 'Sending...' : 'Send'}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowReplyComposer(false);
-                      setReplyContent('');
-                      setForwardTo('');
-                    }}
-                    className="px-3 py-2 text-sm text-gray-600 hover:text-gray-900"
-                  >
-                    Cancel
-                  </button>
-                </div>
+                {!isSaving && lastSavedAt && (
+                  <span className="flex items-center gap-1.5 text-xs font-medium text-green-600 bg-green-50 px-2 py-1 rounded">
+                    <span>✓</span>
+                    Saved {format(lastSavedAt, 'h:mm a')}
+                  </span>
+                )}
+                {!isSaving && !lastSavedAt && isDirty && (
+                  <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded">
+                    Unsaved changes
+                  </span>
+                )}
               </div>
+              <button
+                onClick={() => {
+                  setShowReplyComposer(false);
+                  setReplyContent('');
+                  setForwardTo('');
+                  setDraftId(null);
+                  setIsDirty(false);
+                  isDirtyRef.current = false;
+                }}
+                className="p-1 hover:bg-gray-100 rounded transition-colors"
+                title="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {replyMode === 'forward' && (
+              <div className="mb-3">
+                <input
+                  type="email"
+                  value={forwardTo}
+                  onChange={(e) => {
+                    setForwardTo(e.target.value);
+                    handleDraftChange();
+                  }}
+                  placeholder="To:"
+                  className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+            )}
+
+            <div className="border border-gray-300 rounded overflow-hidden mb-3" style={{ minHeight: '150px' }}>
+              <RichTextEditor
+                value={replyContent}
+                onChange={(content) => {
+                  setReplyContent(content);
+                  handleDraftChange();
+                }}
+                placeholder="Type your message..."
+              />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleSendReply}
+                disabled={sending || !replyContent.trim() || (replyMode === 'forward' && !forwardTo.trim())}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded text-sm font-medium transition-colors shadow-sm"
+              >
+                {sending ? 'Sending...' : 'Send'}
+              </button>
+              <button
+                onClick={() => {
+                  setShowReplyComposer(false);
+                  setReplyContent('');
+                  setForwardTo('');
+                  setDraftId(null);
+                  setIsDirty(false);
+                  isDirtyRef.current = false;
+                }}
+                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded transition-colors"
+              >
+                Cancel
+              </button>
             </div>
           </div>
         )}
       </div>
 
-      {/* Action Bar - Always visible */}
-      <div className="px-6 py-2 border-t border-gray-200 flex items-center gap-2 bg-white flex-shrink-0">
-        <button
-          onClick={() => {
-            setReplyMode('reply');
-            setShowReplyComposer(true);
-          }}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-medium transition-colors shadow-sm"
-        >
-          <Reply size={14} />
-          Reply
-        </button>
-        <button
-          onClick={() => {
-            setReplyMode('replyAll');
-            setShowReplyComposer(true);
-          }}
-          className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-gray-50 text-gray-700 rounded-md text-sm font-medium transition-colors border border-gray-300"
-        >
-          <ReplyAll size={14} />
-          Reply all
-        </button>
-        <button
-          onClick={() => {
-            setReplyMode('forward');
-            setShowReplyComposer(true);
-          }}
-          className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-gray-50 text-gray-700 rounded-md text-sm font-medium transition-colors border border-gray-300"
-        >
-          <Forward size={14} />
-          Forward
-        </button>
-      </div>
+      {/* Action Bar - Hidden when replying */}
+      {!showReplyComposer && (
+        <div className="px-4 py-1.5 border-t border-gray-200 flex items-center gap-2 bg-white flex-shrink-0">
+          <button
+            onClick={() => {
+              setReplyMode('reply');
+              setShowReplyComposer(true);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium transition-colors"
+          >
+            <Reply size={14} />
+            Reply
+          </button>
+          <button
+            onClick={() => {
+              setReplyMode('replyAll');
+              setShowReplyComposer(true);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-700 rounded text-sm font-medium transition-colors border border-gray-300"
+          >
+            <ReplyAll size={14} />
+            Reply all
+          </button>
+          <button
+            onClick={() => {
+              setForwardingMessage(latestMessage);
+              setForwardType('single');
+              setReplyMode('forward');
+              setShowReplyComposer(true);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-700 rounded text-sm font-medium transition-colors border border-gray-300"
+          >
+            <Forward size={14} />
+            Forward
+          </button>
+        </div>
+      )}
 
       <style>{`
         .email-body {
@@ -1755,21 +2157,21 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           word-wrap: break-word;
           word-break: break-word;
         }
-        /* Force consistent small font size (max 14px) */
+        /* Force consistent small font size (12px) */
         .email-body,
         .email-body * {
-          font-size: 14px !important;
+          font-size: 12px !important;
           max-width: 100%;
           box-sizing: border-box;
         }
         .email-body p {
           margin-bottom: 0.5em;
-          font-size: 14px !important;
+          font-size: 12px !important;
         }
         .email-body a {
           color: #1a73e8;
           text-decoration: none;
-          font-size: 14px !important;
+          font-size: 12px !important;
         }
         .email-body a:hover {
           text-decoration: underline;
@@ -1781,11 +2183,11 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         }
         .email-body table {
           max-width: 100%;
-          font-size: 14px !important;
+          font-size: 12px !important;
         }
         .email-body td,
         .email-body th {
-          font-size: 14px !important;
+          font-size: 12px !important;
           overflow-wrap: break-word;
         }
         .email-body blockquote {
@@ -1793,11 +2195,23 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           padding-left: 1rem;
           margin: 1rem 0;
           color: #6b7280;
-          font-size: 14px !important;
+          font-size: 12px !important;
         }
         .email-body div,
         .email-body span {
-          font-size: 14px !important;
+          font-size: 12px !important;
+        }
+        /* Force 12px in RichTextEditor */
+        .ProseMirror,
+        .ProseMirror * {
+          font-size: 12px !important;
+        }
+        .ProseMirror p {
+          font-size: 12px !important;
+        }
+        .ProseMirror div,
+        .ProseMirror span {
+          font-size: 12px !important;
         }
       `}</style>
 

@@ -59,6 +59,15 @@ import {
   saveGmailDraft as gmailSaveDraft,
 } from './gmail/send/compose';
 
+// Import reply draft operations
+import {
+  createReplyDraft as gmailCreateReplyDraft,
+  updateReplyDraft as gmailUpdateReplyDraft,
+  deleteReplyDraft as gmailDeleteReplyDraft,
+  getReplyDraft as gmailGetReplyDraft,
+  sendReplyDraft as gmailSendReplyDraft,
+} from './gmail/send/replyDrafts';
+
 // Type definitions for GIS (Google Identity Services)
 declare global {
   interface Window {
@@ -176,6 +185,68 @@ export const saveGmailDraft = async (
   draftId?: string
 ): Promise<{ success: boolean; draftId?: string }> => {
   return gmailSaveDraft(to, cc, subject, body, attachments, draftId);
+};
+
+// ============================================================================
+// REPLY DRAFT OPERATIONS
+// ============================================================================
+
+/**
+ * Create a new reply draft
+ * ⚠️ DELEGATED TO: src/integrations/gmail/send/replyDrafts.ts
+ */
+export const createReplyDraft = async (
+  payload: {
+    to?: string;
+    body: string;
+    mode: 'reply' | 'replyAll' | 'forward';
+    threadId?: string;
+    inReplyTo?: string;
+  }
+): Promise<{ id: string; version: number }> => {
+  return gmailCreateReplyDraft(payload);
+};
+
+/**
+ * Update an existing reply draft
+ * ⚠️ DELEGATED TO: src/integrations/gmail/send/replyDrafts.ts
+ */
+export const updateReplyDraft = async (
+  draftId: string,
+  payload: {
+    to?: string;
+    body: string;
+    mode: 'reply' | 'replyAll' | 'forward';
+    threadId?: string;
+    inReplyTo?: string;
+  },
+  version: number
+): Promise<{ id: string; version: number }> => {
+  return gmailUpdateReplyDraft(draftId, payload, version);
+};
+
+/**
+ * Delete a reply draft
+ * ⚠️ DELEGATED TO: src/integrations/gmail/send/replyDrafts.ts
+ */
+export const deleteReplyDraft = async (draftId: string): Promise<void> => {
+  return gmailDeleteReplyDraft(draftId);
+};
+
+/**
+ * Get a reply draft
+ * ⚠️ DELEGATED TO: src/integrations/gmail/send/replyDrafts.ts
+ */
+export const getReplyDraft = async (draftId: string): Promise<{ id: string; version: number }> => {
+  return gmailGetReplyDraft(draftId);
+};
+
+/**
+ * Send a reply draft
+ * ⚠️ DELEGATED TO: src/integrations/gmail/send/replyDrafts.ts
+ */
+export const sendReplyDraft = async (draftId: string): Promise<{ success: boolean; messageId?: string }> => {
+  return gmailSendReplyDraft(draftId);
 };
 
 // ============================================================================

@@ -39,7 +39,6 @@ interface RichTextEditorProps {
 const RichTextEditor: React.FC<RichTextEditorProps> = ({
   value,
   onChange,
-  placeholder = "Compose your message...",
   className,
   minHeight = "400px",
   disabled = false,
@@ -1061,9 +1060,8 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
           "text-gray-900 leading-relaxed",
           disabled && "opacity-50 cursor-not-allowed"
         )}
-        style={{ minHeight }}
+        style={{ minHeight, fontSize: '12px' }}
         suppressContentEditableWarning={true}
-        data-placeholder={placeholder}
       />
       
       {/* Hidden file input for images */}
