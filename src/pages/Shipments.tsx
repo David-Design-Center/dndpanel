@@ -12,7 +12,6 @@ import { ShipmentDetailsModal } from '../components/ui/shipment-details-modal';
 import { ColumnManagerModal } from '../components/ui/column-manager-modal';
 import { DocumentPreviewModal } from '../components/ui/document-preview-modal';
 import { BulkUploadModal } from '../components/ui/bulk-upload-modal';
-import { AllShipmentFiles } from '../components/ui/all-shipment-files';
 import { supabase } from '../lib/supabase';
 
 function Shipments() {
@@ -21,6 +20,7 @@ function Shipments() {
   const navigate = useNavigate();
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [shipmentDocuments, setShipmentDocuments] = useState<Record<number, ShipmentDocument[]>>({});
+  const [unassignedDocuments, setUnassignedDocuments] = useState<ShipmentDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,8 +30,8 @@ function Shipments() {
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   const [columnManagerModalOpen, setColumnManagerModalOpen] = useState(false);
   const [bulkUploadModalOpen, setBulkUploadModalOpen] = useState(false);
-  const [documentRefreshTrigger, setDocumentRefreshTrigger] = useState(0);
   const [selectedShipments, setSelectedShipments] = useState<Set<number>>(new Set());
+  const [selectedDocuments, setSelectedDocuments] = useState<Set<string>>(new Set());
   const [selectedShipmentForUpload, setSelectedShipmentForUpload] = useState<{ id: number; containerNumber: string } | null>(null);
   const [selectedShipmentForDetails, setSelectedShipmentForDetails] = useState<Shipment | null>(null);
   const [isExitingButtons, setIsExitingButtons] = useState(false);
@@ -89,12 +89,28 @@ function Shipments() {
       for (const shipment of data) {
         fetchShipmentDocumentsData(shipment.id);
       }
+      
+      // Fetch unassigned documents
+      await fetchUnassignedDocuments();
     } catch (error) {
       console.error('Error fetching shipments:', error);
       setError('Failed to load shipments. Please try again.');
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  };
+
+  // Function to fetch unassigned documents
+  const fetchUnassignedDocuments = async () => {
+    try {
+      console.log('🔍 Fetching unassigned documents...');
+      const allDocs = await GoogleDriveService.getAllDocuments();
+      const unassigned = allDocs.filter(doc => doc.shipment_id === null);
+      console.log(`📋 Retrieved ${unassigned.length} unassigned documents`);
+      setUnassignedDocuments(unassigned);
+    } catch (error) {
+      console.error('Error fetching unassigned documents:', error);
     }
   };
 
@@ -114,12 +130,6 @@ function Shipments() {
     } catch (error) {
       console.error('Error fetching shipment documents:', error);
     }
-  };
-
-  // Handle opening upload modal
-  const handleUploadClick = (shipmentId: number, ref: string) => {
-    setSelectedShipmentForUpload({ id: shipmentId, containerNumber: ref });
-    setUploadModalOpen(true);
   };
 
   // Handle document preview
@@ -180,7 +190,6 @@ function Shipments() {
             console.error('Failed to link document to new shipment:', linkError);
           } else {
             console.log(`Linked document ${pendingAssignDocumentId} to shipment ${newShipment.id}`);
-            setDocumentRefreshTrigger(prev => prev + 1);
             // Silently refresh documents for this new shipment so details modal will have them if opened
             fetchShipmentDocumentsData(newShipment.id);
           }
@@ -233,9 +242,6 @@ function Shipments() {
       // Refresh documents data for all shipments
       await fetchShipmentData(true);
       
-      // Trigger refresh of AllShipmentFiles component
-      setDocumentRefreshTrigger(prev => prev + 1);
-      
       setBulkUploadModalOpen(false);
     } catch (error) {
       console.error('Error in bulk upload:', error);
@@ -271,11 +277,13 @@ function Shipments() {
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
       setSelectedShipments(new Set(shipments.map(s => s.id)));
+      setSelectedDocuments(new Set(unassignedDocuments.map(d => d.id)));
     } else {
       // Handle exit animation when deselecting all
       setIsExitingButtons(true);
       setTimeout(() => {
         setSelectedShipments(new Set());
+        setSelectedDocuments(new Set());
         setIsExitingButtons(false);
       }, 300);
     }
@@ -334,32 +342,43 @@ function Shipments() {
 
   // Handle bulk delete
   const handleBulkDelete = async () => {
-    if (selectedShipments.size === 0) return;
+    const totalSelected = selectedShipments.size + selectedDocuments.size;
+    if (totalSelected === 0) return;
 
     const confirmDelete = window.confirm(
-      `Are you sure you want to delete ${selectedShipments.size} shipment(s)? This action cannot be undone.`
+      `Are you sure you want to delete ${totalSelected} item(s)? This action cannot be undone.`
     );
     
     if (!confirmDelete) return;
 
     try {
-      const shipmentIds = Array.from(selectedShipments);
-      
-      const { error } = await supabase
-        .from('shipments')
-        .delete()
-        .in('id', shipmentIds);
+      // Delete shipments
+      if (selectedShipments.size > 0) {
+        const shipmentIds = Array.from(selectedShipments);
+        const { error: shipmentError } = await supabase
+          .from('shipments')
+          .delete()
+          .in('id', shipmentIds);
+        if (shipmentError) throw shipmentError;
+      }
 
-      if (error) throw error;
+      // Delete documents
+      if (selectedDocuments.size > 0) {
+        const documentIds = Array.from(selectedDocuments);
+        for (const docId of documentIds) {
+          await GoogleDriveService.deleteDocument(docId);
+        }
+      }
 
-      // Refresh the shipments list
+      // Refresh the list
       await fetchShipmentData(true);
       
-      // Clear selection
+      // Clear selections
       setSelectedShipments(new Set());
+      setSelectedDocuments(new Set());
     } catch (error) {
-      console.error('Error deleting shipments:', error);
-      setError('Failed to delete shipments. Please try again.');
+      console.error('Error deleting items:', error);
+      setError('Failed to delete items. Please try again.');
     }
   };
 
@@ -406,8 +425,17 @@ function Shipments() {
     }
   };
 
-  // Check if all shipments are selected
-  const isAllSelected = shipments.length > 0 && shipments.every(s => selectedShipments.has(s.id));
+  // Check if all rows are selected
+  const isAllSelected = 
+    shipments.length > 0 && 
+    shipments.every(s => selectedShipments.has(s.id)) &&
+    unassignedDocuments.every(d => selectedDocuments.has(d.id));
+
+  // Combine shipments and unassigned documents into one unified list
+  const allRows = [
+    ...shipments.map(s => ({ type: 'shipment' as const, data: s })),
+    ...unassignedDocuments.map(d => ({ type: 'document' as const, data: d }))
+  ];
 
   // Check Gmail authentication
   if (!isGmailSignedIn) {
@@ -446,7 +474,7 @@ function Shipments() {
         </div>
         <div className="flex items-center space-x-2">
           {/* Export Selected - Admin only */}
-          {isAdmin && (selectedShipments.size > 0 || isExitingButtons) && (
+          {isAdmin && ((selectedShipments.size > 0 || selectedDocuments.size > 0) || isExitingButtons) && (
             <button
               onClick={() => exportToCSV(shipments.filter(s => selectedShipments.has(s.id)))}
               className={`px-3 py-1.5 text-sm border border-blue-300 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 flex items-center transition-all duration-300 ${
@@ -457,12 +485,12 @@ function Shipments() {
               }}
             >
               <FileSpreadsheet size={14} className="mr-1.5" />
-              Export Selected ({selectedShipments.size})
+              Export Selected ({selectedShipments.size + selectedDocuments.size})
             </button>
           )}
 
           {/* Delete Selected - Admin only */}
-          {isAdmin && (selectedShipments.size > 0 || isExitingButtons) && (
+          {isAdmin && ((selectedShipments.size > 0 || selectedDocuments.size > 0) || isExitingButtons) && (
             <button
               onClick={handleBulkDelete}
               className={`px-3 py-1.5 text-sm border border-red-300 rounded-md bg-red-50 hover:bg-red-100 text-red-700 flex items-center transition-all duration-300 ${
@@ -475,7 +503,7 @@ function Shipments() {
               }}
             >
               <Trash2 size={14} className="mr-1.5" />
-              Delete Selected ({selectedShipments.size})
+              Delete Selected ({selectedShipments.size + selectedDocuments.size})
             </button>
           )}
           
@@ -566,118 +594,131 @@ function Shipments() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {shipments.map((shipment) => (
-                  <tr 
-                    key={shipment.id} 
-                    className="hover:bg-gray-50 cursor-pointer"
-                    onClick={() => handleRowClick(shipment)}
-                  >
-                    <td className="w-8 px-2 py-3 border-r border-gray-200">
-                      {/* Only show checkbox for admin users */}
-                      {isAdmin ? (
-                        <input
-                          type="checkbox"
-                          checked={selectedShipments.has(shipment.id)}
-                          onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => {
-                            e.stopPropagation();
-                            handleSelectShipment(shipment.id, e.target.checked);
-                          }}
-                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        />
-                      ) : (
-                        <div className="w-4 h-4"></div> // Empty space to maintain column width
-                      )}
-                    </td>
-                    {visibleColumns.map((columnName, index) => (
-                      <td key={columnName} className={`${getColumnClasses(columnName)} ${
-                        index < visibleColumns.length - 1 ? 'border-r border-gray-200' : ''
-                      }`}>
-                        {columnName === 'ref' ? (
-                          <div className="max-w-[100px] truncate font-medium" title={formatCellValue(shipment[columnName as keyof Shipment], columnName)}>
-                            {formatCellValue(shipment[columnName as keyof Shipment], columnName)}
-                          </div>
-                        ) : (
-                          <div className="max-w-[120px] truncate" title={formatCellValue(shipment[columnName as keyof Shipment], columnName)}>
-                            {formatCellValue(shipment[columnName as keyof Shipment], columnName)}
-                          </div>
-                        )}
-                      </td>
-                    ))}
-                    <td className="w-32 px-3 py-3 whitespace-nowrap text-xs font-medium">
-                      <div className="flex items-center justify-center space-x-1">
-                        {/* Only show upload button for admin users */}
-                        {isAdmin && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleUploadClick(shipment.id, shipment.ref);
-                            }}
-                            className="text-gray-600 hover:text-gray-900 p-1 rounded"
-                            title="Upload Documents"
-                          >
-                            <Upload className="w-4 h-4" />
-                          </button>
-                        )}
-                        
-                        {shipmentDocuments[shipment.id]?.length > 0 && (
-                          <div className="relative group">
-                            <button
+                {allRows.map((row) => {
+                  if (row.type === 'shipment') {
+                    const shipment = row.data;
+                    return (
+                      <tr 
+                        key={`shipment-${shipment.id}`} 
+                        className="hover:bg-gray-50 cursor-pointer"
+                        onClick={() => handleRowClick(shipment)}
+                      >
+                        <td className="w-8 px-2 py-3 border-r border-gray-200">
+                          {isAdmin ? (
+                            <input
+                              type="checkbox"
+                              checked={selectedShipments.has(shipment.id)}
                               onClick={(e) => e.stopPropagation()}
-                              className="text-gray-600 hover:text-gray-900 p-1 rounded flex items-center"
-                              title={`${shipmentDocuments[shipment.id].length} documents`}
-                            >
-                              <FileText className="w-4 h-4" />
-                              <span className="text-xs ml-1">{shipmentDocuments[shipment.id].length}</span>
-                            </button>
-                            
-                            {/* Documents dropdown */}
-                            <div className="absolute right-0 top-8 z-10 w-80 bg-white rounded-lg shadow-lg border border-gray-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
-                              <div className="p-3">
-                                <h4 className="text-sm font-medium text-gray-900 mb-3">Documents</h4>
-                                <div className="space-y-2 max-h-40 overflow-y-auto">
-                                  {shipmentDocuments[shipment.id].map((doc) => (
-                                    <div key={doc.id} className="flex items-center justify-between p-2 bg-gray-50 rounded text-xs">
-                                      <div className="flex items-center flex-1 min-w-0">
-                                        <FileText className="w-3 h-3 text-gray-400 mr-2 flex-shrink-0" />
-                                        <span className="truncate" title={doc.file_name}>
-                                          {doc.file_name}
-                                        </span>
-                                      </div>
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleDocumentPreview(doc);
-                                        }}
-                                        className="ml-2 text-blue-600 hover:text-blue-800 p-1"
-                                        title="Preview"
-                                      >
-                                        <Eye className="w-3 h-3" />
-                                      </button>
-                                    </div>
-                                  ))}
-                                </div>
+                              onChange={(e) => {
+                                e.stopPropagation();
+                                handleSelectShipment(shipment.id, e.target.checked);
+                              }}
+                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                          ) : (
+                            <div className="w-4 h-4"></div>
+                          )}
+                        </td>
+                        {visibleColumns.map((columnName, index) => (
+                          <td key={columnName} className={`${getColumnClasses(columnName)} ${
+                            index < visibleColumns.length - 1 ? 'border-r border-gray-200' : ''
+                          }`}>
+                            {columnName === 'ref' ? (
+                              <div className="max-w-[100px] truncate font-medium" title={formatCellValue(shipment[columnName as keyof Shipment], columnName)}>
+                                {formatCellValue(shipment[columnName as keyof Shipment], columnName)}
                               </div>
-                            </div>
+                            ) : (
+                              <div className="max-w-[120px] truncate" title={formatCellValue(shipment[columnName as keyof Shipment], columnName)}>
+                                {formatCellValue(shipment[columnName as keyof Shipment], columnName)}
+                              </div>
+                            )}
+                          </td>
+                        ))}
+                        <td className="w-32 px-3 py-3 whitespace-nowrap text-xs font-medium">
+                          <div className="flex items-center justify-center space-x-1">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDocumentPreview(shipmentDocuments[shipment.id]?.[0]);
+                              }}
+                              className="text-blue-600 hover:text-blue-800 p-1"
+                              title="Preview"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
                           </div>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                        </td>
+                      </tr>
+                    );
+                  } else {
+                    const doc = row.data;
+                    return (
+                      <tr 
+                        key={`document-${doc.id}`}
+                        className="hover:bg-gray-50 cursor-pointer"
+                        onClick={() => handleDocumentPreview(doc)}
+                      >
+                        <td className="w-8 px-2 py-3 border-r border-gray-200">
+                          {isAdmin ? (
+                            <input
+                              type="checkbox"
+                              checked={selectedDocuments.has(doc.id)}
+                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => {
+                                e.stopPropagation();
+                                const newSelected = new Set(selectedDocuments);
+                                if (e.target.checked) {
+                                  newSelected.add(doc.id);
+                                } else {
+                                  newSelected.delete(doc.id);
+                                }
+                                setSelectedDocuments(newSelected);
+                              }}
+                            />
+                          ) : (
+                            <div className="w-4 h-4"></div>
+                          )}
+                        </td>
+                        {visibleColumns.map((columnName, index) => (
+                          <td key={columnName} className={`${getColumnClasses(columnName)} ${
+                            index < visibleColumns.length - 1 ? 'border-r border-gray-200' : ''
+                          }`}>
+                            {columnName === 'ref' ? (
+                              <div className="max-w-[100px] truncate font-medium flex items-center" title={doc.file_name}>
+                                <FileText className="w-4 h-4 text-gray-400 mr-2 flex-shrink-0" />
+                                <span className="truncate">{doc.file_name}</span>
+                              </div>
+                            ) : (
+                              <div className="max-w-[120px] truncate text-gray-400">
+                                —
+                              </div>
+                            )}
+                          </td>
+                        ))}
+                        <td className="w-32 px-3 py-3 whitespace-nowrap text-xs font-medium">
+                          <div className="flex items-center justify-center space-x-1">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDocumentPreview(doc);
+                              }}
+                              className="text-blue-600 hover:text-blue-800 p-1"
+                              title="Preview"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  }
+                })}
               </tbody>
             </table>
           </div>
         </div>
       )}
-
-      {/* All Shipment Files Component */}
-      <AllShipmentFiles 
-        onRefresh={() => fetchShipmentData(true)}
-        refreshTrigger={documentRefreshTrigger}
-        isAdmin={isAdmin}
-        className="mt-6"
-      />
       
       {/* Upload Documents Modal */}
       {uploadModalOpen && selectedShipmentForUpload && (

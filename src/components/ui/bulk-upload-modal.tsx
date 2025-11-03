@@ -225,13 +225,6 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({
             <div className="mt-6">
               <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
                 File Pool ({filePool.length} files)
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="ml-4 text-blue-600 hover:text-blue-800 p-1"
-                  title="Add more files"
-                >
-                  <Plus className="w-4 h-4" />
-                </button>
               </h3>
               
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -273,13 +266,6 @@ export const BulkUploadModal: React.FC<BulkUploadModalProps> = ({
                           title="Preview"
                         >
                           <Eye className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => downloadFile(file)}
-                          className="p-1.5 text-gray-600 hover:text-gray-800 hover:bg-gray-200 rounded"
-                          title="Download"
-                        >
-                          <Download className="w-4 h-4" />
                         </button>
                       </div>
                       <button

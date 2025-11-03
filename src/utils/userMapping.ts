@@ -10,7 +10,7 @@ export const USERNAME_TO_EMAIL_MAP: UserMapping = {
   'david': 'david.v@dnddesigncenter.com',
   'natalia': 'natalia@dnddesigncenter.com',
   'info': 'info@dnddesigncenter.com',
-  'effi': 'info@effidigi.com',
+  'marti': 'info@effidigi.com',
 };
 
 /**

@@ -26,7 +26,6 @@ export const isStaffMemberEmail = (userEmail: string): boolean => {
   const staffEmails = [
     'info@dnddesigncenter.com',      // Dimitry
     'natalia@dnddesigncenter.com',   // Natalia  
-    'marti@dnddesigncenter.com'      // Marti
   ];
   
   return staffEmails.includes(userEmail.toLowerCase());

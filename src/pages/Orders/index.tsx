@@ -18,7 +18,6 @@ interface SupplierInvoice {
   companyName?: string;
   orderNumber: string;
   date: string;
-  status: 'received' | 'pending';
   isEdited?: boolean;
   originalInvoiceId?: string;
   supplierAddress?: string;
@@ -107,7 +106,6 @@ function Orders() {
             companyName: brand?.company_name,
             orderNumber: order.order_number || 'N/A',
             date: order.order_date || order.created_at,
-            status: (order.status === 'received' ? 'received' : 'pending') as 'received' | 'pending',
             isEdited: false,
             originalInvoiceId: undefined,
             supplierAddress: brand?.address_line1,

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { FileText, Eye, Download, Trash2, MoreHorizontal, Plus } from 'lucide-react';
+import { FileText, Eye, Download, Trash2, Plus } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { ShipmentDocument } from '../../types';
 import { DocumentPreviewModal } from './document-preview-modal';
@@ -11,131 +11,6 @@ interface AllShipmentFilesProps {
   isAdmin?: boolean; // Admin status for permission control
   className?: string;
 }
-
-interface DocumentCardProps {
-  doc: ShipmentDocument & { shipment_ref?: string };
-  onPreview: (doc: ShipmentDocument) => void;
-  onDownload: (doc: ShipmentDocument) => void;
-  onDelete: (doc: ShipmentDocument) => void;
-  isDeleting: boolean;
-  isSelected: boolean;
-  onSelect: (documentId: string, selected: boolean) => void;
-  isAdmin: boolean; // Admin status for permission control
-  onAssignNew?: (doc: ShipmentDocument) => void; // open create shipment prefilled with this doc
-}
-
-const DocumentCard: React.FC<DocumentCardProps> = ({
-  doc,
-  onPreview,
-  onDownload,
-  onDelete,
-  isDeleting,
-  isSelected,
-  onSelect,
-  isAdmin,
-  onAssignNew
-}) => {
-  const [menuOpen, setMenuOpen] = React.useState(false);
-
-  const toggleMenu = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setMenuOpen(prev => !prev);
-  };
-
-  const handleCardClick = () => {
-    onPreview(doc);
-  };
-
-  const handleAction = (e: React.MouseEvent, action: () => void) => {
-    e.stopPropagation();
-    action();
-    setMenuOpen(false);
-  };
-
-
-  const baseAssigned = 'bg-green-200 hover:bg-green-100 border-green-300';
-  const baseUnassigned = 'bg-yellow-200 hover:bg-yellow-100 border-yellow-300';
-  const selectionHighlight = isSelected && isAdmin ? 'ring-2 ring-blue-300' : '';
-  const cardColor = doc.shipment_id === null ? baseUnassigned : baseAssigned;
-
-  return (
-    <div
-      className={`relative border rounded-lg p-3 transition-colors cursor-pointer ${cardColor} ${selectionHighlight}`}
-      onClick={handleCardClick}
-    >
-      {/* Top Row: Checkbox + filename + menu */}
-      <div className="flex items-start justify-between mb-2">
-        <div className="flex items-center flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
-          {isAdmin && (
-            <input
-              type="checkbox"
-              checked={isSelected}
-              onChange={(e) => onSelect(doc.id, e.target.checked)}
-              className="mr-2 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-              onClick={(e) => e.stopPropagation()}
-            />
-          )}
-          <p className="text-sm font-medium text-gray-900 truncate" title={doc.file_name}>
-            {doc.file_name}
-          </p>
-        </div>
-        <div className="relative" onClick={(e) => e.stopPropagation()}>
-          <button
-            className="p-1.5 rounded hover:bg-gray-200 text-gray-600"
-            onClick={toggleMenu}
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-          >
-            <MoreHorizontal className="w-4 h-4" />
-          </button>
-          {menuOpen && (
-            <div className="absolute right-0 mt-2 w-36 bg-white border border-gray-200 rounded-md shadow-lg z-10 py-1 text-sm">
-              <button
-                className="flex w-full items-center px-3 py-2 hover:bg-gray-100 text-gray-700"
-                onClick={(e) => handleAction(e, () => onPreview(doc))}
-              >
-                <Eye className="w-3 h-3 mr-2" /> Preview
-              </button>
-              <button
-                className="flex w-full items-center px-3 py-2 hover:bg-gray-100 text-gray-700"
-                onClick={(e) => handleAction(e, () => onDownload(doc))}
-              >
-                <Download className="w-3 h-3 mr-2" /> Download
-              </button>
-              {doc.shipment_id === null && isAdmin && onAssignNew && (
-                <button
-                  className="flex w-full items-center px-3 py-2 hover:bg-gray-100 text-gray-700"
-                  onClick={(e) => handleAction(e, () => onAssignNew(doc))}
-                >
-                  <Plus className="w-3 h-3 mr-2" /> Assign
-                </button>
-              )}
-              {isAdmin && (
-                <button
-                  className="flex w-full items-center px-3 py-2 hover:bg-red-50 text-red-600 disabled:opacity-50"
-                  onClick={(e) => handleAction(e, () => onDelete(doc))}
-                  disabled={isDeleting}
-                >
-                  {isDeleting ? (
-                    <div className="w-3 h-3 mr-2 border border-red-600 border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <Trash2 className="w-3 h-3 mr-2" />
-                  )}
-                  Delete
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* File Info */}
-      <div className="text-xs text-gray-1000">
-        <div>{new Date(doc.uploaded_at).toLocaleDateString()}</div>
-      </div>
-    </div>
-  );
-};
 
 export const AllShipmentFiles: React.FC<AllShipmentFilesProps> = ({
   onRefresh,
@@ -264,7 +139,7 @@ export const AllShipmentFiles: React.FC<AllShipmentFilesProps> = ({
 
   const handleSelectAll = (selected: boolean) => {
     if (selected) {
-      setSelectedDocuments(new Set(allDocuments.map(doc => doc.id)));
+      setSelectedDocuments(new Set(unassignedDocuments.map(doc => doc.id)));
     } else {
       setSelectedDocuments(new Set());
     }
@@ -299,8 +174,7 @@ export const AllShipmentFiles: React.FC<AllShipmentFilesProps> = ({
     }
   };
 
-  // Group documents by status
-  const assignedDocuments = allDocuments.filter(doc => doc.shipment_id !== null);
+  // Only show unassigned documents
   const unassignedDocuments = allDocuments.filter(doc => doc.shipment_id === null);
 
   // State for assigning a document to a brand new shipment
@@ -354,16 +228,15 @@ export const AllShipmentFiles: React.FC<AllShipmentFilesProps> = ({
           <div className="flex items-center space-x-6">
             {/* Summary Stats */}
             <div className="flex items-center space-x-4 text-sm text-gray-600">
-              <span>{assignedDocuments.length} assigned</span>
               <span>{unassignedDocuments.length} unassigned</span>
             </div>
 
             {/* Select All - only for admin & when documents exist */}
-            {allDocuments.length > 0 && isAdmin && (
+            {unassignedDocuments.length > 0 && isAdmin && (
               <div className="flex items-center text-sm text-gray-600">
                 <input
                   type="checkbox"
-                  checked={selectedDocuments.size === allDocuments.length && allDocuments.length > 0}
+                  checked={selectedDocuments.size === unassignedDocuments.length && unassignedDocuments.length > 0}
                   onChange={(e) => handleSelectAll(e.target.checked)}
                   className="mr-2 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
@@ -403,62 +276,113 @@ export const AllShipmentFiles: React.FC<AllShipmentFilesProps> = ({
         </div>
       </div>
 
-      {/* Content */}
+      {/* Content - Table */}
       {isExpanded && (
-        <div className="p-4">
-          {allDocuments.length === 0 ? (
+        <div className="overflow-x-auto">
+          {unassignedDocuments.length === 0 ? (
             <div className="text-center py-8 text-gray-500">
               <FileText className="w-8 h-8 mx-auto mb-2 text-gray-400" />
-              <p>No documents found</p>
+              <p>No unassigned documents found</p>
             </div>
           ) : (
-            <div className="space-y-6">
-              {/* Unassigned Documents Section */}
-              {unassignedDocuments.length > 0 && (
-                <div>
-                  <div className="flex items-center mb-2"></div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-6">
-                    {unassignedDocuments.map((doc) => (
-                      <DocumentCard
-                        key={doc.id}
-                        doc={doc as ShipmentDocument & { shipment_ref?: string }}
-                        onPreview={handlePreview}
-                        onDownload={handleDownload}
-                        onDelete={handleDelete}
-                        isDeleting={deletingDocuments.has(doc.id)}
-                        isSelected={selectedDocuments.has(doc.id)}
-                        onSelect={handleSelectDocument}
-                        isAdmin={isAdmin}
-                        onAssignNew={handleAssignNewShipment}
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  {isAdmin && (
+                    <th className="w-8 px-4 py-3 text-left">
+                      <input
+                        type="checkbox"
+                        checked={selectedDocuments.size === unassignedDocuments.length && unassignedDocuments.length > 0}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedDocuments(new Set(unassignedDocuments.map(doc => doc.id)));
+                          } else {
+                            setSelectedDocuments(new Set());
+                          }
+                        }}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                       />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Assigned Documents Section */}
-              {assignedDocuments.length > 0 && (
-                <div>
-                  <div className="flex items-center">
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {assignedDocuments.map((doc) => (
-                      <DocumentCard
-                        key={doc.id}
-                        doc={doc as ShipmentDocument & { shipment_ref?: string }}
-                        onPreview={handlePreview}
-                        onDownload={handleDownload}
-                        onDelete={handleDelete}
-                        isDeleting={deletingDocuments.has(doc.id)}
-                        isSelected={selectedDocuments.has(doc.id)}
-                        onSelect={handleSelectDocument}
-                        isAdmin={isAdmin}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+                    </th>
+                  )}
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    File Name
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Uploaded
+                  </th>
+                  <th className="w-32 px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {unassignedDocuments.map((doc) => (
+                  <tr key={doc.id} className="hover:bg-gray-50">
+                    {isAdmin && (
+                      <td className="w-8 px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedDocuments.has(doc.id)}
+                          onChange={(e) => handleSelectDocument(doc.id, e.target.checked)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                      </td>
+                    )}
+                    <td className="px-4 py-3 text-sm text-gray-900">
+                      <div className="flex items-center">
+                        <FileText className="w-4 h-4 text-gray-400 mr-2 flex-shrink-0" />
+                        <span className="truncate" title={doc.file_name}>{doc.file_name}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-500">
+                      {new Date(doc.uploaded_at).toLocaleDateString()}
+                    </td>
+                    <td className="w-32 px-4 py-3">
+                      <div className="flex items-center justify-center space-x-2">
+                        <button
+                          onClick={() => handlePreview(doc)}
+                          className="text-blue-600 hover:text-blue-800 p-1"
+                          title="Preview"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDownload(doc)}
+                          className="text-gray-600 hover:text-gray-800 p-1"
+                          title="Download"
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
+                        {isAdmin && (
+                          <>
+                            <button
+                              onClick={() => handleAssignNewShipment(doc)}
+                              className="text-green-600 hover:text-green-800 p-1"
+                              title="Assign to Shipment"
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleDelete(doc)}
+                              disabled={deletingDocuments.has(doc.id)}
+                              className="text-red-600 hover:text-red-800 p-1 disabled:opacity-50"
+                              title="Delete"
+                            >
+                              {deletingDocuments.has(doc.id) ? (
+                                <div className="w-4 h-4 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
+                              ) : (
+                                <Trash2 className="w-4 h-4" />
+                              )}
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
       )}

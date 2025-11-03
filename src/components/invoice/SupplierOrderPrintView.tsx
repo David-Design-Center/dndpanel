@@ -90,7 +90,6 @@ function SupplierOrderPrintView({ order, innerRef }: Props) {
             <div>2615 East 17th Street</div>
             <div>Brooklyn, NY 11235</div>
             <div>(718) 934-7100</div>
-            <div>info@dnddesigncenter.com</div>
             <div>www.dnddesigncenter.com</div>
           </div>
         </div>

@@ -171,11 +171,6 @@ function InvoicePrintView({ invoice, innerRef, showInternalView = false }: Invoi
               margin: '2px 0',
               fontSize: '11px',
               fontWeight: '500'
-            }}>info@dnddesigncenter.com</p>
-            <p style={{
-              margin: '2px 0',
-              fontSize: '11px',
-              fontWeight: '500'
             }}>Phone: (718) 934-7100</p>
             <p style={{
               margin: '2px 0',

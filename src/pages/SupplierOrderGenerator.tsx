@@ -343,7 +343,6 @@ function SupplierOrderGenerator({ orderId: propOrderId, onClose, isModal = false
         order_number: order.poNumber,
         order_date: order.date,
         supplier_id: supplierId,
-        status: 'pending',
         created_by: currentProfile?.name || 'Unknown Staff'
       };
 
