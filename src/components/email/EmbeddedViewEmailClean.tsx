@@ -210,6 +210,70 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
       setEmail(fetchedEmail);
 
+      // Check if this is a draft and auto-open reply composer with draft content
+      const isDraft = fetchedEmail.labelIds?.includes('DRAFT');
+      if (isDraft) {
+        console.log('📝 Draft detected, fetching draft content and auto-opening reply composer');
+        
+        try {
+          // Fetch the full draft from Gmail API to get the message content
+          const draftResponse = await window.gapi.client.gmail.users.drafts.get({
+            userId: 'me',
+            id: fetchedEmail.id,
+            format: 'full'
+          });
+          
+          if (draftResponse.result?.message) {
+            const draftMessage = draftResponse.result.message;
+            
+            // Extract the text/html or text/plain body from the draft
+            let draftContent = '';
+            
+            const findBody = (parts: any[]): string => {
+              for (const part of parts) {
+                if (part.mimeType === 'text/html' && part.body?.data) {
+                  // Decode base64url
+                  const decoded = atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+                  return decoded;
+                } else if (part.mimeType === 'text/plain' && part.body?.data) {
+                  const decoded = atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+                  return decoded;
+                } else if (part.parts) {
+                  const found = findBody(part.parts);
+                  if (found) return found;
+                }
+              }
+              return '';
+            };
+            
+            if (draftMessage.payload?.parts) {
+              draftContent = findBody(draftMessage.payload.parts);
+            } else if (draftMessage.payload?.body?.data) {
+              draftContent = atob(draftMessage.payload.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+            }
+            
+            console.log('📝 Draft content extracted:', draftContent.substring(0, 100) + '...');
+            
+            setShowReplyComposer(true);
+            setReplyMode('reply');
+            setReplyContent(draftContent);
+            setDraftId(fetchedEmail.id);
+            
+            // Scroll to reply composer after a brief delay
+            setTimeout(() => {
+              replyComposerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }, 300);
+          }
+        } catch (error) {
+          console.error('Failed to fetch draft content:', error);
+          // Fallback to body if draft fetch fails
+          setShowReplyComposer(true);
+          setReplyMode('reply');
+          setReplyContent(fetchedEmail.body || '');
+          setDraftId(fetchedEmail.id);
+        }
+      }
+
       // Fetch thread if exists
       if (fetchedEmail.threadId) {
         try {
@@ -1093,25 +1157,43 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       if (message?.inlineAttachments && message.inlineAttachments.length > 0) {
         console.log(`🖼️ Lazy loading ${message.inlineAttachments.length} inline images for message ${messageId}`);
         
-        try {
-          // Replace cid: references with actual data URIs
-          const updatedBody = await replaceCidReferences(
-            message.body,
-            message.inlineAttachments,
-            messageId
-          );
-          
-          // Update the message with loaded images
-          setThreadMessages(prev => 
-            prev.map(m => m.id === messageId ? { ...m, body: updatedBody } : m)
-          );
-          
-          // Mark as loaded
-          setLoadedImages(prev => new Set(prev).add(messageId));
-          console.log(`✅ Inline images loaded for message ${messageId}`);
-        } catch (error) {
-          console.error(`❌ Failed to load inline images for message ${messageId}:`, error);
-        }
+        // Retry logic for loading images
+        const loadWithRetry = async (maxRetries = 3, delayMs = 1000) => {
+          for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+              console.log(`🔄 Attempt ${attempt}/${maxRetries} to load images for message ${messageId}`);
+              
+              // Replace cid: references with actual data URIs
+              const updatedBody = await replaceCidReferences(
+                message.body,
+                message.inlineAttachments || [],
+                messageId
+              );
+              
+              // Update the message with loaded images
+              setThreadMessages(prev => 
+                prev.map(m => m.id === messageId ? { ...m, body: updatedBody } : m)
+              );
+              
+              // Mark as loaded
+              setLoadedImages(prev => new Set(prev).add(messageId));
+              console.log(`✅ Inline images loaded for message ${messageId} on attempt ${attempt}`);
+              return; // Success, exit retry loop
+              
+            } catch (error) {
+              console.error(`❌ Attempt ${attempt}/${maxRetries} failed to load inline images:`, error);
+              
+              if (attempt < maxRetries) {
+                console.log(`⏳ Retrying in ${delayMs}ms...`);
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+              } else {
+                console.error(`❌ All ${maxRetries} attempts failed for message ${messageId}`);
+              }
+            }
+          }
+        };
+        
+        loadWithRetry();
       }
     }
   };

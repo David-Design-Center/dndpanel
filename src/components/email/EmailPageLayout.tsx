@@ -25,8 +25,7 @@ import {
   Trash2,
   Mail,
   MailOpen,
-  MessageSquareWarning
-} from 'lucide-react';
+  MessageSquareWarning} from 'lucide-react';
 import { type SearchSuggestion } from '../../services/searchService';
 import EmailListItem from './EmailListItem';
 import ThreeColumnLayout from '../layout/ThreeColumnLayout';
@@ -157,6 +156,16 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   const [hasEverLoaded, setHasEverLoaded] = useState(false); // Track if we've ever successfully loaded
   // Inbox split view mode: show Unread and Everything Else side-by-side vertically, or expand one
   const [inboxViewMode, setInboxViewMode] = useState<'split' | 'unread' | 'read'>('split');
+  // Layout preference: 'list' (single column) or 'split' (unread/read sections)
+  const [layoutMode] = useState<'list' | 'split'>('list');
+  
+  // Gmail API pagination tokens for list view
+  const [nextPageToken, setNextPageToken] = useState<string | undefined>(undefined);
+  const [, setPageTokenStack] = useState<string[]>([]); // Stack of previous page tokens
+  const [currentPageIndex, setCurrentPageIndex] = useState(0);
+  const [paginatedEmails, setPaginatedEmails] = useState<Email[]>([]); // Cache for paginated emails
+  const [paginatedEmailsCache, setPaginatedEmailsCache] = useState<Map<number, Email[]>>(new Map()); // Cache all pages
+  const [, setPageTokensCache] = useState<Map<number, string | undefined>>(new Map()); // Cache page tokens for each page
   
   // Wrapper function to switch view mode and clear selections
   const switchInboxViewMode = (mode: 'split' | 'unread' | 'read') => {
@@ -450,6 +459,317 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   // Track explicit tab-level loading (distinct from global optimized first paint)
   const [tabLoading, setTabLoading] = useState<string | null>(null);
 
+  // Load paginated emails for list view using Gmail API pageToken
+  const loadPaginatedEmails = async (pageToken?: string, pageIndex?: number) => {
+    if (!isGmailSignedIn) return;
+    
+    const targetPageIndex = pageIndex ?? currentPageIndex;
+    
+    console.log(`🔍 loadPaginatedEmails called:`, {
+      pageToken: pageToken ? 'present' : 'none',
+      pageIndex,
+      targetPageIndex,
+      currentPageIndex,
+      cacheSize: paginatedEmailsCache.size,
+      cachedPages: Array.from(paginatedEmailsCache.keys())
+    });
+    
+    // DISABLE CACHING - Always fetch fresh to avoid email mixing issues
+    // if (paginatedEmailsCache.has(targetPageIndex)) {
+    //   console.log(`📦 Using cached emails for page ${targetPageIndex}`);
+    //   const cachedEmails = paginatedEmailsCache.get(targetPageIndex)!;
+    //   setPaginatedEmails(cachedEmails);
+    //   
+    //   // Restore the nextPageToken for this page from cache
+    //   const cachedNextToken = pageTokensCache.get(targetPageIndex);
+    //   setNextPageToken(cachedNextToken);
+    //   console.log(`📦 Restored nextPageToken from cache:`, cachedNextToken ? 'present' : 'none');
+    //   
+    //   return;
+    // }
+    
+    console.log(`🌐 Always fetching fresh from API - caching disabled`);
+    
+    setLoading(true);
+    try {
+      // Build query based on active tab
+      let query = '';
+      switch (activeTab) {
+        case 'all':
+          query = 'in:inbox -in:sent -in:spam -in:trash';
+          break;
+        case 'unread':
+          query = 'is:unread in:inbox';
+          break;
+        case 'sent':
+          query = 'in:sent';
+          break;
+        case 'drafts':
+          query = 'in:drafts';
+          break;
+        case 'trash':
+          query = 'in:trash';
+          break;
+        case 'important':
+          query = 'is:important';
+          break;
+        case 'starred':
+          query = 'is:starred';
+          break;
+        case 'spam':
+          query = 'in:spam';
+          break;
+        case 'allmail':
+          query = ''; // All mail
+          break;
+        default:
+          query = 'in:inbox';
+      }
+      
+      // Add label filter if viewing a specific label
+      if (labelName) {
+        // Use the actual label ID if available (more reliable than label name)
+        // The label ID is passed via URL params
+        if (labelIdParam) {
+          // When we have the label ID, we'll use it directly in the API call below
+          // For now, set query to empty as we'll use labelIds parameter
+          query = ''; // We'll use labelIds parameter instead
+          console.log('📧 Using label ID for filtering:', labelIdParam);
+        } else {
+          // Fallback: Use label name in query
+          // Gmail search syntax: label:"exact name" with quotes
+          query = `label:"${labelName}"`;
+          console.log('📧 Using label name for filtering:', labelName, 'Query:', query);
+        }
+      }
+      
+      const maxResults = 25; // Number of emails per page (reduced from 50 for faster loading)
+      
+      // Use the FAST optimized service
+      console.log(`🚀 Fetching page ${targetPageIndex}`, labelIdParam ? `with labelId: ${labelIdParam}` : `with query: ${query}`);
+      const startTime = Date.now();
+      
+      let response;
+      
+      // If we have a labelId, call Gmail API directly with labelIds parameter (more reliable)
+      if (labelIdParam && window.gapi?.client?.gmail) {
+        const requestParams: any = {
+          userId: 'me',
+          maxResults: maxResults,
+          labelIds: [labelIdParam] // Use labelIds array instead of query
+        };
+        
+        if (pageToken) {
+          requestParams.pageToken = pageToken;
+        }
+        
+        // Use threads API to match Gmail UI (shows threads, not individual messages)
+        const threadsApi = (window.gapi.client.gmail.users as any).threads;
+        const apiResponse = await threadsApi.list(requestParams);
+        
+        // Import parsing utilities from gmail module
+        const { 
+          getHeaderValue,
+          decodeRfc2047,
+          parseEmailAddresses,
+          decodeHtmlEntities 
+        } = await import('../../integrations/gmail');
+        const { format } = await import('date-fns');
+        
+        // Convert to our format - fetch latest message from each thread
+        const emails: any[] = [];
+        const seenThreadIds = new Set<string>(); // Deduplicate by thread
+        
+        if (apiResponse.result.threads) {
+          for (const thread of apiResponse.result.threads) {
+            if (!thread.id || seenThreadIds.has(thread.id)) continue;
+            seenThreadIds.add(thread.id);
+            
+            try {
+              // Get the thread details with the latest message
+              const threadData = await threadsApi.get({
+                userId: 'me',
+                id: thread.id,
+                format: 'metadata',
+                metadataHeaders: ['Subject', 'From', 'To', 'Date']
+              });
+              
+              // Get the latest message in the thread
+              const messages = threadData.result.messages || [];
+              if (messages.length === 0) continue;
+              
+              // Get the latest message in the thread
+              const latestMessage = messages[messages.length - 1];
+              const payload = latestMessage.payload as any;
+              const headers = payload.headers || [];
+              
+              const subject = decodeRfc2047(getHeaderValue(headers, 'subject') || 'No Subject');
+              const fromHeader = decodeRfc2047(getHeaderValue(headers, 'from') || '');
+              const toHeader = decodeRfc2047(getHeaderValue(headers, 'to') || '');
+              const dateHeader = getHeaderValue(headers, 'date') || new Date().toISOString();
+              
+              const fromAddresses = parseEmailAddresses(fromHeader);
+              const fromEmail = fromAddresses[0]?.email || fromHeader;
+              const fromName = fromAddresses[0]?.name || fromHeader;
+
+              const toAddresses = parseEmailAddresses(toHeader);
+              const toEmail = toAddresses[0]?.email || toHeader;
+              const toName = toAddresses[0]?.name || toHeader;
+
+              // Fix UTF-8 encoding issues in snippet
+              let preview = latestMessage.snippet ? decodeHtmlEntities(latestMessage.snippet) : '';
+              // Fix common UTF-8 encoding issues (e.g., "Iâ¬"m" -> "I'm")
+              preview = preview
+                .replace(/â¬"/g, "'") // Fix smart quotes
+                .replace(/â€™/g, "'") // Another smart quote variant
+                .replace(/â€œ/g, '"') // Smart double quote open
+                .replace(/â€/g, '"')  // Smart double quote close
+                .replace(/â€"/g, '—') // Em dash
+                .replace(/â€"/g, '–') // En dash
+                .replace(/Ã©/g, 'é')   // e with acute
+                .replace(/Ã¨/g, 'è')   // e with grave
+                .replace(/Ã /g, 'à')   // a with grave
+                .replace(/Ã¢/g, 'â')   // a with circumflex;
+              
+              emails.push({
+                id: latestMessage.id,
+                from: { name: fromName, email: fromEmail },
+                to: [{ name: toName, email: toEmail }],
+                subject: subject,
+                body: preview,
+                preview: preview,
+                isRead: !latestMessage.labelIds?.includes('UNREAD'),
+                isImportant: latestMessage.labelIds?.includes('IMPORTANT'),
+                isStarred: latestMessage.labelIds?.includes('STARRED'),
+                date: format(new Date(dateHeader), "yyyy-MM-dd'T'HH:mm:ss"),
+                labelIds: latestMessage.labelIds || [],
+                threadId: thread.id
+              });
+            } catch (err) {
+              console.warn(`Failed to fetch thread ${thread.id}:`, err);
+            }
+          }
+        }
+        
+        response = {
+          emails,
+          nextPageToken: apiResponse.result.nextPageToken,
+          resultSizeEstimate: apiResponse.result.resultSizeEstimate || 0
+        };
+        
+        console.log(`✅ Fetched ${emails.length} emails using labelId in ${Date.now() - startTime}ms`);
+      } else {
+        // Otherwise use the standard getEmails with query
+        response = await getEmails(false, query, maxResults, pageToken);
+        console.log(`✅ Fetched ${response.emails.length} emails using query in ${Date.now() - startTime}ms`);
+      }
+      
+      // CACHING DISABLED - Don't store in cache to avoid mixing issues
+      // setPaginatedEmailsCache(prev => {
+      //   const newCache = new Map(prev);
+      //   newCache.set(targetPageIndex, response.emails);
+      //   console.log(`💾 Cached page ${targetPageIndex}, total cached pages:`, Array.from(newCache.keys()));
+      //   return newCache;
+      // });
+      // 
+      // setPageTokensCache(prev => {
+      //   const newCache = new Map(prev);
+      //   newCache.set(targetPageIndex, response.nextPageToken);
+      //   console.log(`💾 Cached token for page ${targetPageIndex}:`, response.nextPageToken ? 'present' : 'none');
+      //   return newCache;
+      // });
+      
+      // Update current view
+      setPaginatedEmails(response.emails);
+      
+      // Add to repository for consistency
+      emailRepository.addEmails(response.emails);
+      
+      // Update pagination tokens
+      setNextPageToken(response.nextPageToken);
+      
+      console.log('📄 Pagination state:', {
+        currentPage: targetPageIndex,
+        emailsCount: response.emails.length,
+        nextPageToken: response.nextPageToken,
+        hasMore: !!response.nextPageToken
+      });
+      
+    } catch (error) {
+      console.error('Failed to load paginated emails:', error);
+      toast.error('Failed to load emails');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle next page navigation
+  const handleNextPageGmail = async () => {
+    if (!nextPageToken || loading) return;
+    
+    const nextPageIndex = currentPageIndex + 1;
+    
+    console.log(`➡️ Moving to next page:`, {
+      from: currentPageIndex,
+      to: nextPageIndex,
+      token: nextPageToken ? 'present' : 'none'
+    });
+    
+    // Update page index FIRST before loading
+    setCurrentPageIndex(nextPageIndex);
+    
+    // Save current token to stack before moving forward
+    setPageTokenStack(prev => [...prev, nextPageToken]);
+    
+    // Load next page with the correct page index
+    await loadPaginatedEmails(nextPageToken, nextPageIndex);
+  };
+
+  // Handle previous page navigation
+  const handlePrevPageGmail = async () => {
+    if (currentPageIndex === 0) return;
+    
+    const prevPageIndex = currentPageIndex - 1;
+    
+    console.log(`⬅️ Moving to previous page:`, {
+      from: currentPageIndex,
+      to: prevPageIndex
+    });
+    
+    setCurrentPageIndex(prevPageIndex);
+    
+    // Load from cache (no page token needed for cached pages)
+    await loadPaginatedEmails(undefined, prevPageIndex);
+    
+    // Update token stack - remove last token
+    setPageTokenStack(prev => {
+      const newStack = [...prev];
+      newStack.pop();
+      return newStack;
+    });
+  };
+
+  // Reset pagination when tab or layout mode changes
+  useEffect(() => {
+    // Always use list mode now (split view disabled)
+    console.log('📋 Pagination useEffect triggered:', { activeTab, labelName, isGmailSignedIn });
+    
+    // COMPLETELY RESET - Clear everything when switching folders/tabs
+    setNextPageToken(undefined);
+    setPageTokenStack([]);
+    setCurrentPageIndex(0);
+    setPaginatedEmailsCache(new Map());
+    setPageTokensCache(new Map());
+    setPaginatedEmails([]); // CLEAR EMAILS - blank slate on every switch
+    setLoading(true); // Show loading state immediately
+    
+    // Load first page
+    if (isGmailSignedIn) {
+      console.log('📋 Loading first page of emails...');
+      loadPaginatedEmails(undefined, 0);
+    }
+  }, [activeTab, labelName, isGmailSignedIn]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // OPTIMIZED: Fetch all email types using performance-optimized approach
   const fetchAllEmailTypes = async (forceRefresh = false) => {
     if (!isGmailSignedIn || labelName) return;
@@ -706,53 +1026,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   };
 
   // Load more category emails for specific category and folder context
-  const loadMoreCategoryEmails = async (
-    category: 'primary' | 'updates' | 'promotions' | 'social',
-    folderContext: 'all' | 'spam' | 'trash'
-  ) => {
-    if (!isGmailSignedIn || labelName) return;
-
-    try {
-      setLoadingMore(true);
-      
-      const pageToken = categoryPageTokens[folderContext][category];
-      const currentFilters = buildFilters();
-      const response = await getCategoryEmailsForFolder(category, folderContext, false, 20, pageToken, currentFilters);
-      const newEmails = response.emails || [];
-
-      // Update category emails
-      setCategoryEmails(prev => ({
-        ...prev,
-        [folderContext]: {
-          ...prev[folderContext],
-          [category]: [...prev[folderContext][category], ...newEmails]
-        }
-      }));
-
-      // Update category page tokens
-      setCategoryPageTokens(prev => ({
-        ...prev,
-        [folderContext]: {
-          ...prev[folderContext],
-          [category]: response.nextPageToken
-        }
-      }));
-
-      // Update has more flags
-      setHasMoreCategoryEmails(prev => ({
-        ...prev,
-        [folderContext]: {
-          ...prev[folderContext],
-          [category]: !!response.nextPageToken
-        }
-      }));
-
-      setLoadingMore(false);
-    } catch (error) {
-      console.error('❌ Error loading more category emails:', error);
-      setLoadingMore(false);
-    }
-  };
 
   // Load more emails for specific tab
   const loadMoreForTab = async (tabType: TabKey, options?: { force?: boolean }) => {
@@ -1632,7 +1905,9 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     return currentEmails;
   };
 
-  const filteredEmails = getCurrentEmails();
+  // Always use paginated emails now (split view disabled)
+  const filteredEmails = paginatedEmails.length > 0 ? paginatedEmails : getCurrentEmails();
+  
   // Apply Unread/Starred/Attachments chips as client-side filters
   const applyChipFilters = (items: Email[]): Email[] => {
     return items.filter(email => {
@@ -1645,7 +1920,8 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
 
   const chipFilteredEmails = applyChipFilters(filteredEmails);
   // Only apply chips in Inbox "all" tab; show raw lists for other tabs
-  const isSplitInbox = pageType === 'inbox' && !labelName && activeTab === 'all';
+  // Also respect layoutMode preference
+  const isSplitInbox = pageType === 'inbox' && !labelName && activeTab === 'all' && layoutMode === 'split';
   const baseVisible = isSplitInbox ? chipFilteredEmails : filteredEmails;
 
   // Split source should only be used for Inbox > All; other tabs should not use inbox "all" data
@@ -1721,13 +1997,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     ? (supportsCategoryTabs ? categoryHasMore : inboxTabHasMore)
     : (labelName ? hasMoreEmails : false);
   const hasNextLoaded = (pageIndex + 1) * PAGE_SIZE < totalLoadedEmails;
-  const canGoNext = hasNextLoaded || currentHasMore;
-  const canGoPrev = pageIndex > 0;
-  const rangeStart = totalLoadedEmails === 0 ? 0 : pageIndex * PAGE_SIZE + 1;
-  const rangeEnd = totalLoadedEmails === 0 ? 0 : Math.min(totalLoadedEmails, (pageIndex + 1) * PAGE_SIZE);
-  const totalDisplay = currentHasMore ? `${totalLoadedEmails}+` : `${totalLoadedEmails}`;
-  const disablePrev = !canGoPrev || loadingMore || !!tabLoading;
-  const disableNext = !canGoNext || loadingMore || !!tabLoading;
 
   useEffect(() => {
     if (!isInboxContext) return;
@@ -1769,34 +2038,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     }
   }, [allTabEmails.all, getEmailTimestampMs, isInboxContext]);
 
-  const handlePrevPage = () => {
-    setPageIndex(prev => (prev > 0 ? prev - 1 : prev));
-  };
 
-  const handleNextPage = async () => {
-    if (!canGoNext || loadingMore || tabLoading) return;
-    const nextIndex = pageIndex + 1;
-    const needsFetch = totalLoadedEmails <= nextIndex * PAGE_SIZE && currentHasMore;
-
-    if (needsFetch) {
-      try {
-        if (isInboxContext) {
-          if (supportsCategoryTabs) {
-            await loadMoreCategoryEmails(activeCategory, folderContextForTab);
-          } else {
-            await loadMoreForTab(activeTab);
-          }
-        } else if (labelName) {
-          await fetchLabelEmails(false, true);
-        }
-      } catch (error) {
-        console.error('Failed to load next page', error);
-        return;
-      }
-    }
-
-    setPageIndex(nextIndex);
-  };
 
   // Loading overlay conditions: when current tab has no items yet and a fetch is in flight
   const currentListEmpty = (pageType === 'inbox' && !labelName)
@@ -2442,6 +2684,35 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
             </div>
             
             <div className="flex items-center gap-3">
+              {/* View mode toggle - Disabled for now */}
+              {/* {pageType === 'inbox' && !labelName && activeTab === 'all' && (
+                <div className="flex items-center bg-white border border-gray-300 rounded overflow-hidden">
+                  <button
+                    onClick={() => setLayoutMode('list')}
+                    className={`p-1.5 transition-colors ${
+                      layoutMode === 'list'
+                        ? 'bg-blue-50 text-blue-600'
+                        : 'text-gray-600 hover:bg-gray-50'
+                    }`}
+                    title="List view"
+                  >
+                    <Rows3 size={16} />
+                  </button>
+                  <div className="w-px h-6 bg-gray-300" />
+                  <button
+                    onClick={() => setLayoutMode('split')}
+                    className={`p-1.5 transition-colors ${
+                      layoutMode === 'split'
+                        ? 'bg-blue-50 text-blue-600'
+                        : 'text-gray-600 hover:bg-gray-50'
+                    }`}
+                    title="Split view"
+                  >
+                    <Rows2 size={16} />
+                  </button>
+                </div>
+              )} */}
+              
               {selectedEmails.size > 0 && (
                 <span className="text-xs text-gray-600">
                   {selectedEmails.size} selected
@@ -2491,9 +2762,12 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                   <div className="flex items-center space-x-3">
                     <h2 className="text-lg font-semibold text-gray-800">Folder: {labelName}</h2>
                     <button
-                      onClick={() => navigate('/inbox')}
+                      onClick={() => {
+                        // Navigate back to inbox and clear label parameters
+                        navigate('/inbox');
+                      }}
                       className="p-1 hover:bg-gray-100 rounded-md transition-colors flex items-center justify-center"
-                      title="Close folder view"
+                      title="Back to inbox"
                     >
                       <X size={16} className="text-gray-500 hover:text-gray-700" />
                     </button>
@@ -2502,36 +2776,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                   <div></div>
                 )}
                 <div className="flex items-center gap-3">
-                  {/* Pagination controls on the right side */}
-                  <div className="flex items-center space-x-3 text-xs text-gray-600">
-                    <span>
-                      {totalLoadedEmails === 0 ? '0-0 of 0' : `${rangeStart}-${rangeEnd} of ${totalDisplay}`}
-                    </span>
-                    <div className="flex items-center space-x-1">
-                      <button
-                        type="button"
-                        onClick={handlePrevPage}
-                        disabled={disablePrev}
-                        className={`p-1.5 rounded-full border border-gray-300 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors ${
-                          disablePrev ? 'opacity-40 cursor-not-allowed' : ''
-                        }`}
-                        aria-label="Previous page"
-                      >
-                        <ChevronLeft size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { void handleNextPage(); }}
-                        disabled={disableNext}
-                        className={`p-1.5 rounded-full border border-gray-300 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors ${
-                          disableNext ? 'opacity-40 cursor-not-allowed' : ''
-                        }`}
-                        aria-label="Next page"
-                      >
-                        <ChevronRight size={14} />
-                      </button>
-                    </div>
-                  </div>
                   {/* Refresh button */}
                   <button 
                     onClick={handleRefresh}
@@ -2969,26 +3213,63 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                   </div>
                 )}
               </div>
-            ) : filteredEmails.length > 0 ? (
-              <div ref={emailListRef} className="flex-1 overflow-y-auto max-w-full min-h-0" style={{ height: '0' }}>
-                <Table>
-                  <TableBody>
-                    {visibleEmails.map((email) => (
-                      <EmailListItem 
-                        key={email.id} 
-                        email={email} 
-                        onClick={handleEmailClick}
-                        onEmailUpdate={handleEmailUpdate}
-                        onEmailDelete={handleEmailDelete}
-                        onCreateFilter={handleCreateFilter}
-                        isSelected={selectedEmails.has(email.id)}
-                        onToggleSelect={handleToggleSelectEmail}
-                        renderAsTableRow
-                      />
-                    ))}
-                  </TableBody>
-                </Table>
-                {/* Pagination controls moved to toolbar; load more button removed */}
+            ) : filteredEmails.length > 0 || loading ? (
+              <div className="flex-1 flex flex-col min-h-0 relative">
+                <div ref={emailListRef} className="flex-1 overflow-y-auto max-w-full min-h-0" style={{ height: '0' }}>
+                  {loading && filteredEmails.length === 0 ? (
+                    <div className="flex items-center justify-center h-full">
+                      <div className="flex flex-col items-center space-y-3">
+                        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary-500"></div>
+                        <p className="text-sm text-gray-500">Loading emails...</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <Table>
+                      <TableBody>
+                        {visibleEmails.map((email) => (
+                          <EmailListItem 
+                            key={email.id} 
+                            email={email} 
+                            onClick={handleEmailClick}
+                            onEmailUpdate={handleEmailUpdate}
+                            onEmailDelete={handleEmailDelete}
+                            onCreateFilter={handleCreateFilter}
+                            isSelected={selectedEmails.has(email.id)}
+                            onToggleSelect={handleToggleSelectEmail}
+                            renderAsTableRow
+                          />
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </div>
+                
+                {/* Gmail API Pagination Controls - Only for list view */}
+                {layoutMode === 'list' && (
+                  <div className="flex-shrink-0 border-t border-gray-200 px-4 py-2 flex items-center justify-between bg-gray-50">
+                    <div className="text-xs text-gray-600">
+                      Page {currentPageIndex + 1}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handlePrevPageGmail}
+                        disabled={currentPageIndex === 0 || loading}
+                        className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <ChevronLeft size={14} />
+                        Previous
+                      </button>
+                      <button
+                        onClick={handleNextPageGmail}
+                        disabled={!nextPageToken || loading}
+                        className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        Next
+                        <ChevronRight size={14} />
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="p-8 text-center">
