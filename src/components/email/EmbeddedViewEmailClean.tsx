@@ -210,67 +210,92 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
       setEmail(fetchedEmail);
 
-      // Check if this is a draft and auto-open reply composer with draft content
+      // Check if this is a draft
       const isDraft = fetchedEmail.labelIds?.includes('DRAFT');
       if (isDraft) {
-        console.log('📝 Draft detected, fetching draft content and auto-opening reply composer');
+        console.log('📝 Draft detected:', fetchedEmail.id);
         
-        try {
-          // Fetch the full draft from Gmail API to get the message content
-          const draftResponse = await window.gapi.client.gmail.users.drafts.get({
-            userId: 'me',
-            id: fetchedEmail.id,
-            format: 'full'
-          });
+        // Check if this is a reply draft (has threadId and is in a conversation)
+        if (fetchedEmail.threadId) {
+          console.log('📝 Reply draft detected, opening inline composer in thread view');
           
-          if (draftResponse.result?.message) {
-            const draftMessage = draftResponse.result.message;
+          // Fetch the draft to get its content
+          try {
+            const draftResponse = await window.gapi.client.gmail.users.drafts.list({
+              userId: 'me',
+              maxResults: 100
+            });
+
+            const drafts = draftResponse.result.drafts || [];
+            const matchingDraft = drafts.find((d: any) => d.message?.id === fetchedEmail.id);
             
-            // Extract the text/html or text/plain body from the draft
-            let draftContent = '';
-            
-            const findBody = (parts: any[]): string => {
-              for (const part of parts) {
-                if (part.mimeType === 'text/html' && part.body?.data) {
-                  // Decode base64url
-                  const decoded = atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
-                  return decoded;
-                } else if (part.mimeType === 'text/plain' && part.body?.data) {
-                  const decoded = atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
-                  return decoded;
-                } else if (part.parts) {
-                  const found = findBody(part.parts);
-                  if (found) return found;
+            if (matchingDraft) {
+              const draftDetails = await window.gapi.client.gmail.users.drafts.get({
+                userId: 'me',
+                id: matchingDraft.id,
+                format: 'full'
+              });
+
+              if (draftDetails.result?.message) {
+                const draftMessage = draftDetails.result.message;
+                const payload = draftMessage.payload;
+                const headers = payload?.headers || [];
+
+                const getHeader = (name: string) => {
+                  const header = headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase());
+                  return header?.value || '';
+                };
+
+                const toHeader = getHeader('To');
+
+                // Extract body content
+                let bodyHtml = '';
+                const findBody = (parts: any[]): { html: string; text: string } => {
+                  let html = '';
+                  let text = '';
+                  for (const part of parts) {
+                    if (part.mimeType === 'text/html' && part.body?.data) {
+                      html = atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+                    } else if (part.mimeType === 'text/plain' && part.body?.data && !html) {
+                      text = atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+                    } else if (part.parts) {
+                      const found = findBody(part.parts);
+                      if (found.html) html = found.html;
+                      if (found.text && !html) text = found.text;
+                    }
+                  }
+                  return { html, text };
+                };
+
+                if (payload?.parts) {
+                  const { html, text } = findBody(payload.parts);
+                  bodyHtml = html || text;
+                } else if (payload?.body?.data) {
+                  bodyHtml = atob(payload.body.data.replace(/-/g, '+').replace(/_/g, '/'));
                 }
+
+                // Open inline reply composer with draft content
+                setShowReplyComposer(true);
+                setReplyMode('reply');
+                setReplyContent(bodyHtml);
+                setDraftId(matchingDraft.id);
+                setForwardTo(toHeader);
+                setIsDirty(false);
+                isDirtyRef.current = false;
+
+                console.log('✅ Loaded reply draft into inline composer');
               }
-              return '';
-            };
-            
-            if (draftMessage.payload?.parts) {
-              draftContent = findBody(draftMessage.payload.parts);
-            } else if (draftMessage.payload?.body?.data) {
-              draftContent = atob(draftMessage.payload.body.data.replace(/-/g, '+').replace(/_/g, '/'));
             }
-            
-            console.log('📝 Draft content extracted:', draftContent.substring(0, 100) + '...');
-            
-            setShowReplyComposer(true);
-            setReplyMode('reply');
-            setReplyContent(draftContent);
-            setDraftId(fetchedEmail.id);
-            
-            // Scroll to reply composer after a brief delay
-            setTimeout(() => {
-              replyComposerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            }, 300);
+          } catch (error) {
+            console.error('❌ Failed to load draft content:', error);
           }
-        } catch (error) {
-          console.error('Failed to fetch draft content:', error);
-          // Fallback to body if draft fetch fails
-          setShowReplyComposer(true);
-          setReplyMode('reply');
-          setReplyContent(fetchedEmail.body || '');
-          setDraftId(fetchedEmail.id);
+          
+          // Continue to load the thread
+        } else {
+          // New email draft (no thread) - navigate to compose page
+          console.log('📝 New email draft detected, redirecting to compose page');
+          navigate(`/compose?draftId=${fetchedEmail.id}`);
+          return; // Exit early
         }
       }
 
@@ -1004,13 +1029,23 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     lastSaveTimeRef.current = now;
 
     try {
+      // Determine recipient based on reply mode
+      let recipientEmail = forwardTo; // For forward mode
+      
+      if (replyMode === 'reply' || replyMode === 'replyAll') {
+        // For reply modes, use the original sender's email
+        recipientEmail = email?.from?.email || '';
+      }
+
       const payload = {
-        to: forwardTo,
+        to: recipientEmail,
         body: replyContent,
         mode: replyMode,
         threadId: email?.threadId,
         inReplyTo: email?.id
       };
+
+      console.log('📝 Draft payload:', { ...payload, body: payload.body.substring(0, 100) + '...' });
 
       let response;
       if (!draftId) {
@@ -1533,7 +1568,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                 }
               }}
             >
-              {/* Add to Label with Submenu */}
+              {/* Add to Folder with Submenu */}
               <div 
                 className="relative"
                 onMouseEnter={handleShowLabelSubmenu}
@@ -1545,7 +1580,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                 >
                   <div className="flex items-center">
                     <Tag size={16} className="mr-3 text-gray-500" />
-                    Add to Label
+                    Add to Folder
                   </div>
                   <ChevronRight size={14} className="text-gray-400" />
                 </button>
@@ -1697,14 +1732,14 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                       onClick={handleManageFilters}
                     >
                       <Settings size={16} className="mr-3 text-gray-500" />
-                      Manage Filters
+                      Manage Rules
                     </button>
                     <button
                       className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center"
                       onClick={handleCreateNewFilter}
                     >
                       <Plus size={16} className="mr-3 text-gray-500" />
-                      Create Filter
+                      Create Rules
                     </button>
                   </div>,
                   document.body
@@ -2174,6 +2209,50 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
               >
                 {sending ? 'Sending...' : 'Send'}
               </button>
+              
+              {/* Manual Save Draft button */}
+              <button
+                onClick={() => {
+                  if (!isDirty) {
+                    sonnerToast.info('No changes to save');
+                    return;
+                  }
+                  saveDraft();
+                }}
+                disabled={isSaving || !isDirty}
+                className="px-4 py-2 text-sm text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {isSaving ? 'Saving...' : 'Save Draft'}
+              </button>
+              
+              {/* Discard Draft button - only show if this is a draft */}
+              {draftId && (
+                <button
+                  onClick={async () => {
+                    if (window.confirm('Are you sure you want to discard this draft?')) {
+                      try {
+                        await deleteReplyDraft(draftId);
+                        sonnerToast.success('Draft discarded');
+                        // Close composer but stay in thread view
+                        setShowReplyComposer(false);
+                        setReplyContent('');
+                        setForwardTo('');
+                        setDraftId(null);
+                        setIsDirty(false);
+                        isDirtyRef.current = false;
+                        // Don't navigate away - stay in thread view
+                      } catch (error) {
+                        console.error('Failed to discard draft:', error);
+                        sonnerToast.error('Failed to discard draft');
+                      }
+                    }
+                  }}
+                  className="px-4 py-2 text-sm text-red-600 hover:text-red-700 hover:bg-red-50 rounded transition-colors"
+                >
+                  Discard Draft
+                </button>
+              )}
+              
               <button
                 onClick={() => {
                   setShowReplyComposer(false);

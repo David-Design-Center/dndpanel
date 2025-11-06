@@ -1349,8 +1349,9 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       console.log('📧 Starting OPTIMIZED fetchAllEmailTypes...');
       fetchAllEmailTypes();
     } else if (isGmailSignedIn && labelName) {
-      console.log('📧 Starting fetchLabelEmails...');
-      fetchLabelEmails();
+      // DISABLED - Now using pagination for labels via loadPaginatedEmails
+      // fetchLabelEmails is called by the pagination useEffect above
+      console.log('📧 Label emails handled by pagination system');
     } else if (!isGmailSignedIn && !authLoading && !isGmailInitializing) {
       console.log('📧 Not signed in and auth complete - setting loading false');
       setHasEverLoaded(true);
@@ -1406,6 +1407,14 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     setIsRefreshLoading(true);
     setAllTabEmails({ all: [], unread: [], sent: [], drafts: [], trash: [], important: [], starred: [], spam: [], allmail: [] });
     
+    // Clear pagination cache to fetch fresh emails
+    setPaginatedEmailsCache(new Map());
+    setPageTokensCache(new Map());
+    setPaginatedEmails([]);
+    setNextPageToken(undefined);
+    setPageTokenStack([]);
+    setCurrentPageIndex(0);
+    
     if (labelName && effectiveLabelQuery) {
       // For labels, refresh label emails
       await fetchLabelEmails(true);
@@ -1413,7 +1422,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       // For inbox, refresh all email types and categories
       await Promise.all([
         fetchAllEmailTypes(true),
-        fetchCategoryEmails(true)
+        loadPaginatedEmails(undefined, 0) // Reload first page
       ]);
     }
     
@@ -1436,13 +1445,25 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       // Clear relevant caches to ensure fresh data
       clearEmailCache();
       
+      // Clear pagination cache to fetch fresh emails
+      setPaginatedEmailsCache(new Map());
+      setPageTokensCache(new Map());
+      setPaginatedEmails([]);
+      setNextPageToken(undefined);
+      setPageTokenStack([]);
+      setCurrentPageIndex(0);
+      
       if (labelName && effectiveLabelQuery) {
         // For label pages, refresh only the current label
         console.log(`🔄 Refreshing label: ${labelName}`);
         await fetchLabelEmails(true);
+        await loadPaginatedEmails(undefined, 0); // Reload first page
       } else if (pageType === 'inbox') {
         // For inbox, refresh based on current tab
         console.log(`🔄 Refreshing current tab: ${activeTab}`);
+        
+        // Always reload paginated emails for inbox
+        await loadPaginatedEmails(undefined, 0);
         
         switch (activeTab) {
           case 'all':
@@ -2115,6 +2136,11 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       scrollPositionRef.current = emailListRef.current.scrollTop;
     }
 
+    // UPDATE PAGINATED EMAILS (for list view)
+    setPaginatedEmails(prev => 
+      prev.map(e => e.id === updatedEmail.id ? updatedEmail : e)
+    );
+
     if (pageType === 'inbox' && !labelName) {
       // Update in all relevant tab arrays
       setAllTabEmails(prev => {
@@ -2202,6 +2228,9 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
 
       // ✨ FIX: Also remove from repository (single source of truth)
       emailRepository.deleteEmail(emailId);
+
+      // REMOVE FROM PAGINATED EMAILS (for list view)
+      setPaginatedEmails(prev => prev.filter(email => email.id !== emailId));
 
       // Remove from local state
       if (pageType === 'inbox' && !labelName) {
@@ -2467,7 +2496,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
               </h3>
               <p className="text-gray-600 mb-6">
                 {isGmailInitializing 
-                  ? 'Setting up your Gmail connection, please wait...'
+                  ? 'Setting up your connection, please wait...'
                   : 'Please wait while we load your data...'
                 }
               </p>
@@ -2749,7 +2778,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                   </div>
                   <div className="text-center">
                     <h3 className="text-lg font-medium text-gray-900 mb-2">Loading emails...</h3>
-                    <p className="text-gray-600">Please wait while we fetch your messages</p>
+                    <p className="text-gray-600">Please wait while we load your emails</p>
                   </div>
                 </div>
               </div>
@@ -3213,7 +3242,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                   </div>
                 )}
               </div>
-            ) : filteredEmails.length > 0 || loading ? (
+            ) : loading || filteredEmails.length > 0 ? (
               <div className="flex-1 flex flex-col min-h-0 relative">
                 <div ref={emailListRef} className="flex-1 overflow-y-auto max-w-full min-h-0" style={{ height: '0' }}>
                   {loading && filteredEmails.length === 0 ? (

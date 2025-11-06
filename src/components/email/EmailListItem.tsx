@@ -688,7 +688,7 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
             transform: 'translate(0, 0)', // Ensure no transform interferes
           }}
         >
-          {/* Add to Label */}
+          {/* Add to Folder */}
           <div className="relative">
             <button
               className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center justify-between"
@@ -697,7 +697,7 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
             >
               <div className="flex items-center">
                 <Tag size={16} className="mr-3 text-gray-500" />
-                Add to Label
+                Add to Folder
               </div>
               <ChevronRight size={14} className="text-gray-400" />
             </button>
@@ -776,7 +776,7 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
             >
               <div className="flex items-center">
                 <Filter size={16} className="mr-3 text-gray-500" />
-                Filter
+                Rules
               </div>
               <ChevronRight size={14} className="text-gray-400" />
             </button>
@@ -792,14 +792,14 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
                   onClick={handleManageFilters}
                 >
                   <Settings size={16} className="mr-3 text-gray-500" />
-                  Manage Filters
+                  Manage Rules
                 </button>
                 <button
                   className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center"
                   onClick={handleCreateNewFilter}
                 >
                   <Plus size={16} className="mr-3 text-gray-500" />
-                  Create Filter
+                  Create Rules
                 </button>
               </div>
             )}
@@ -1011,7 +1011,7 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
           : isSelected 
             ? 'bg-blue-200 hover:bg-blue-200'    // Selected
             : !email.isRead 
-              ? 'bg-blue-100 hover:bg-blue-150 font-semibold' // Unread - darker blue + bold
+              ? 'bg-blue-100 hover:bg-blue-150 font-extrabold' // Unread - darker blue + extra bold
               : 'bg-white hover:bg-gray-50'       // Read
       } ${isDragging ? 'opacity-50 z-10' : ''}`}
       data-dragging={isDragging}
@@ -1068,7 +1068,7 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
             {senderText}
           </span>
           <span
-            className={`subject ${!email.isRead ? 'font-medium text-gray-900' : 'text-gray-700'} shrink-0 max-w-[45%] truncate whitespace-nowrap leading-5`}
+            className={`subject ${!email.isRead ? 'text-gray-900' : 'text-gray-700'} shrink-0 max-w-[45%] truncate whitespace-nowrap leading-5`}
             title={email.subject || 'No Subject'}
           >
             {cleanEmailSubject(email.subject || 'No Subject')}
@@ -1136,7 +1136,7 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
             : isSelected 
               ? 'bg-blue-200 hover:bg-blue-200'    // Selected
               : !email.isRead 
-                ? 'bg-blue-100 hover:bg-blue-150 font-semibold' // Unread - darker blue + bold
+                ? 'bg-blue-100 hover:bg-blue-150 font-bold' // Unread - darker blue + extra bold
                 : 'hover:bg-gray-50'                // Read
         } ${isDragging ? 'opacity-50 z-10' : ''}`}
         data-dragging={isDragging}
@@ -1200,7 +1200,7 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
               {/* Subject + Snippet row */}
               <div className="min-w-0 flex items-center gap-2">
                 <span
-                  className={`subject block ${!email.isRead ? 'font-medium text-gray-900' : 'text-gray-700'} shrink-0 max-w-[100%] truncate whitespace-nowrap leading-5`}
+                  className={`subject block ${!email.isRead ? 'text-gray-900' : 'text-gray-700'} shrink-0 max-w-[100%] truncate whitespace-nowrap leading-5`}
                   title={email.subject || 'No Subject'}
                 >
                   {cleanEmailSubject(email.subject || 'No Subject')}

@@ -68,7 +68,7 @@ export class EmailRepository {
     // Add to master
     this.masterEmails.set(email.id, email);
 
-    // Add to label indices
+    // Add to Folder indices
     if (email.labelIds && Array.isArray(email.labelIds)) {
       email.labelIds.forEach(label => {
         if (!this.labelIndices.has(label)) {

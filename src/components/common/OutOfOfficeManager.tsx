@@ -85,7 +85,7 @@ function OutOfOfficeManager() {
         {/* Out-of-Office Rich Text Editor */}
         <div className="space-y-2">
           <Label htmlFor="outOfOfficeEditor" className="text-sm font-medium text-gray-700">
-            Out of Office Auto-Reply Message
+            Auto-Reply Message
           </Label>
           <div className="rounded-lg overflow-hidden">
             <RichTextEditor
@@ -111,8 +111,7 @@ function OutOfOfficeManager() {
               disabled={isSaving || !message.trim()}
               className="flex items-center space-x-2 bg-black hover:bg-grey"
             >
-              <Save className="w-4 h-4" />
-              <span>{isSaving ? 'Saving...' : 'Save Settings'}</span>
+              <span>{isSaving ? 'Saving...' : 'Save'}</span>
             </Button>
           </div>
         </div>

@@ -51,8 +51,8 @@ export const createReplyDraft = async (
       'Content-Transfer-Encoding: 7bit',
     ];
 
-    // Add To field for forward mode
-    if (payload.mode === 'forward' && payload.to) {
+    // Add To field (for all modes - reply, replyAll, and forward)
+    if (payload.to) {
       emailLines.push(`To: ${payload.to}`);
     }
 
@@ -129,8 +129,8 @@ export const updateReplyDraft = async (
       'Content-Transfer-Encoding: 7bit',
     ];
 
-    // Add To field for forward mode
-    if (payload.mode === 'forward' && payload.to) {
+    // Add To field (for all modes - reply, replyAll, and forward)
+    if (payload.to) {
       emailLines.push(`To: ${payload.to}`);
     }
 

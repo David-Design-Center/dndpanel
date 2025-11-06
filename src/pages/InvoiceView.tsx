@@ -156,9 +156,9 @@ function InvoiceView() {
             <div className="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <AlertCircle className="w-8 h-8 text-yellow-600" />
             </div>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">Gmail Connection Required</h3>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">Connection Required</h3>
             <p className="text-gray-600 mb-6">
-              Please connect to Gmail to view invoices. This page requires Gmail integration to access and display invoice details.
+              Please connect to your email account to view invoices. This page requires email integration to access and display invoice details.
             </p>
             <button
               onClick={() => navigate('/inbox')}

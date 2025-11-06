@@ -559,7 +559,7 @@ function SettingsFilters() {
           className="flex items-center"
         >
           <Plus className="w-4 h-4 mr-2" />
-          Create Filter
+          Create Rule
         </Button>
      </div>
 
@@ -701,7 +701,7 @@ function SettingsFilters() {
                       Creating...
                     </>
                   ) : (
-                    'Create Filter'
+                    'Create Rule'
                   )}
                 </Button>
               </div>
@@ -741,7 +741,7 @@ function SettingsFilters() {
                       className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer disabled:opacity-50"
                     />
                   </TableHead>
-                  <TableHead>Filter Rules</TableHead>
+                  <TableHead>Rules</TableHead>
                   <TableHead className="w-24">Actions</TableHead>
                 </TableRow>
               </TableHeader>

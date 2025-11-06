@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense, lazy } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import FoldersColumn from '../email labels/FoldersColumn';
@@ -11,6 +11,9 @@ import { InboxLayoutProvider } from '../../contexts/InboxLayoutContext';
 import { FoldersColumnProvider } from '../../contexts/FoldersColumnContext';
 import { PanelSizesProvider } from '../../contexts/PanelSizesContext';
 import { EmailListProvider } from '../../contexts/EmailListContext';
+import { ComposeProvider, useCompose } from '../../contexts/ComposeContext';
+
+const Compose = lazy(() => import('../../pages/Compose'));
 
 function Layout() {
   const { loading, isAdmin, userProfileId } = useAuth();
@@ -69,24 +72,26 @@ function Layout() {
 
   return (
     <FoldersColumnProvider>
-      <LayoutContent 
-        loading={loading}
-        isAdmin={isAdmin}
-        userProfileId={userProfileId}
-        currentProfile={currentProfile}
-        profileLoading={profileLoading}
-        selectProfile={selectProfile}
-        isPreloading={isPreloading}
-        isGhostPreloadComplete={isGhostPreloadComplete}
-        navigate={navigate}
-        showSuccess={showSuccess}
-        setShowSuccess={setShowSuccess}
-        hasAutoSelected={hasAutoSelected}
-        setHasAutoSelected={setHasAutoSelected}
-        autoSelectionFailed={autoSelectionFailed}
-        setAutoSelectionFailed={setAutoSelectionFailed}
-        isEmailRoute={isEmailRoute}
-      />
+      <ComposeProvider>
+        <LayoutContent 
+          loading={loading}
+          isAdmin={isAdmin}
+          userProfileId={userProfileId}
+          currentProfile={currentProfile}
+          profileLoading={profileLoading}
+          selectProfile={selectProfile}
+          isPreloading={isPreloading}
+          isGhostPreloadComplete={isGhostPreloadComplete}
+          navigate={navigate}
+          showSuccess={showSuccess}
+          setShowSuccess={setShowSuccess}
+          hasAutoSelected={hasAutoSelected}
+          setHasAutoSelected={setHasAutoSelected}
+          autoSelectionFailed={autoSelectionFailed}
+          setAutoSelectionFailed={setAutoSelectionFailed}
+          isEmailRoute={isEmailRoute}
+        />
+      </ComposeProvider>
     </FoldersColumnProvider>
   );
 }
@@ -109,6 +114,7 @@ function LayoutContent({
   isEmailRoute 
 }: any) {
   const { isFoldersColumnExpanded, toggleFoldersColumn } = useFoldersColumn();
+  const { isComposeOpen, openCompose } = useCompose();
 
   // Auto-select profile for non-admin users (only once)
   useEffect(() => {
@@ -133,7 +139,7 @@ function LayoutContent({
   }, [currentProfile, loading, setShowSuccess]);
 
   const handleCompose = () => {
-    navigate('/compose');
+    openCompose();
   };
 
   if (loading || profileLoading) {
@@ -191,6 +197,13 @@ function LayoutContent({
                 )}
               </div>
             </div>
+
+            {/* Compose Popup - Rendered as overlay */}
+            {isComposeOpen && (
+              <Suspense fallback={null}>
+                <Compose />
+              </Suspense>
+            )}
           </InboxLayoutProvider>
         </EmailListProvider>
       </PanelSizesProvider>

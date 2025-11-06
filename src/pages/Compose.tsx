@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { X, Paperclip, Minimize, Maximize, CheckCircle, Plus, FileText, Receipt } from 'lucide-react';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
+import { X, Paperclip, Minimize, Maximize, CheckCircle, Plus } from 'lucide-react';
 import { sendEmail, getThreadEmails, clearEmailCache, saveDraft, deleteDraft } from '../services/emailService';
 // Customer orders (type 'Customer Order') are already included in invoices query; here we fetch supplier orders from 'orders' table
 import { supabase } from '../lib/supabase';
@@ -14,11 +14,11 @@ import { Email, Contact } from '../types';
 import { getProfileInitial } from '../lib/utils';
 import Modal from '../components/common/Modal';
 import RichTextEditor from '../components/common/RichTextEditor';
-import PriceRequestAddon from '../components/common/PriceRequestAddon';
 import FileThumbnail from '../components/common/FileThumbnail';
 import { formatDistanceToNow, parseISO, format } from 'date-fns';
 import { useProfile } from '../contexts/ProfileContext';
 import { useContacts } from '../contexts/ContactsContext';
+import { useCompose } from '../contexts/ComposeContext';
 
 // Utility functions for text/HTML conversion
 const convertPlainTextToHtml = (text: string): string => {
@@ -46,7 +46,11 @@ interface AttachmentItem {
 function Compose() {
   const { currentProfile } = useProfile();
   const { searchContacts, setShouldLoadContacts } = useContacts();
-  const [to, setTo] = useState('');
+  const { closeCompose, draftId: contextDraftId } = useCompose();
+  const [searchParams] = useSearchParams();
+  const [toRecipients, setToRecipients] = useState<string[]>([]);
+  const [toInput, setToInput] = useState('');
+  const [to, setTo] = useState(''); // Keep for backward compatibility
   const [ccRecipients, setCcRecipients] = useState<string[]>([]); // Start empty, will be set in useEffect
   const [showCc, setShowCc] = useState(true); // Show CC by default since we have hardcoded recipient
   const [ccInput, setCcInput] = useState('');
@@ -61,7 +65,7 @@ function Compose() {
   const [isSending, setIsSending] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [previewFile, setPreviewFile] = useState<AttachmentItem | null>(null);
-  const [showPriceRequestModal, setShowPriceRequestModal] = useState(false);
+  const [, setShowPriceRequestModal] = useState(false);
   
   // Thread-related state
   const [isReply, setIsReply] = useState(false);
@@ -81,10 +85,10 @@ function Compose() {
   const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   // Attachment panel state
-  const [invoices, setInvoices] = useState<any[]>([]);
-  const [orders, setOrders] = useState<any[]>([]);
-  const [attachmentPanelTab, setAttachmentPanelTab] = useState<'invoices' | 'orders'>('invoices');
-  const [isLoadingAttachmentData, setIsLoadingAttachmentData] = useState(false);
+  const [, setInvoices] = useState<any[]>([]);
+  const [, setOrders] = useState<any[]>([]);
+  const [] = useState<'invoices' | 'orders'>('invoices');
+  const [, setIsLoadingAttachmentData] = useState(false);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -114,34 +118,8 @@ function Compose() {
   };
 
   // Handle closing the price request panel
-  const handleClosePriceRequest = () => {
-    setShowPriceRequestModal(false);
-  };
 
   // Handle price request table insertion
-  const handlePriceRequestInsert = (html: string, recipientEmail?: string, attachments?: Array<{ name: string; mimeType: string; data: string; cid: string }>) => {
-    // Insert the HTML table into the editor
-    setNewBodyHtml(prev => prev + html);
-    
-    // If recipientEmail is provided, update the To field
-    if (recipientEmail && !to) {
-      setTo(recipientEmail);
-    }
-    
-    // If attachments are provided, add them to the email
-    if (attachments && attachments.length > 0) {
-      const newAttachments: AttachmentItem[] = attachments.map(att => ({
-        name: att.name,
-        mimeType: att.mimeType,
-        data: att.data,
-        size: undefined, // Size not available for base64 data
-      }));
-      setAttachments(prev => [...prev, ...newAttachments]);
-    }
-    
-    // Close the panel
-    setShowPriceRequestModal(false);
-  };
 
   // Check if we're replying to an email or have pre-filled data
   useEffect(() => {
@@ -220,6 +198,160 @@ function Compose() {
       }
     }
   }, [location.state]);
+
+  // Load draft from context (when opened via context)
+  useEffect(() => {
+    if (contextDraftId && window.gapi?.client?.gmail) {
+      console.log('📝 Loading draft from context:', contextDraftId);
+      loadDraftFromGmail(contextDraftId);
+    }
+  }, [contextDraftId]);
+
+  // Load draft from URL query parameter
+  useEffect(() => {
+    const draftIdParam = searchParams.get('draftId');
+    if (draftIdParam && window.gapi?.client?.gmail) {
+      console.log('📝 Loading draft from URL param:', draftIdParam);
+      loadDraftFromGmail(draftIdParam);
+    }
+  }, [searchParams]);
+
+  // Function to load draft from Gmail API
+  const loadDraftFromGmail = async (messageId: string) => {
+    try {
+      console.log('📧 Looking for draft with message ID:', messageId);
+      
+      // First, list all drafts to find the one with this message ID
+      const draftsListResponse = await window.gapi.client.gmail.users.drafts.list({
+        userId: 'me',
+        maxResults: 100
+      });
+
+      const drafts = draftsListResponse.result.drafts || [];
+      console.log(`📋 Found ${drafts.length} drafts total`);
+      
+      // Find the draft that matches this message ID
+      const matchingDraft = drafts.find((d: any) => d.message?.id === messageId);
+      
+      if (!matchingDraft) {
+        console.error('❌ No draft found with message ID:', messageId);
+        // Fallback: try using the messageId as draftId directly
+        await loadDraftById(messageId);
+        return;
+      }
+
+      const draftId = matchingDraft.id;
+      console.log('✅ Found draft ID:', draftId);
+      
+      await loadDraftById(draftId);
+    } catch (error) {
+      console.error('❌ Failed to find draft:', error);
+    }
+  };
+
+  // Function to load draft by draft ID
+  const loadDraftById = async (draftId: string) => {
+    try {
+      console.log('📧 Fetching draft from Gmail API with ID:', draftId);
+      const draftResponse = await window.gapi.client.gmail.users.drafts.get({
+        userId: 'me',
+        id: draftId,
+        format: 'full'
+      });
+
+      if (draftResponse.result?.message) {
+        const draftMessage = draftResponse.result.message;
+        const payload = draftMessage.payload;
+        const headers = payload?.headers || [];
+
+        // Extract headers
+        const getHeader = (name: string) => {
+          const header = headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase());
+          return header?.value || '';
+        };
+
+        const toHeader = getHeader('To');
+        const ccHeader = getHeader('Cc');
+        const subjectHeader = getHeader('Subject');
+        const inReplyToHeader = getHeader('In-Reply-To');
+        const referencesHeader = getHeader('References');
+
+        console.log('📧 Draft headers:', { 
+          to: toHeader, 
+          cc: ccHeader, 
+          subject: subjectHeader,
+          inReplyTo: inReplyToHeader,
+          references: referencesHeader,
+          threadId: draftMessage.threadId
+        });
+
+        // Set recipients
+        if (toHeader) setTo(toHeader);
+        if (subjectHeader) setSubject(subjectHeader);
+        
+        // Set thread context if this is a reply
+        if (draftMessage.threadId) {
+          setCurrentThreadId(draftMessage.threadId);
+          setIsReply(true);
+          // Fetch thread emails to show context
+          fetchThreadEmails(draftMessage.threadId);
+        }
+        
+        // Set CC recipients
+        if (ccHeader) {
+          const ccEmails = ccHeader.split(',').map((email: string) => email.trim()).filter((email: string) => email);
+          setCcRecipients(ccEmails);
+          setShowCc(true);
+        }
+
+        // Extract body content
+        let bodyHtml = '';
+
+        const findBody = (parts: any[]): { html: string; text: string } => {
+          let html = '';
+          let text = '';
+
+          for (const part of parts) {
+            if (part.mimeType === 'text/html' && part.body?.data) {
+              const decoded = atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+              html = decoded;
+            } else if (part.mimeType === 'text/plain' && part.body?.data && !html) {
+              const decoded = atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+              text = decoded;
+            } else if (part.parts) {
+              const found = findBody(part.parts);
+              if (found.html) html = found.html;
+              if (found.text && !html) text = found.text;
+            }
+          }
+
+          return { html, text };
+        };
+
+        if (payload?.parts) {
+          const { html, text } = findBody(payload.parts);
+          bodyHtml = html || text;
+        } else if (payload?.body?.data) {
+          bodyHtml = atob(payload.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+        }
+
+        console.log('📧 Draft body loaded, length:', bodyHtml.length);
+
+        // Set body content
+        if (bodyHtml) {
+          setNewBodyHtml(bodyHtml);
+        }
+
+        // Set draft ID
+        setCurrentDraftId(draftId);
+        setIsDraftDirty(false); // Start clean since we're loading existing draft
+
+        console.log('✅ Draft loaded successfully');
+      }
+    } catch (error) {
+      console.error('❌ Failed to load draft:', error);
+    }
+  };
 
   // Function to fetch thread emails
   const fetchThreadEmails = async (threadId: string) => {
@@ -370,7 +502,10 @@ function Compose() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!to) {
+    // Combine toRecipients array into comma-separated string
+    const combinedTo = toRecipients.join(', ');
+    
+    if (!combinedTo && toRecipients.length === 0) {
       alert('Please specify at least one recipient');
       return;
     }
@@ -464,12 +599,10 @@ function Compose() {
           name: 'Me',
           email: 'me@example.com'
         },
-        to: [
-          {
-            name: '',
-            email: to
-          }
-        ],
+        to: toRecipients.map(email => ({
+          name: '',
+          email: email
+        })),
         subject,
         body: finalBodyHtml,
         internalDate: new Date().toISOString() // Add this line
@@ -490,7 +623,7 @@ function Compose() {
       clearEmailCache();
       
       // Show success message
-      setSuccessRecipient(to);
+      setSuccessRecipient(combinedTo);
       setShowSuccessMessage(true);
       
       // Determine navigation destination - ALWAYS stay in thread if we have a threadId
@@ -530,7 +663,7 @@ function Compose() {
         console.error('Error saving draft on cancel:', error);
       }
     }
-    navigate('/inbox');
+    closeCompose();
   };
 
   const handleManualSaveDraft = async () => {
@@ -575,28 +708,17 @@ function Compose() {
   };
 
   // Contact dropdown handlers
-  const handleToInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setTo(value);
-    handleContentChange();
-
-    // Update filtered contacts based on input
-    const contacts = searchContacts(value, 5);
-    setFilteredContacts(contacts);
-    // Show dropdown as soon as user types any character (even if no matches)
-    const shouldShow = value.trim().length > 0;
-    setShowContactDropdown(shouldShow);
-  };
-
   const handleContactSelect = (contact: Contact) => {
-    setTo(contact.email);
+    setToRecipients([...toRecipients, contact.email]);
+    setToInput('');
+    setTo([...toRecipients, contact.email].join(', ')); // Backward compat
     setShowContactDropdown(false);
     setFilteredContacts([]);
   };
 
   const handleToInputFocus = () => {
-    if (to.trim().length > 0) {
-      const contacts = searchContacts(to, 5);
+    if (toInput.trim().length > 0) {
+      const contacts = searchContacts(toInput, 5);
       setFilteredContacts(contacts);
       setShowContactDropdown(contacts.length > 0);
     }
@@ -607,6 +729,21 @@ function Compose() {
     setTimeout(() => {
       setShowContactDropdown(false);
     }, 150);
+  };
+
+  const handleToInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setToInput(value);
+    
+    // Search contacts
+    if (value.trim().length > 0) {
+      const contacts = searchContacts(value, 5);
+      setFilteredContacts(contacts);
+      setShowContactDropdown(contacts.length > 0);
+    } else {
+      setShowContactDropdown(false);
+      setFilteredContacts([]);
+    }
   };
 
   // CC input handlers
@@ -695,10 +832,6 @@ function Compose() {
 
 
   // Drag and drop handlers for invoices and orders
-  const handleDragStart = (e: React.DragEvent, item: any, type: 'invoice' | 'order' | 'customer-order' | 'supplier-order') => {
-    e.dataTransfer.setData('application/json', JSON.stringify({ item, type }));
-    e.dataTransfer.effectAllowed = 'copy';
-  };
 
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
@@ -994,104 +1127,141 @@ function Compose() {
         </div>
       )}
 
-      <div className="fixed inset-0 flex items-center justify-center p-4 z-50">
-        <div className="flex gap-4 h-full max-w-7xl w-full">
-          {/* Main Compose Window */}
-          <div 
-            className="flex-1 max-w-4xl bg-white rounded-lg shadow-xl border border-gray-200 overflow-hidden flex flex-col h-full"
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-          >
+      <div className="fixed bottom-4 right-4 z-50 w-[600px] max-h-[90vh] flex flex-col">
+        {/* Main Compose Window - Gmail-style popup */}
+        <div 
+          className="bg-white rounded-lg shadow-2xl border border-gray-300 overflow-hidden flex flex-col"
+          style={{ height: isMinimized ? 'auto' : '580px' }}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+        >
             {/* PDF Generation Overlay */}
             {isGeneratingPDF && (
               <div className="absolute inset-0 bg-white bg-opacity-90 flex items-center justify-center z-10">
                 <div className="text-center">
-                  <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mx-auto mb-4"></div>
-                  <p className="text-gray-700 font-medium">Generating PDF...</p>
-                  <p className="text-gray-500 text-sm">Please wait while we create your document</p>
+                  <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500 mx-auto mb-2"></div>
+                  <p className="text-gray-700 text-sm font-medium">Generating PDF...</p>
                 </div>
               </div>
             )}
             
-            <div className="px-4 py-3 bg-gray-100 border-b border-gray-200 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-medium">
+            <div className="px-3 py-2 bg-gray-100 border-b border-gray-200 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-medium">
                   {currentDraftId ? 'Edit Draft' : 'New Message'}
                 </h2>
+                {!isMinimized && toRecipients.length > 0 && (
+                  <span className="text-xs text-gray-500">- {toRecipients[0].substring(0, 20)}{toRecipients[0].length > 20 ? '...' : ''}{toRecipients.length > 1 ? ` +${toRecipients.length - 1}` : ''}</span>
+                )}
               </div>
-              <div className="flex space-x-2">
+              <div className="flex space-x-1">
                 <button 
                   type="button"
-                  onClick={() => setIsMinimized(true)}
-                  className="text-gray-500 hover:text-gray-700"
+                  onClick={() => setIsMinimized(!isMinimized)}
+                  className="p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded"
+                  title={isMinimized ? 'Maximize' : 'Minimize'}
                 >
-                  <Minimize size={18} />
+                  {isMinimized ? <Maximize size={16} /> : <Minimize size={16} />}
                 </button>
                 <button 
                   type="button"
                   onClick={handleCancel}
-                  className="text-gray-500 hover:text-gray-700"
+                  className="p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded"
+                  title="Close"
                 >
-                  <X size={18} />
+                  <X size={16} />
                 </button>
               </div>
             </div>
           
+          {!isMinimized && (
           <form onSubmit={handleSubmit} className="flex flex-col h-full">
-            <div className="flex-1 p-4 space-y-4 overflow-y-auto">
+            <div className="flex-1 p-3 space-y-2 overflow-y-auto">
+              {/* TO Section */}
               <div className="relative">
-                <div className="flex items-center border-b border-gray-200 py-2">
-                  <span className="w-20 text-gray-500 text-sm">To:</span>
-                  <input
-                    type="text"
-                    value={to}
-                    onChange={handleToInputChange}
-                    onFocus={handleToInputFocus}
-                    onBlur={handleToInputBlur}
-                    onKeyDown={handleToInputKeyDown}
-                    className="flex-1 outline-none text-sm"
-                    placeholder="Recipients"
-                  />
+                <div className="flex items-start border-b border-gray-200 py-1.5">
+                  <span className="w-12 text-gray-500 text-xs pt-1">To:</span>
+                  <div className="flex-1 flex flex-wrap items-center gap-1">
+                    {/* Display existing TO recipients */}
+                    {toRecipients.map((email, index) => (
+                      <div key={index} className="flex items-center bg-gray-100 text-gray-800 px-1.5 py-0.5 rounded-full text-[10px]">
+                        <span>{email}</span>
+                        <button
+                          type="button"
+                          onClick={() => setToRecipients(toRecipients.filter((_, i) => i !== index))}
+                          className="ml-1 text-gray-600 hover:text-gray-800"
+                        >
+                          <X size={10} />
+                        </button>
+                      </div>
+                    ))}
+                    {/* TO Input field */}
+                    <input
+                      type="text"
+                      value={toInput}
+                      onChange={(e) => {
+                        setToInput(e.target.value);
+                        handleToInputChange(e);
+                      }}
+                      onFocus={handleToInputFocus}
+                      onBlur={handleToInputBlur}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ',' || e.key === ' ') {
+                          e.preventDefault();
+                          const email = toInput.trim();
+                          if (email && email.includes('@')) {
+                            setToRecipients([...toRecipients, email]);
+                            setToInput('');
+                            setTo([...toRecipients, email].join(', ')); // Update backward compat field
+                          }
+                        } else {
+                          handleToInputKeyDown(e);
+                        }
+                      }}
+                      className="flex-1 min-w-[100px] outline-none text-xs"
+                      placeholder={toRecipients.length === 0 ? "Recipients" : ""}
+                    />
+                  </div>
                 </div>
                 
                 {/* Contact dropdown */}
                 {showContactDropdown && (
-                  <div className="absolute top-full left-0 right-0 z-[999] bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                  <div className="absolute top-full left-0 right-0 z-[999] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
                     {filteredContacts.length > 0 ? (
                       filteredContacts.map((contact, index) => (
                         <div
                           key={`${contact.email}-${index}`}
                           onClick={() => handleContactSelect(contact)}
-                          className="flex items-center px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                          className="flex items-center px-2 py-1.5 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
                         >
                           {contact.photoUrl ? (
                             <img
                               src={contact.photoUrl}
                               alt={contact.name}
-                              className="w-8 h-8 rounded-full mr-3 flex-shrink-0"
+                              className="w-6 h-6 rounded-full mr-2 flex-shrink-0"
                             />
                           ) : (
-                            <div className="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-sm font-medium mr-3 flex-shrink-0">
+                            <div className="w-6 h-6 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-medium mr-2 flex-shrink-0">
                               {getProfileInitial(contact.name, contact.email)}
                             </div>
                           )}
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium text-gray-900 truncate">
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs font-medium text-gray-900 truncate">
                                 {contact.name}
                               </span>
                               {contact.isFrequentlyContacted && (
-                                <span className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded-full flex-shrink-0">
+                                <span className="px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full flex-shrink-0">
                                   Frequent
                                 </span>
                               )}
                             </div>
-                            <p className="text-sm text-gray-500 truncate">{contact.email}</p>
+                            <p className="text-[10px] text-gray-500 truncate">{contact.email}</p>
                           </div>
                         </div>
                       ))
                     ) : (
-                      <div className="px-4 py-3 text-gray-500 text-sm">No contacts found</div>
+                      <div className="px-2 py-2 text-gray-500 text-xs">No contacts found</div>
                     )}
                   </div>
                 )}
@@ -1100,34 +1270,32 @@ function Compose() {
               {/* CC Section */}
               {showCc && (
                 <div className="relative">
-                  <div className="flex items-start border-b border-gray-200 py-2">
-                    <span className="w-20 text-gray-500 text-sm pt-2">CC:</span>
-                    <div className="flex-1">
+                  <div className="flex items-start border-b border-gray-200 py-1.5">
+                    <span className="w-12 text-gray-500 text-xs pt-1">CC:</span>
+                    <div className="flex-1 flex flex-wrap items-center gap-1">
                       {/* Display existing CC recipients */}
-                      <div className="flex flex-wrap gap-2 mb-2">
-                        {ccRecipients.map((email, index) => (
-                          <div key={index} className="flex items-center bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm">
-                            <span className={email === 'david.v@dnddesigncenter.com' && currentProfile?.name !== 'David' ? 'text-blue-600 font-medium' : ''}>
-                              {email === 'david.v@dnddesigncenter.com' && currentProfile?.name !== 'David' 
-                                ? email + ' (owner)' 
-                                : email}
-                            </span>
-                            {/* Show remove button based on user permissions */}
-                            {(email !== 'david.v@dnddesigncenter.com' || 
-                              currentProfile?.name === 'David' || 
-                              currentProfile?.name === 'Marti' ||
-                              currentProfile?.userEmail === 'info@effidigi.com') && (
-                              <button
-                                type="button"
-                                onClick={() => removeCcRecipient(email)}
-                                className="ml-1 text-blue-600 hover:text-blue-800"
-                              >
-                                <X size={14} />
-                              </button>
-                            )}
-                          </div>
-                        ))}
-                      </div>
+                      {ccRecipients.map((email, index) => (
+                        <div key={index} className="flex items-center bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded-full text-[10px]">
+                          <span className={email === 'david.v@dnddesigncenter.com' && currentProfile?.name !== 'David' ? 'text-blue-600 font-medium' : ''}>
+                            {email === 'david.v@dnddesigncenter.com' && currentProfile?.name !== 'David' 
+                              ? email + ' (owner)' 
+                              : email}
+                          </span>
+                          {/* Show remove button based on user permissions */}
+                          {(email !== 'david.v@dnddesigncenter.com' || 
+                            currentProfile?.name === 'David' || 
+                            currentProfile?.name === 'Marti' ||
+                            currentProfile?.userEmail === 'info@effidigi.com') && (
+                            <button
+                              type="button"
+                              onClick={() => removeCcRecipient(email)}
+                              className="ml-1 text-blue-600 hover:text-blue-800"
+                            >
+                              <X size={10} />
+                            </button>
+                          )}
+                        </div>
+                      ))}
                       
                       {/* CC Input field */}
                       <input
@@ -1138,8 +1306,8 @@ function Compose() {
                         onBlur={handleCcInputBlur}
                         onKeyDown={handleCcInputKeyDown}
                         onKeyPress={handleCcInputKeyPress}
-                        className="w-full outline-none text-sm"
-                        placeholder="Add CC recipients..."
+                        className="flex-1 min-w-[100px] outline-none text-xs"
+                        placeholder={ccRecipients.length === 0 ? "Add CC recipients..." : ""}
                       />
                     </div>
                     
@@ -1147,16 +1315,16 @@ function Compose() {
                     <button
                       type="button"
                       onClick={addCcRecipient}
-                      className="ml-2 p-1 text-blue-600 hover:text-blue-800 rounded"
+                      className="ml-1 p-0.5 text-blue-600 hover:text-blue-800 rounded"
                       title="Add another CC recipient"
                     >
-                      <Plus size={16} />
+                      <Plus size={12} />
                     </button>
                   </div>
                   
                   {/* CC Contact dropdown */}
                   {showCcContactDropdown && (
-                    <div className="absolute top-full left-0 right-0 z-[998] bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                    <div className="absolute top-full left-0 right-0 z-[998] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
                       {filteredCcContacts.length > 0 ? (
                         filteredCcContacts.map((contact, index) => (
                           <div
@@ -1204,16 +1372,16 @@ function Compose() {
                   <button
                     type="button"
                     onClick={() => setShowCc(true)}
-                    className="text-blue-600 hover:text-blue-800 text-sm flex items-center gap-1"
+                    className="text-blue-600 hover:text-blue-800 text-xs flex items-center gap-0.5"
                   >
-                    <Plus size={14} />
+                    <Plus size={12} />
                     Add CC
                   </button>
                 </div>
               )}
               
-              <div className="flex items-center border-b border-gray-200 py-2">
-                <span className="w-20 text-gray-500 text-sm">Subject:</span>
+              <div className="flex items-center border-b border-gray-200 py-1.5">
+                <span className="w-12 text-gray-500 text-xs">Subject:</span>
                 <input
                   type="text"
                   value={subject}
@@ -1221,13 +1389,13 @@ function Compose() {
                     setSubject(e.target.value);
                     handleContentChange();
                   }}
-                  className="flex-1 outline-none text-sm"
+                  className="flex-1 outline-none text-xs"
                   placeholder="Subject"
                 />
               </div>
               
-              <div className="pt-2 flex-1 flex flex-col min-h-0">
-                <div className="flex-1 flex flex-col border border-gray-200 rounded-lg overflow-hidden">
+              <div className="h-[280px] flex flex-col">
+                <div className="h-full flex flex-col border border-gray-200 rounded overflow-hidden">
                   <RichTextEditor
                     value={newBodyHtml}
                     onChange={(value) => {
@@ -1235,31 +1403,32 @@ function Compose() {
                       handleContentChange();
                     }}
                     placeholder="Compose your message..."
-                    minHeight="300px"
+                    minHeight="100%"
                     disabled={isSending}
-                    showPriceRequestButton={true}
+                    showPriceRequestButton={false}
                     onOpenPriceRequest={handleOpenPriceRequest}
                     showFileAttachmentButton={true}
                     onFileAttachment={handleRichTextFileAttachment}
+                    compact={false}
                   />
                   
                   {/* Attachment thumbnails at bottom of editor */}
                   {attachments.length > 0 && (
-                    <div className="bg-gray-50 border-t border-gray-200 p-3">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Paperclip size={14} className="text-gray-500" />
-                        <span className="text-xs font-medium text-gray-600">
-                          {attachments.length} file{attachments.length > 1 ? 's' : ''} attached
+                    <div className="bg-gray-50 border-t border-gray-200 p-2">
+                      <div className="flex items-center gap-1 mb-1">
+                        <Paperclip size={12} className="text-gray-500" />
+                        <span className="text-[10px] font-medium text-gray-600">
+                          {attachments.length} file{attachments.length > 1 ? 's' : ''}
                         </span>
                       </div>
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap gap-1">
                         {attachments.map((attachment, index) => (
                           <div
                             key={index}
-                            className="group relative bg-white border border-gray-200 rounded-lg p-2 hover:border-gray-300 transition-colors cursor-pointer"
+                            className="group relative bg-white border border-gray-200 rounded p-1 hover:border-gray-300 transition-colors cursor-pointer"
                             onClick={() => handleAttachmentPreview(attachment)}
                           >
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1">
                               <div className="flex-shrink-0">
                                 <FileThumbnail
                                   attachment={{
@@ -1293,10 +1462,10 @@ function Compose() {
                                 e.stopPropagation();
                                 removeAttachment(index);
                               }}
-                              className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center hover:bg-red-600"
+                              className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center hover:bg-red-600"
                               title="Remove attachment"
                             >
-                              <X size={12} />
+                              <X size={10} />
                             </button>
                           </div>
                         ))}
@@ -1307,39 +1476,50 @@ function Compose() {
               </div>
             </div>
             
-            <div className="px-4 py-3 bg-gray-50 flex items-center justify-end">
-              <div className="flex space-x-2">
+            {/* Footer with buttons */}
+            <div className="px-3 py-2 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
+              <div className="flex items-center gap-2">
                 <button
                   type="submit"
                   disabled={isSending}
-                  className="btn btn-primary"
+                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white text-xs font-medium rounded transition-colors"
                 >
                   {isSending ? 'Sending...' : 'Send'}
                 </button>
                 <button
                   type="button"
-                  onClick={handleCancel}
-                  className="btn btn-secondary"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
                   onClick={handleManualSaveDraft}
                   disabled={isAutoSaving || !isDraftDirty}
-                  className="btn btn-secondary"
+                  className="px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 text-gray-700 text-xs font-medium rounded transition-colors"
                 >
                   {isAutoSaving ? 'Saving...' : 'Save Draft'}
                 </button>
+                {currentDraftId && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (window.confirm('Discard this draft?')) {
+                        try {
+                          await deleteDraft(currentDraftId);
+                          closeCompose();
+                        } catch (error) {
+                          console.error('Error deleting draft:', error);
+                        }
+                      }
+                    }}
+                    className="px-3 py-1.5 text-red-600 hover:bg-red-50 text-xs font-medium rounded transition-colors"
+                  >
+                    Discard
+                  </button>
+                )}
               </div>
               
-              <div className="flex items-center space-x-4">
-                {/* Draft status indicator */}
-                <div className="text-sm text-gray-500">
-                  {isAutoSaving && (
-                    <span className="flex items-center">
-                      <div className="w-3 h-3 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mr-2"></div>
-                      Saving draft...
+              {/* Draft status indicator */}
+              <div className="text-[10px] text-gray-500">
+                {isAutoSaving && (
+                  <span className="flex items-center gap-1">
+                    <div className="w-2 h-2 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                    Saving...
                     </span>
                   )}
                   {!isAutoSaving && lastSavedAt && (
@@ -1348,222 +1528,16 @@ function Compose() {
                     </span>
                   )}
                   {!isAutoSaving && !lastSavedAt && isDraftDirty && (
-                    <span className="text-amber-600">Unsaved changes</span>
+                    <span className="text-amber-600 text-[10px]">Unsaved</span>
                   )}
-                </div>
               </div>
             </div>
           </form>
-        </div>
-
-        {/* Attachments Panel */}
-        <div className="w-80 bg-white rounded-lg shadow-xl border border-gray-200 overflow-hidden flex flex-col h-full">
-          <div className="px-4 py-3 bg-gray-100 border-b border-gray-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-medium">Quick Attach</h3>
-                <p className="text-sm text-gray-600 mt-1">Drag items to email to attach</p>
-              </div>
-              <button
-                onClick={() => {
-                  if (currentProfile?.name) {
-                    // Trigger data reload
-                    const loadInvoicesAndOrders = async () => {
-                      setIsLoadingAttachmentData(true);
-                      try {
-                        let invoicesQuery = supabase
-                          .from('invoices')
-                          .select('id, po_number, customer_name, total_amount, invoice_date, created_by, created_at')
-                          .order('created_at', { ascending: false })
-                          .limit(20);
-
-                        if (currentProfile.name !== 'David' && ['Marti', 'Natalia', 'Dimitry'].includes(currentProfile.name)) {
-                          invoicesQuery = invoicesQuery.eq('created_by', currentProfile.name);
-                        }
-
-                        const { data: invoicesData } = await invoicesQuery;
-                        
-                        const transformedInvoices = (invoicesData || []).map((invoice) => ({
-                          id: invoice.id,
-                          number: invoice.po_number || 'N/A',
-                          client: invoice.customer_name || 'Unknown Client',
-                          amount: `$${Number(invoice.total_amount || 0).toLocaleString()}`,
-                          date: invoice.invoice_date || invoice.created_at?.split('T')[0] || 'N/A'
-                        }));
-                        setInvoices(transformedInvoices);
-
-                        // Reload supplier orders instead of customer orders
-                        let supplierOrdersQuery = supabase
-                          .from('orders')
-                          .select('id, order_number, order_date, created_by, suppliers(display_name)')
-                          .order('created_at', { ascending: false })
-                          .limit(20);
-
-                        if (currentProfile.name !== 'David' && ['Marti', 'Natalia', 'Dimitry'].includes(currentProfile.name)) {
-                          supplierOrdersQuery = supplierOrdersQuery.eq('created_by', currentProfile.name);
-                        }
-
-                        const { data: supplierOrdersData } = await supplierOrdersQuery;
-                        const transformedSupplierOrders = (supplierOrdersData || []).map((po: any) => ({
-                          id: po.id,
-                          number: po.order_number || 'N/A',
-                          customer: po.suppliers?.display_name || 'Supplier',
-                          total: '-',
-                          status: 'Supplier Order',
-                          orderSource: 'supplier-order'
-                        }));
-                        setOrders(transformedSupplierOrders);
-                      } catch (error) {
-                        console.error('Error refreshing data:', error);
-                      } finally {
-                        setIsLoadingAttachmentData(false);
-                      }
-                    };
-                    loadInvoicesAndOrders();
-                  }
-                }}
-                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded-lg transition-colors"
-                title="Refresh data"
-                disabled={isLoadingAttachmentData}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-              </button>
-            </div>
-          </div>
-
-          {/* Tab Navigation */}
-          <div className="flex border-b border-gray-200">
-            <button
-              onClick={() => setAttachmentPanelTab('invoices')}
-              className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
-                attachmentPanelTab === 'invoices'
-                  ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-500'
-                  : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
-              }`}
-            >
-              <Receipt size={16} className="inline mr-2" />
-              Invoices
-            </button>
-            <button
-              onClick={() => setAttachmentPanelTab('orders')}
-              className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
-                attachmentPanelTab === 'orders'
-                  ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-500'
-                  : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
-              }`}
-            >
-              <FileText size={16} className="inline mr-2" />
-              Orders
-            </button>
-          </div>
-
-          {/* Content */}
-          <div className="flex-1 overflow-y-auto p-4">
-            {isLoadingAttachmentData ? (
-              <div className="flex items-center justify-center py-8">
-                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
-                <span className="ml-3 text-gray-600">Loading...</span>
-              </div>
-            ) : (
-              <>
-                {attachmentPanelTab === 'invoices' && (
-                  <div className="space-y-3">
-                    <div className="text-xs text-gray-500 mb-3">Drag invoices to attach as PDF</div>
-                    {invoices.length === 0 ? (
-                      <div className="text-center py-8 text-gray-500">
-                        <Receipt size={48} className="mx-auto mb-4 text-gray-300" />
-                        <p className="text-sm">No invoices available</p>
-                      </div>
-                    ) : (
-                      invoices.map((invoice) => (
-                        <div
-                          key={invoice.id}
-                          draggable
-                          onDragStart={(e) => handleDragStart(e, invoice, 'invoice')}
-                          className="p-3 border border-gray-200 rounded-lg hover:border-blue-300 hover:shadow-md cursor-grab active:cursor-grabbing transition-all bg-gradient-to-r from-white to-blue-50"
-                        >
-                          <div className="flex items-center">
-                            <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center mr-3">
-                              <Receipt size={16} className="text-blue-600" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-gray-900 truncate">{invoice.number}</p>
-                              <p className="text-xs text-gray-500">{invoice.client}</p>
-                              <div className="flex items-center justify-between">
-                                <p className="text-xs text-blue-600 font-medium">{invoice.amount}</p>
-                                <p className="text-xs text-gray-400">{invoice.date}</p>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
-
-                {attachmentPanelTab === 'orders' && (
-                  <div className="space-y-3">
-                    <div className="text-xs text-gray-500 mb-3">Drag orders to attach as PDF</div>
-                    {orders.length === 0 ? (
-                      <div className="text-center py-8 text-gray-500">
-                        <FileText size={48} className="mx-auto mb-4 text-gray-300" />
-                        <p className="text-sm">No orders available</p>
-                      </div>
-                    ) : (
-                      orders.map((order) => (
-                        <div
-                          key={order.id}
-                          draggable
-                          onDragStart={(e) => handleDragStart(e, order, 'order')}
-                          className="p-3 border border-gray-200 rounded-lg hover:border-green-300 hover:shadow-md cursor-grab active:cursor-grabbing transition-all bg-gradient-to-r from-white to-green-50"
-                        >
-                          <div className="flex items-center">
-                            <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center mr-3">
-                              <FileText size={16} className="text-green-600" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-gray-900 truncate">{order.number}</p>
-                              <p className="text-xs text-gray-500">{order.customer}</p>
-                              <div className="flex items-center justify-between">
-                                <p className="text-xs text-green-600 font-medium">{order.total}</p>
-                                <span className={`text-xs px-2 py-1 rounded-full ${
-                                  order.status === 'Paid in Full' || order.status === 'Completed' ? 'bg-green-100 text-green-700' :
-                                  order.status === 'Order in Progress' || order.status === 'Pending' ? 'bg-yellow-100 text-yellow-700' :
-                                  'bg-blue-100 text-blue-700'
-                                }`}>
-                                  {order.status}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Sliding Product Table Panel */}
-        <div className={`transition-all duration-300 ease-in-out bg-white rounded-lg shadow-md overflow-hidden ${
-          showPriceRequestModal ? 'w-80 opacity-100' : 'w-0 opacity-0'
-        }`}>
-          {showPriceRequestModal && (
-            <PriceRequestAddon
-              isOpen={showPriceRequestModal}
-              onClose={handleClosePriceRequest}
-              onInsertTable={handlePriceRequestInsert}
-            />
           )}
-        </div>
         </div>
       </div>
 
-      {/* Email Thread Display (when replying) */}
+      {/* Email Thread Display (when replying) - Show below compose popup */}
       {isReply && (
         <div className="mt-8">
           <div className="border-t border-gray-200 pt-6">

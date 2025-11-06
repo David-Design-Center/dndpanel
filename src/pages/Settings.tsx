@@ -59,10 +59,10 @@ function Settings() {
       
       // Check if it's an external user error
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      if (errorMessage.includes('External Gmail accounts')) {
-        alert('External Gmail accounts require additional setup. Please check the Gmail Connection section for more information.');
+      if (errorMessage.includes('External email accounts')) {
+        alert('External email accounts require additional setup. Please check the email Connection section for more information.');
       } else {
-        alert('Failed to connect to Gmail. Please check console for details.');
+        alert('Failed to connect to email. Please check console for details.');
       }
     }
   };
@@ -88,7 +88,7 @@ function Settings() {
       </div>
       
       <div className="space-y-4">
-        {/* Gmail Connection Card - Keep at top as requested */}
+        {/* Email Connection Card - Keep at top as requested */}
         <div className="bg-white p-3 rounded-lg shadow-sm border-l-3 border-blue-500">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center">
@@ -96,7 +96,7 @@ function Settings() {
                 <Mail className="w-4 h-4 text-blue-600" />
               </div>
               <div>
-                <h3 className="font-semibold text-base text-gray-800">Gmail Connection</h3>
+                <h3 className="font-semibold text-base text-gray-800">Email Connection</h3>
                 <div className="flex items-center">
                   <div className={`w-2 h-2 rounded-full mr-1.5 ${isGmailSignedIn ? 'bg-green-500' : 'bg-red-500'}`}></div>
                   <span className="text-xs text-gray-600">
@@ -183,8 +183,8 @@ function Settings() {
               </div>
             </div>
             <div className="bg-white p-3 rounded-b-lg shadow-md">
-              <h3 className="font-bold text-base text-gray-800">Email Filters</h3>
-              <p className="text-xs text-gray-600">Manage Gmail filters to organize your inbox</p>
+              <h3 className="font-bold text-base text-gray-800">Rules</h3>
+              <p className="text-xs text-gray-600">Manage rules to organize your inbox</p>
             </div>
           </div>
         </div>
@@ -234,7 +234,7 @@ function Settings() {
                     <div className="p-1 mr-1.5 rounded-full bg-gradient-to-br from-emerald-100 to-emerald-50 shadow-sm">
                       <Filter className="w-2.5 h-2.5 text-emerald-600" />
                     </div>
-                    <h2 className="text-sm font-semibold text-gray-800">Email Filters</h2>
+                    <h2 className="text-sm font-semibold text-gray-800">Rules</h2>
                   </div>
                   <div className="settings-expandable-content">
                     <SettingsFilters />

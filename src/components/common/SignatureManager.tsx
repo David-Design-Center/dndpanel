@@ -128,8 +128,7 @@ function SignatureManager() {
             </>
           ) : (
             <>
-              <Save size={16} className="mr-2" />
-              Save Signature
+              Save
             </>
           )}
         </Button>

@@ -34,6 +34,7 @@ interface RichTextEditorProps {
   onOpenPriceRequest?: () => void;
   onFileAttachment?: (files: FileList) => void;
   showFileAttachmentButton?: boolean;
+  compact?: boolean; // New prop for compact mode
 }
 
 const RichTextEditor: React.FC<RichTextEditorProps> = ({
@@ -47,7 +48,8 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
   showPriceRequestButton = false,
   onOpenPriceRequest,
   onFileAttachment,
-  showFileAttachmentButton = false
+  showFileAttachmentButton = false,
+  compact = false
 }) => {
   const editorRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -686,6 +688,106 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
     <>
       <div className={cn("border border-gray-200 rounded-lg overflow-hidden rich-text-editor", className)}>
       {/* Toolbar */}
+      {compact ? (
+        // Compact toolbar - single row, minimal buttons
+        <div className="flex items-center gap-0.5 px-2 py-1 border-b border-gray-200 bg-gray-50 rich-text-toolbar">
+          <Toggle
+            size="sm"
+            pressed={isFormatted.bold}
+            onPressedChange={() => executeCommand('bold')}
+            disabled={disabled}
+            title="Bold"
+            className="h-6 w-6 p-0"
+          >
+            <Bold size={12} />
+          </Toggle>
+          <Toggle
+            size="sm"
+            pressed={isFormatted.italic}
+            onPressedChange={() => executeCommand('italic')}
+            disabled={disabled}
+            title="Italic"
+            className="h-6 w-6 p-0"
+          >
+            <Italic size={12} />
+          </Toggle>
+          <Toggle
+            size="sm"
+            pressed={isFormatted.underline}
+            onPressedChange={() => executeCommand('underline')}
+            disabled={disabled}
+            title="Underline"
+            className="h-6 w-6 p-0"
+          >
+            <Underline size={12} />
+          </Toggle>
+          
+          <div className="w-px h-4 bg-gray-300 mx-1" />
+          
+          <Toggle
+            size="sm"
+            pressed={isFormatted.unorderedList}
+            onPressedChange={() => createList('ul')}
+            disabled={disabled}
+            title="Bullet List"
+            className="h-6 w-6 p-0"
+          >
+            <List size={12} />
+          </Toggle>
+          <Toggle
+            size="sm"
+            pressed={isFormatted.orderedList}
+            onPressedChange={() => createList('ol')}
+            disabled={disabled}
+            title="Numbered List"
+            className="h-6 w-6 p-0"
+          >
+            <ListOrdered size={12} />
+          </Toggle>
+          
+          <div className="w-px h-4 bg-gray-300 mx-1" />
+          
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={insertLink}
+            disabled={disabled}
+            title="Insert Link"
+            className="h-6 w-6 p-0"
+          >
+            <Link size={12} />
+          </Button>
+          
+          {showFileAttachmentButton && onFileAttachment && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                onChange={(e) => {
+                  if (e.target.files && onFileAttachment) {
+                    onFileAttachment(e.target.files);
+                  }
+                }}
+                className="hidden"
+                accept="*/*"
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={disabled}
+                title="Attach File"
+                className="h-6 w-6 p-0"
+              >
+                <Paperclip size={12} />
+              </Button>
+            </>
+          )}
+        </div>
+      ) : (
       <div className="flex items-center gap-1 p-2 border-b border-gray-200 bg-gray-50 flex-wrap rich-text-toolbar">
         {/* Text formatting */}
         <div className="flex items-center gap-1 border-r border-gray-300 pr-2 mr-2">
@@ -955,6 +1057,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
           )}
         </div>
       </div>
+      )}
 
       {/* URL Image Dialog */}
       {showImageUrlDialog && (
