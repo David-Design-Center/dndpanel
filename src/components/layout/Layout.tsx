@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense, lazy } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import FoldersColumn from '../email labels/FoldersColumn';
@@ -11,8 +11,9 @@ import { InboxLayoutProvider } from '../../contexts/InboxLayoutContext';
 import { FoldersColumnProvider } from '../../contexts/FoldersColumnContext';
 import { PanelSizesProvider } from '../../contexts/PanelSizesContext';
 import { EmailListProvider } from '../../contexts/EmailListContext';
-import { useCompose } from '../../contexts/ComposeContext';
-import Compose from '../../pages/Compose';
+import { ComposeProvider, useCompose } from '../../contexts/ComposeContext';
+
+const Compose = lazy(() => import('../../pages/Compose'));
 
 function Layout() {
   const { loading, isAdmin, userProfileId } = useAuth();
@@ -71,24 +72,26 @@ function Layout() {
 
   return (
     <FoldersColumnProvider>
-      <LayoutContent 
-        loading={loading}
-        isAdmin={isAdmin}
-        userProfileId={userProfileId}
-        currentProfile={currentProfile}
-        profileLoading={profileLoading}
-        selectProfile={selectProfile}
-        isPreloading={isPreloading}
-        isGhostPreloadComplete={isGhostPreloadComplete}
-        navigate={navigate}
-        showSuccess={showSuccess}
-        setShowSuccess={setShowSuccess}
-        hasAutoSelected={hasAutoSelected}
-        setHasAutoSelected={setHasAutoSelected}
-        autoSelectionFailed={autoSelectionFailed}
-        setAutoSelectionFailed={setAutoSelectionFailed}
-        isEmailRoute={isEmailRoute}
-      />
+      <ComposeProvider>
+        <LayoutContent 
+          loading={loading}
+          isAdmin={isAdmin}
+          userProfileId={userProfileId}
+          currentProfile={currentProfile}
+          profileLoading={profileLoading}
+          selectProfile={selectProfile}
+          isPreloading={isPreloading}
+          isGhostPreloadComplete={isGhostPreloadComplete}
+          navigate={navigate}
+          showSuccess={showSuccess}
+          setShowSuccess={setShowSuccess}
+          hasAutoSelected={hasAutoSelected}
+          setHasAutoSelected={setHasAutoSelected}
+          autoSelectionFailed={autoSelectionFailed}
+          setAutoSelectionFailed={setAutoSelectionFailed}
+          isEmailRoute={isEmailRoute}
+        />
+      </ComposeProvider>
     </FoldersColumnProvider>
   );
 }
@@ -196,7 +199,11 @@ function LayoutContent({
             </div>
 
             {/* Compose Popup - Rendered as overlay */}
-            {isComposeOpen && <Compose />}
+            {isComposeOpen && (
+              <Suspense fallback={null}>
+                <Compose />
+              </Suspense>
+            )}
           </InboxLayoutProvider>
         </EmailListProvider>
       </PanelSizesProvider>

@@ -6,8 +6,6 @@ import { sendEmail, getThreadEmails, clearEmailCache, saveDraft, deleteDraft } f
 import { supabase } from '../lib/supabase';
 // Use the same print components pipeline to ensure consistent preview as Invoice/Orders tabs
 import { exportInvoiceDocToPDF, exportSupplierOrderToPDF } from '@/services/printExport';
-// Use existing shared supabase client to avoid multiple GoTrueClient instances
-import { supabase as sharedSupabase } from '@/lib/supabase';
 import type { Invoice as InvoiceDoc } from '@/components/invoice/InvoicePrintView';
 import type { SupplierOrderDoc } from '@/components/invoice/SupplierOrderPrintView';
 import { Email, Contact } from '../types';
@@ -843,7 +841,7 @@ function Compose() {
       
       console.log(`Generating PDF for ${type}:`, item);
 
-  const sb = sharedSupabase;
+  const sb = supabase;
 
       let pdfBlob: Blob;
       let filename: string;
