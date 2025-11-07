@@ -11,7 +11,7 @@ import { InboxLayoutProvider } from '../../contexts/InboxLayoutContext';
 import { FoldersColumnProvider } from '../../contexts/FoldersColumnContext';
 import { PanelSizesProvider } from '../../contexts/PanelSizesContext';
 import { EmailListProvider } from '../../contexts/EmailListContext';
-import { ComposeProvider, useCompose } from '../../contexts/ComposeContext';
+import { useCompose } from '../../contexts/ComposeContext';
 import Compose from '../../pages/Compose';
 
 function Layout() {
@@ -71,26 +71,24 @@ function Layout() {
 
   return (
     <FoldersColumnProvider>
-      <ComposeProvider>
-        <LayoutContent 
-          loading={loading}
-          isAdmin={isAdmin}
-          userProfileId={userProfileId}
-          currentProfile={currentProfile}
-          profileLoading={profileLoading}
-          selectProfile={selectProfile}
-          isPreloading={isPreloading}
-          isGhostPreloadComplete={isGhostPreloadComplete}
-          navigate={navigate}
-          showSuccess={showSuccess}
-          setShowSuccess={setShowSuccess}
-          hasAutoSelected={hasAutoSelected}
-          setHasAutoSelected={setHasAutoSelected}
-          autoSelectionFailed={autoSelectionFailed}
-          setAutoSelectionFailed={setAutoSelectionFailed}
-          isEmailRoute={isEmailRoute}
-        />
-      </ComposeProvider>
+      <LayoutContent 
+        loading={loading}
+        isAdmin={isAdmin}
+        userProfileId={userProfileId}
+        currentProfile={currentProfile}
+        profileLoading={profileLoading}
+        selectProfile={selectProfile}
+        isPreloading={isPreloading}
+        isGhostPreloadComplete={isGhostPreloadComplete}
+        navigate={navigate}
+        showSuccess={showSuccess}
+        setShowSuccess={setShowSuccess}
+        hasAutoSelected={hasAutoSelected}
+        setHasAutoSelected={setHasAutoSelected}
+        autoSelectionFailed={autoSelectionFailed}
+        setAutoSelectionFailed={setAutoSelectionFailed}
+        isEmailRoute={isEmailRoute}
+      />
     </FoldersColumnProvider>
   );
 }
@@ -104,6 +102,7 @@ function LayoutContent({
   currentProfile, 
   profileLoading, 
   selectProfile, 
+  navigate, 
   setShowSuccess, 
   hasAutoSelected, 
   setHasAutoSelected, 

@@ -4,6 +4,7 @@ import { useSecurity } from './contexts/SecurityContext';
 import { ContactsProvider } from './contexts/ContactsContext';
 import { EmailPreloaderProvider } from './contexts/EmailPreloaderContext';
 import { FilterCreationProvider } from './contexts/FilterCreationContext';
+import { ComposeProvider } from './contexts/ComposeContext';
 import Loading from './components/common/Loading';
 import { initSecurityMeasures } from './utils/security';
 import { SECURITY_CONFIG } from './config/security';
@@ -182,13 +183,15 @@ function App() {
           path="/"
           element={
             <ProtectedRoute>
-              <EmailPreloaderProvider>
-                <ContactsProvider>
-                  <FilterCreationProvider>
-                    <Layout />
-                  </FilterCreationProvider>
-                </ContactsProvider>
-              </EmailPreloaderProvider>
+              <ComposeProvider>
+                <EmailPreloaderProvider>
+                  <ContactsProvider>
+                    <FilterCreationProvider>
+                      <Layout />
+                    </FilterCreationProvider>
+                  </ContactsProvider>
+                </EmailPreloaderProvider>
+              </ComposeProvider>
             </ProtectedRoute>
           }
         >
