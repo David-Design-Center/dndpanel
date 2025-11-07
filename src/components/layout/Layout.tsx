@@ -1,4 +1,4 @@
-import { useEffect, useState, Suspense, lazy } from 'react';
+import { useEffect, useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import FoldersColumn from '../email labels/FoldersColumn';
@@ -12,8 +12,7 @@ import { FoldersColumnProvider } from '../../contexts/FoldersColumnContext';
 import { PanelSizesProvider } from '../../contexts/PanelSizesContext';
 import { EmailListProvider } from '../../contexts/EmailListContext';
 import { ComposeProvider, useCompose } from '../../contexts/ComposeContext';
-
-const Compose = lazy(() => import('../../pages/Compose'));
+import Compose from '../../pages/Compose';
 
 function Layout() {
   const { loading, isAdmin, userProfileId } = useAuth();
@@ -105,7 +104,6 @@ function LayoutContent({
   currentProfile, 
   profileLoading, 
   selectProfile, 
-  navigate, 
   setShowSuccess, 
   hasAutoSelected, 
   setHasAutoSelected, 
@@ -199,11 +197,7 @@ function LayoutContent({
             </div>
 
             {/* Compose Popup - Rendered as overlay */}
-            {isComposeOpen && (
-              <Suspense fallback={null}>
-                <Compose />
-              </Suspense>
-            )}
+            {isComposeOpen && <Compose />}
           </InboxLayoutProvider>
         </EmailListProvider>
       </PanelSizesProvider>

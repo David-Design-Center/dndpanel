@@ -18,7 +18,7 @@ const Auth = lazy(() => import('./pages/Auth'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ViewEmail = lazy(() => import('./pages/ViewEmail'));
-const Compose = lazy(() => import('./pages/Compose'));
+// Compose is now loaded directly in Layout as a popup
 const Settings = lazy(() => import('./pages/Settings'));
 const Orders = lazy(() => import('./pages/Orders'));
 const InvoiceGenerator = lazy(() => import('./pages/InvoiceGenerator'));
@@ -202,11 +202,7 @@ function App() {
                 <ViewEmail />
               </Suspense>
             } />
-            <Route path="compose" element={
-              <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
-                <Compose />
-              </Suspense>
-            } />
+            {/* Compose is now a popup via ComposeContext, no route needed */}
             <Route path="settings" element={
               <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
                 <Settings />
