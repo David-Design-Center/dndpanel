@@ -26,6 +26,7 @@ import {
   Mail,
   MailOpen,
   MessageSquareWarning} from 'lucide-react';
+import { useCompose } from '@/contexts/ComposeContext';
 import { type SearchSuggestion } from '../../services/searchService';
 import EmailListItem from './EmailListItem';
 import ThreeColumnLayout from '../layout/ThreeColumnLayout';
@@ -91,6 +92,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   const { isGmailSignedIn, loading: authLoading, isGmailInitializing } = useAuth();
   const { selectEmail } = useInboxLayout();
   const { setSystemFolderFilterHandler } = useFoldersColumn();
+  const { openCompose } = useCompose();
 
   // Get unread count from repository (single source of truth) 
   const getUnreadFromRepository = useCallback((): number => {
@@ -1600,6 +1602,41 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     run();
   }, [activeTab, pageType, labelName, allTabEmails.sent.length, allTabEmails.drafts.length, tabLoading]);
 
+  // Listen for draft events from Compose window
+  useEffect(() => {
+    const handleDraftCreated = (event: CustomEvent) => {
+      console.log('📨 Draft created event received:', event.detail);
+      // Refresh drafts tab to show new draft (only if on drafts tab)
+      if (activeTab === 'drafts' || pageType === 'drafts') {
+        // Don't do a full refresh - that's expensive
+        // Instead, just clear the cache so next view loads fresh data
+        console.log('📨 Clearing draft cache to trigger fresh load');
+        clearEmailCache();
+      }
+    };
+
+    const handleDraftUpdated = (event: CustomEvent) => {
+      const { oldDraftId, newDraftId } = event.detail;
+      console.log('📨 Draft updated event received:', oldDraftId, '->', newDraftId);
+      
+      // If Gmail changed the draft ID, we need to update our UI
+      if (oldDraftId !== newDraftId) {
+        // Remove old draft from repository
+        emailRepository.deleteEmail(oldDraftId);
+        // The new draft will appear on next refresh/fetch
+        clearEmailCache();
+      }
+    };
+
+    window.addEventListener('draft-created', handleDraftCreated as EventListener);
+    window.addEventListener('draft-updated', handleDraftUpdated as EventListener);
+
+    return () => {
+      window.removeEventListener('draft-created', handleDraftCreated as EventListener);
+      window.removeEventListener('draft-updated', handleDraftUpdated as EventListener);
+    };
+  }, [activeTab, pageType]);
+
   // Toolbar action handlers
   // Email selection handlers
   const handleToggleSelectEmail = (emailId: string) => {
@@ -2093,25 +2130,11 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   });
 
   const handleEmailClick = (id: string) => {
-    // Drafts: open thread panel + auto-open inline reply editor with draft content
+    // Drafts: open compose popup with draft content
     if (pageType === 'drafts' || activeTab === 'drafts') {
-      const draftEmail = emails.find(email => email.id === id) || allTabEmails.drafts.find(email => email.id === id);
-      // Navigate to a drafts thread route (re-using standard email view mechanics)
-  // Reuse existing inbox email route (no dedicated drafts/email/:id route defined)
-  navigate(`/inbox/email/${id}?draft=1`);
-      // Stash draft content into a shared context or window object for inline editor consumption
-      if (draftEmail) {
-        (window as any).__pendingInlineDraft = {
-          draftId: id,
-          to: draftEmail.to?.map(r => r.email) || [],
-          cc: draftEmail.cc?.map(r => r.email) || [],
-          subject: draftEmail.subject,
-          body: draftEmail.body,
-          attachments: draftEmail.attachments || []
-        };
-        // Optionally dispatch a custom event for the thread panel to pick up
-        window.dispatchEvent(new CustomEvent('open-inline-draft', { detail: { id } }));
-      }
+      // Open compose popup with the draft ID - it will load all the content
+      openCompose(id);
+      return;
     } else if (labelName) {
       // For label emails, navigate to inbox with label-specific parameters
       const params = new URLSearchParams({ labelName });

@@ -4,7 +4,6 @@ import { useSecurity } from './contexts/SecurityContext';
 import { ContactsProvider } from './contexts/ContactsContext';
 import { EmailPreloaderProvider } from './contexts/EmailPreloaderContext';
 import { FilterCreationProvider } from './contexts/FilterCreationContext';
-import { ComposeProvider } from './contexts/ComposeContext';
 import Loading from './components/common/Loading';
 import { initSecurityMeasures } from './utils/security';
 import { SECURITY_CONFIG } from './config/security';
@@ -19,7 +18,7 @@ const Auth = lazy(() => import('./pages/Auth'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ViewEmail = lazy(() => import('./pages/ViewEmail'));
-// Compose is now loaded directly in Layout as a popup
+const Compose = lazy(() => import('./pages/Compose'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Orders = lazy(() => import('./pages/Orders'));
 const InvoiceGenerator = lazy(() => import('./pages/InvoiceGenerator'));
@@ -183,15 +182,13 @@ function App() {
           path="/"
           element={
             <ProtectedRoute>
-              <ComposeProvider>
-                <EmailPreloaderProvider>
-                  <ContactsProvider>
-                    <FilterCreationProvider>
-                      <Layout />
-                    </FilterCreationProvider>
-                  </ContactsProvider>
-                </EmailPreloaderProvider>
-              </ComposeProvider>
+              <EmailPreloaderProvider>
+                <ContactsProvider>
+                  <FilterCreationProvider>
+                    <Layout />
+                  </FilterCreationProvider>
+                </ContactsProvider>
+              </EmailPreloaderProvider>
             </ProtectedRoute>
           }
         >
@@ -205,7 +202,11 @@ function App() {
                 <ViewEmail />
               </Suspense>
             } />
-            {/* Compose is now a popup via ComposeContext, no route needed */}
+            <Route path="compose" element={
+              <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
+                <Compose />
+              </Suspense>
+            } />
             <Route path="settings" element={
               <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
                 <Settings />

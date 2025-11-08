@@ -293,6 +293,33 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener('recent-counts-adjust', handler as EventListener);
   }, []);
 
+  // Listen for draft events to update counters
+  useEffect(() => {
+    const handleDraftCreated = () => {
+      console.log('📨 LabelContext: Draft created, incrementing counter');
+      setRecentCounts(rc => ({
+        ...rc,
+        draftTotal: rc.draftTotal + 1
+      }));
+    };
+
+    const handleDraftDeleted = () => {
+      console.log('📨 LabelContext: Draft deleted, decrementing counter');
+      setRecentCounts(rc => ({
+        ...rc,
+        draftTotal: Math.max(0, rc.draftTotal - 1)
+      }));
+    };
+
+    window.addEventListener('draft-created', handleDraftCreated);
+    window.addEventListener('email-deleted', handleDraftDeleted); // Reuse existing event from discard
+
+    return () => {
+      window.removeEventListener('draft-created', handleDraftCreated);
+      window.removeEventListener('email-deleted', handleDraftDeleted);
+    };
+  }, []);
+
   useEffect(() => {
     const handler = (event: Event) => {
       const detail: any = (event as CustomEvent).detail;

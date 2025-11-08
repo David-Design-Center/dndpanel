@@ -91,6 +91,38 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
   ];
 
   // Enhanced link processing
+  // Enhanced image loading with retry mechanism
+  const enhanceImages = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    
+    const images = editor.querySelectorAll('img');
+    images.forEach(img => {
+      const imgElement = img as HTMLImageElement;
+      
+      // Add retry mechanism for image loading
+      if (!imgElement.hasAttribute('data-retry-setup')) {
+        imgElement.setAttribute('data-retry-setup', 'true');
+        
+        let retryCount = 0;
+        const maxRetries = 3;
+        
+        const retryLoad = () => {
+          if (retryCount < maxRetries) {
+            retryCount++;
+            console.log(`Retrying image load (${retryCount}/${maxRetries}):`, imgElement.src);
+            // Force reload by adding timestamp
+            const src = imgElement.src;
+            const separator = src.includes('?') ? '&' : '?';
+            imgElement.src = `${src}${separator}_retry=${Date.now()}`;
+          }
+        };
+        
+        imgElement.onerror = retryLoad;
+      }
+    });
+  }, []);
+
   const enhanceLinks = useCallback(() => {
     const editor = editorRef.current;
     if (!editor) return;
@@ -141,10 +173,13 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
   useEffect(() => {
     if (editorRef.current && editorRef.current.innerHTML !== value) {
       editorRef.current.innerHTML = value;
-      // Enhance any links in the loaded content
-      setTimeout(() => enhanceLinks(), 50);
+      // Enhance any links and images in the loaded content
+      setTimeout(() => {
+        enhanceLinks();
+        enhanceImages();
+      }, 50);
     }
-  }, [value, enhanceLinks]);
+  }, [value, enhanceLinks, enhanceImages]);
 
   // Handle content changes
   const handleInput = useCallback(() => {
@@ -152,10 +187,13 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
       const content = editorRef.current.innerHTML;
       onChange(content);
       
-      // Enhance any links that may have been added
-      setTimeout(() => enhanceLinks(), 50);
+      // Enhance any links and images that may have been added
+      setTimeout(() => {
+        enhanceLinks();
+        enhanceImages();
+      }, 50);
     }
-  }, [onChange, enhanceLinks]);
+  }, [onChange, enhanceLinks, enhanceImages]);
 
   // Update toolbar state based on cursor position
   const updateToolbarState = useCallback(() => {
@@ -686,7 +724,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
 
   return (
     <>
-      <div className={cn("border border-gray-200 rounded-lg overflow-hidden rich-text-editor", className)}>
+      <div className={cn("overflow-hidden rich-text-editor", className)}>
       {/* Toolbar */}
       {compact ? (
         // Compact toolbar - single row, minimal buttons

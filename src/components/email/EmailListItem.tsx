@@ -349,16 +349,21 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
     onEmailDelete?.(email.id);
     
     // Show success toast immediately
-    toast.success('Draft deleted successfully!');
+    toast.success('Draft discarded successfully!');
+    
+    // Emit event to update draft counter
+    window.dispatchEvent(new CustomEvent('email-deleted', { 
+      detail: { emailId: email.id } 
+    }));
     
     // Run API call in background without blocking UI
     try {
       await deleteDraft(email.id);
-      console.log(`✅ Successfully deleted draft ${email.id}`);
+      console.log(`✅ Successfully discarded draft ${email.id}`);
     } catch (error) {
-      console.error('Error deleting draft:', error);
+      console.error('Error discarding draft:', error);
       // Show error and potentially restore the email in UI
-      toast.error('Failed to delete draft. Please try again.');
+      toast.error('Failed to discard draft. Please try again.');
     }
   };
 
@@ -1110,7 +1115,8 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
                 variant="ghost"
                 size="icon"
                 onClick={handleDelete}
-                title="Delete draft"
+                title="Discard draft"
+                className="hover:bg-red-50"
               >
                 <Trash2 size={14} className="text-red-500" />
               </Button>
@@ -1248,8 +1254,8 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
               {isDraft && (
                 <button
                   onClick={handleDelete}
-                  className="p-1 rounded hover:bg-red-100 transition-colors"
-                  title="Delete draft"
+                  className="p-1 rounded hover:bg-red-50 transition-colors"
+                  title="Discard draft"
                 >
                   <Trash2 size={14} className="text-red-500" />
                 </button>

@@ -1,11 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
-import { X, Paperclip, Minimize, Maximize, CheckCircle, Plus } from 'lucide-react';
+import { X, Paperclip, CheckCircle, Plus, SendHorizontal } from 'lucide-react';
 import { sendEmail, getThreadEmails, clearEmailCache, saveDraft, deleteDraft } from '../services/emailService';
+import { emailRepository } from '../services/emailRepository';
 // Customer orders (type 'Customer Order') are already included in invoices query; here we fetch supplier orders from 'orders' table
 import { supabase } from '../lib/supabase';
 // Use the same print components pipeline to ensure consistent preview as Invoice/Orders tabs
 import { exportInvoiceDocToPDF, exportSupplierOrderToPDF } from '@/services/printExport';
+// Use existing shared supabase client to avoid multiple GoTrueClient instances
+import { supabase as sharedSupabase } from '@/lib/supabase';
 import type { Invoice as InvoiceDoc } from '@/components/invoice/InvoicePrintView';
 import type { SupplierOrderDoc } from '@/components/invoice/SupplierOrderPrintView';
 import { Email, Contact } from '../types';
@@ -61,7 +64,6 @@ function Compose() {
   const [originalEmailHtml, setOriginalEmailHtml] = useState(''); // Pre-filled HTML content
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [isSending, setIsSending] = useState(false);
-  const [isMinimized, setIsMinimized] = useState(false);
   const [previewFile, setPreviewFile] = useState<AttachmentItem | null>(null);
   const [, setShowPriceRequestModal] = useState(false);
   
@@ -283,8 +285,12 @@ function Compose() {
           threadId: draftMessage.threadId
         });
 
-        // Set recipients
-        if (toHeader) setTo(toHeader);
+        // Set recipients - populate both old and new format
+        if (toHeader) {
+          const toEmails = toHeader.split(',').map((email: string) => email.trim()).filter((email: string) => email);
+          setToRecipients(toEmails);
+          setTo(toHeader); // Keep for backward compatibility
+        }
         if (subjectHeader) setSubject(subjectHeader);
         
         // Set thread context if this is a reply
@@ -311,11 +317,23 @@ function Compose() {
 
           for (const part of parts) {
             if (part.mimeType === 'text/html' && part.body?.data) {
-              const decoded = atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
-              html = decoded;
+              // Properly decode UTF-8 from base64
+              const base64Data = part.body.data.replace(/-/g, '+').replace(/_/g, '/');
+              const binaryString = atob(base64Data);
+              const bytes = new Uint8Array(binaryString.length);
+              for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+              }
+              html = new TextDecoder('utf-8').decode(bytes);
             } else if (part.mimeType === 'text/plain' && part.body?.data && !html) {
-              const decoded = atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
-              text = decoded;
+              // Properly decode UTF-8 from base64
+              const base64Data = part.body.data.replace(/-/g, '+').replace(/_/g, '/');
+              const binaryString = atob(base64Data);
+              const bytes = new Uint8Array(binaryString.length);
+              for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+              }
+              text = new TextDecoder('utf-8').decode(bytes);
             } else if (part.parts) {
               const found = findBody(part.parts);
               if (found.html) html = found.html;
@@ -330,10 +348,79 @@ function Compose() {
           const { html, text } = findBody(payload.parts);
           bodyHtml = html || text;
         } else if (payload?.body?.data) {
-          bodyHtml = atob(payload.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+          // Properly decode UTF-8 from base64
+          const base64Data = payload.body.data.replace(/-/g, '+').replace(/_/g, '/');
+          const binaryString = atob(base64Data);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          bodyHtml = new TextDecoder('utf-8').decode(bytes);
         }
 
         console.log('📧 Draft body loaded, length:', bodyHtml.length);
+
+        // Process inline images - convert cid: references to data URLs
+        if (bodyHtml && payload?.parts) {
+          const inlineImages: { [cid: string]: string } = {};
+          
+          // Extract inline images from parts
+          const extractInlineImages = async (parts: any[]) => {
+            for (const part of parts) {
+              const headers = part.headers || [];
+              const contentIdHeader = headers.find((h: any) => h.name.toLowerCase() === 'content-id');
+              
+              // Check if this is an inline image (has Content-ID)
+              if (contentIdHeader && part.mimeType?.startsWith('image/')) {
+                // Extract CID (remove < and >)
+                let cid = contentIdHeader.value.replace(/[<>]/g, '');
+                
+                // Check if we have inline data or need to fetch it
+                if (part.body?.data) {
+                  // We have the data inline
+                  const base64Data = part.body.data.replace(/-/g, '+').replace(/_/g, '/');
+                  const dataUrl = `data:${part.mimeType};base64,${base64Data}`;
+                  inlineImages[cid] = dataUrl;
+                  console.log('📧 Found inline image with CID (inline data):', cid);
+                } else if (part.body?.attachmentId) {
+                  // Need to fetch the attachment
+                  try {
+                    const response = await window.gapi.client.gmail.users.messages.attachments.get({
+                      userId: 'me',
+                      messageId: draftMessage.id,
+                      id: part.body.attachmentId
+                    });
+                    
+                    if (response.result?.data) {
+                      const base64Data = response.result.data.replace(/-/g, '+').replace(/_/g, '/');
+                      const dataUrl = `data:${part.mimeType};base64,${base64Data}`;
+                      inlineImages[cid] = dataUrl;
+                      console.log('📧 Fetched inline image with CID:', cid);
+                    }
+                  } catch (error) {
+                    console.error('❌ Failed to fetch inline image:', cid, error);
+                  }
+                }
+              }
+              
+              // Recursively check nested parts
+              if (part.parts) {
+                await extractInlineImages(part.parts);
+              }
+            }
+          };
+          
+          await extractInlineImages(payload.parts);
+          
+          // Replace cid: references with data URLs
+          Object.entries(inlineImages).forEach(([cid, dataUrl]) => {
+            // Try both with and without "cid:" prefix
+            bodyHtml = bodyHtml.replace(new RegExp(`cid:${cid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'gi'), dataUrl);
+            bodyHtml = bodyHtml.replace(new RegExp(cid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), dataUrl);
+          });
+          
+          console.log('📧 Processed', Object.keys(inlineImages).length, 'inline images');
+        }
 
         // Set body content
         if (bodyHtml) {
@@ -428,11 +515,31 @@ function Compose() {
       }
       
       // Add signature if available
+      // Rules:
+      // 1. Never add for existing drafts (they already have signature from first save)
+      // 2. Add for new emails (no currentDraftId)
+      // 3. Add for replies (isReply = true) only if not already present
+      
       if (currentProfile?.signature) {
-        if (finalBodyHtml) {
-          finalBodyHtml += '<br><br>' + currentProfile.signature;
-        } else {
-          finalBodyHtml = currentProfile.signature;
+        // Check if signature is already in the content (more robust check)
+        const signatureText = currentProfile.signature.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+        const bodyText = finalBodyHtml.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+        const signatureExists = bodyText.includes(signatureText);
+        
+        // Only add signature if:
+        // - Not already present AND
+        // - (No draft ID yet OR is a reply)
+        const shouldAddSignature = !signatureExists && (!currentDraftId || isReply);
+        
+        if (shouldAddSignature) {
+          if (finalBodyHtml) {
+            finalBodyHtml += '<br><br>' + currentProfile.signature;
+          } else {
+            finalBodyHtml = currentProfile.signature;
+          }
+          console.log('✍️ Signature added to draft');
+        } else if (signatureExists) {
+          console.log('✍️ Signature already present, skipping');
         }
       }
       
@@ -443,28 +550,61 @@ function Compose() {
 
       // Prepare CC recipients string for saving
       const ccRecipientsString = ccRecipients.filter(email => email.trim()).join(',');
+      
+      // Prepare TO recipients - include both toRecipients array AND current toInput if valid
+      let allToRecipients = [...toRecipients];
+      
+      // If user has typed an email but hasn't pressed Enter/comma/space yet, include it
+      if (toInput.trim() && toInput.includes('@') && !allToRecipients.includes(toInput.trim())) {
+        allToRecipients.push(toInput.trim());
+      }
+      
+      const toRecipientsForDraft = allToRecipients.length > 0 
+        ? allToRecipients.map(email => ({ name: '', email }))
+        : (to && to.trim() ? [{ name: '', email: to }] : []); // Fallback to old format if array is empty
+      
+      console.log('💾 Saving draft - TO recipients:', toRecipientsForDraft);
+      console.log('💾 Saving draft - toRecipients array:', toRecipients);
+      console.log('💾 Saving draft - toInput:', toInput);
 
       const result = await saveDraft({
         from: {
           name: 'Me',
           email: 'me@example.com'
         },
-        to: [
-          {
-            name: '',
-            email: to
-          }
-        ],
+        to: toRecipientsForDraft,
         subject,
         body: finalBodyHtml,
         internalDate: new Date().toISOString()
       }, processedAttachments, currentDraftId, ccRecipientsString);
 
       if (result.success) {
+        const wasNewDraft = !currentDraftId;
+        const oldDraftId = currentDraftId;
+        
         setCurrentDraftId(result.draftId);
         setIsDraftDirty(false);
         setLastSavedAt(new Date());
         console.log('✅ Draft auto-saved successfully');
+        
+        // Update UI and counters
+        if (wasNewDraft) {
+          // New draft created - emit event to add to UI and increment counter
+          window.dispatchEvent(new CustomEvent('draft-created', { 
+            detail: { draftId: result.draftId } 
+          }));
+          console.log('📤 Emitted draft-created event for:', result.draftId);
+        } else if (oldDraftId !== result.draftId) {
+          // Gmail changed the draft ID - update the UI
+          window.dispatchEvent(new CustomEvent('draft-updated', { 
+            detail: { 
+              oldDraftId: oldDraftId,
+              newDraftId: result.draftId 
+            } 
+          }));
+          console.log('📤 Emitted draft-updated event:', oldDraftId, '->', result.draftId);
+        }
+        // else: same draft ID, just content updated - no UI change needed
       }
     } catch (error) {
       console.error('❌ Error auto-saving draft:', error);
@@ -500,10 +640,18 @@ function Compose() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Combine toRecipients array into comma-separated string
-    const combinedTo = toRecipients.join(', ');
+    // Include both toRecipients array AND current toInput if valid
+    let allToRecipients = [...toRecipients];
     
-    if (!combinedTo && toRecipients.length === 0) {
+    // If user has typed an email but hasn't pressed Enter/comma/space yet, include it
+    if (toInput.trim() && toInput.includes('@') && !allToRecipients.includes(toInput.trim())) {
+      allToRecipients.push(toInput.trim());
+    }
+    
+    // Combine toRecipients array into comma-separated string
+    const combinedTo = allToRecipients.join(', ');
+    
+    if (!combinedTo && allToRecipients.length === 0) {
       alert('Please specify at least one recipient');
       return;
     }
@@ -576,11 +724,25 @@ function Compose() {
       }
       
       // Add signature if available
+      // When sending: signature should already be in the body (added during draft save)
+      // But check and add if missing (for direct sends without draft)
+      
       if (currentProfile?.signature) {
-        if (finalBodyHtml) {
-          finalBodyHtml += '<br><br>' + currentProfile.signature;
+        // Check if signature is already in the content (robust check)
+        const signatureText = currentProfile.signature.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+        const bodyText = finalBodyHtml.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+        const signatureExists = bodyText.includes(signatureText);
+        
+        // Only add if not already present
+        if (!signatureExists) {
+          if (finalBodyHtml) {
+            finalBodyHtml += '<br><br>' + currentProfile.signature;
+          } else {
+            finalBodyHtml = currentProfile.signature;
+          }
+          console.log('✍️ Signature added to outgoing email');
         } else {
-          finalBodyHtml = currentProfile.signature;
+          console.log('✍️ Signature already present in email');
         }
       }
       
@@ -597,7 +759,7 @@ function Compose() {
           name: 'Me',
           email: 'me@example.com'
         },
-        to: toRecipients.map(email => ({
+        to: allToRecipients.map(email => ({
           name: '',
           email: email
         })),
@@ -841,7 +1003,7 @@ function Compose() {
       
       console.log(`Generating PDF for ${type}:`, item);
 
-  const sb = supabase;
+  const sb = sharedSupabase;
 
       let pdfBlob: Blob;
       let filename: string;
@@ -1081,32 +1243,6 @@ function Compose() {
     }
   }, [currentProfile?.name]);
 
-  if (isMinimized) {
-    return (
-      <div className="fixed bottom-0 right-4 w-64 bg-white rounded-t-lg shadow-lg z-10">
-        <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
-          <h3 className="text-sm font-medium truncate">
-            {subject || (currentDraftId ? 'Edit Draft' : 'New Message')}
-          </h3>
-          <div className="flex space-x-2">
-            <button 
-              onClick={() => setIsMinimized(false)}
-              className="text-gray-500 hover:text-gray-700"
-            >
-              <Maximize size={16} />
-            </button>
-            <button 
-              onClick={handleCancel}
-              className="text-gray-500 hover:text-gray-700"
-            >
-              <X size={16} />
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <>
       {/* Success Message */}
@@ -1128,8 +1264,8 @@ function Compose() {
       <div className="fixed bottom-4 right-4 z-50 w-[600px] max-h-[90vh] flex flex-col">
         {/* Main Compose Window - Gmail-style popup */}
         <div 
-          className="bg-white rounded-lg shadow-2xl border border-gray-300 overflow-hidden flex flex-col"
-          style={{ height: isMinimized ? 'auto' : '580px' }}
+          className="bg-white rounded-lg shadow-2xl overflow-hidden flex flex-col"
+          style={{ height: '580px' }}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
         >
@@ -1148,19 +1284,11 @@ function Compose() {
                 <h2 className="text-sm font-medium">
                   {currentDraftId ? 'Edit Draft' : 'New Message'}
                 </h2>
-                {!isMinimized && toRecipients.length > 0 && (
+                {toRecipients.length > 0 && (
                   <span className="text-xs text-gray-500">- {toRecipients[0].substring(0, 20)}{toRecipients[0].length > 20 ? '...' : ''}{toRecipients.length > 1 ? ` +${toRecipients.length - 1}` : ''}</span>
                 )}
               </div>
               <div className="flex space-x-1">
-                <button 
-                  type="button"
-                  onClick={() => setIsMinimized(!isMinimized)}
-                  className="p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded"
-                  title={isMinimized ? 'Maximize' : 'Minimize'}
-                >
-                  {isMinimized ? <Maximize size={16} /> : <Minimize size={16} />}
-                </button>
                 <button 
                   type="button"
                   onClick={handleCancel}
@@ -1172,13 +1300,15 @@ function Compose() {
               </div>
             </div>
           
-          {!isMinimized && (
+          {/* Compose Form */}
+          {(
           <form onSubmit={handleSubmit} className="flex flex-col h-full">
-            <div className="flex-1 p-3 space-y-2 overflow-y-auto">
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              <div className="p-3 space-y-2">
               {/* TO Section */}
               <div className="relative">
-                <div className="flex items-start border-b border-gray-200 py-1.5">
-                  <span className="w-12 text-gray-500 text-xs pt-1">To:</span>
+                <div className="flex items-center border-b border-gray-200 py-2 gap-2">
+                  <span className="text-gray-500 text-xs">To:</span>
                   <div className="flex-1 flex flex-wrap items-center gap-1">
                     {/* Display existing TO recipients */}
                     {toRecipients.map((email, index) => (
@@ -1216,8 +1346,8 @@ function Compose() {
                           handleToInputKeyDown(e);
                         }
                       }}
-                      className="flex-1 min-w-[100px] outline-none text-xs"
-                      placeholder={toRecipients.length === 0 ? "Recipients" : ""}
+                      className="flex-1 min-w-[100px] outline-none text-xs py-0.5"
+                      placeholder={toRecipients.length === 0 ? "" : ""}
                     />
                   </div>
                 </div>
@@ -1268,8 +1398,8 @@ function Compose() {
               {/* CC Section */}
               {showCc && (
                 <div className="relative">
-                  <div className="flex items-start border-b border-gray-200 py-1.5">
-                    <span className="w-12 text-gray-500 text-xs pt-1">CC:</span>
+                  <div className="flex items-center border-b border-gray-200 py-2 gap-2">
+                    <span className="text-gray-500 text-xs">CC:</span>
                     <div className="flex-1 flex flex-wrap items-center gap-1">
                       {/* Display existing CC recipients */}
                       {ccRecipients.map((email, index) => (
@@ -1304,20 +1434,10 @@ function Compose() {
                         onBlur={handleCcInputBlur}
                         onKeyDown={handleCcInputKeyDown}
                         onKeyPress={handleCcInputKeyPress}
-                        className="flex-1 min-w-[100px] outline-none text-xs"
-                        placeholder={ccRecipients.length === 0 ? "Add CC recipients..." : ""}
+                        className="flex-1 min-w-[100px] outline-none text-xs py-0.5"
+                        placeholder={ccRecipients.length === 0 ? "" : ""}
                       />
                     </div>
-                    
-                    {/* Add CC button */}
-                    <button
-                      type="button"
-                      onClick={addCcRecipient}
-                      className="ml-1 p-0.5 text-blue-600 hover:text-blue-800 rounded"
-                      title="Add another CC recipient"
-                    >
-                      <Plus size={12} />
-                    </button>
                   </div>
                   
                   {/* CC Contact dropdown */}
@@ -1378,8 +1498,8 @@ function Compose() {
                 </div>
               )}
               
-              <div className="flex items-center border-b border-gray-200 py-1.5">
-                <span className="w-12 text-gray-500 text-xs">Subject:</span>
+              <div className="flex items-center border-b border-gray-200 py-2 gap-2">
+                <span className="text-gray-500 text-xs">Subject:</span>
                 <input
                   type="text"
                   value={subject}
@@ -1387,39 +1507,38 @@ function Compose() {
                     setSubject(e.target.value);
                     handleContentChange();
                   }}
-                  className="flex-1 outline-none text-xs"
-                  placeholder="Subject"
+                  className="flex-1 outline-none text-xs py-0.5"
                 />
               </div>
               
-              <div className="h-[280px] flex flex-col">
-                <div className="h-full flex flex-col border border-gray-200 rounded overflow-hidden">
-                  <RichTextEditor
-                    value={newBodyHtml}
-                    onChange={(value) => {
-                      setNewBodyHtml(value);
-                      handleContentChange();
-                    }}
-                    placeholder="Compose your message..."
-                    minHeight="100%"
-                    disabled={isSending}
-                    showPriceRequestButton={false}
-                    onOpenPriceRequest={handleOpenPriceRequest}
-                    showFileAttachmentButton={true}
-                    onFileAttachment={handleRichTextFileAttachment}
-                    compact={false}
-                  />
-                  
-                  {/* Attachment thumbnails at bottom of editor */}
-                  {attachments.length > 0 && (
-                    <div className="bg-gray-50 border-t border-gray-200 p-2">
-                      <div className="flex items-center gap-1 mb-1">
-                        <Paperclip size={12} className="text-gray-500" />
-                        <span className="text-[10px] font-medium text-gray-600">
-                          {attachments.length} file{attachments.length > 1 ? 's' : ''}
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap gap-1">
+              {/* Rich Text Editor - fixed height */}
+              <div className="h-[250px]">
+                <RichTextEditor
+                  value={newBodyHtml}
+                  onChange={(value) => {
+                    setNewBodyHtml(value);
+                    handleContentChange();
+                  }}
+                  minHeight="100%"
+                  disabled={isSending}
+                  showPriceRequestButton={false}
+                  onOpenPriceRequest={handleOpenPriceRequest}
+                  showFileAttachmentButton={true}
+                  onFileAttachment={handleRichTextFileAttachment}
+                  compact={false}
+                />
+              </div>
+              
+              {/* Attachment thumbnails at bottom */}
+              {attachments.length > 0 && (
+                <div className="bg-gray-50 border-t border-gray-200 p-2">
+                  <div className="flex items-center gap-1 mb-1">
+                    <Paperclip size={12} className="text-gray-500" />
+                    <span className="text-[10px] font-medium text-gray-600">
+                      {attachments.length} file{attachments.length > 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
                         {attachments.map((attachment, index) => (
                           <div
                             key={index}
@@ -1468,21 +1587,25 @@ function Compose() {
                           </div>
                         ))}
                       </div>
-                    </div>
-                  )}
                 </div>
+              )}
               </div>
             </div>
             
             {/* Footer with buttons */}
-            <div className="px-3 py-2 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
+            <div className="px-3 py-2 bg-gray-50 border-t border-gray-200 flex items-center justify-between flex-shrink-0">
               <div className="flex items-center gap-2">
                 <button
                   type="submit"
                   disabled={isSending}
-                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white text-xs font-medium rounded transition-colors"
+                  className="p-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white rounded-full transition-colors flex items-center justify-center"
+                  title={isSending ? 'Sending...' : 'Send'}
                 >
-                  {isSending ? 'Sending...' : 'Send'}
+                  {isSending ? (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  ) : (
+                    <SendHorizontal size={16} />
+                  )}
                 </button>
                 <button
                   type="button"
@@ -1499,6 +1622,15 @@ function Compose() {
                       if (window.confirm('Discard this draft?')) {
                         try {
                           await deleteDraft(currentDraftId);
+                          
+                          // Remove from email repository immediately for good UX
+                          emailRepository.deleteEmail(currentDraftId);
+                          
+                          // Emit event to refresh drafts list
+                          window.dispatchEvent(new CustomEvent('email-deleted', { 
+                            detail: { emailId: currentDraftId } 
+                          }));
+                          
                           closeCompose();
                         } catch (error) {
                           console.error('Error deleting draft:', error);
@@ -1535,8 +1667,8 @@ function Compose() {
         </div>
       </div>
 
-      {/* Email Thread Display (when replying) - Show below compose popup */}
-      {isReply && (
+      {/* Thread display removed - compose window only */}
+      {false && isReply && (
         <div className="mt-8">
           <div className="border-t border-gray-200 pt-6">
             <h3 className="text-lg font-semibold text-gray-800 mb-4">Email Thread</h3>
