@@ -9,10 +9,12 @@ import {
   decodeRfc2047 as gmailDecodeRfc2047,
   parseEmailAddresses as gmailParseEmailAddresses,
   getHeaderValue as gmailGetHeaderValue,
+} from '../parsing/headers';
+import {
   findBodyPart as gmailFindBodyPart,
   extractTextFromPart as gmailExtractTextFromPart,
-  decodeHtmlEntities,
-} from '../index';
+} from '../parsing/body';
+import { decodeHtmlEntities } from '../parsing/charset';
 import type { EmailPart } from '../types';
 
 /**
