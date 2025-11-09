@@ -915,6 +915,20 @@ div[class*="bg-black"][class*="fixed"] {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
+
+  /* Hide page separation borders and margins when printing */
+  .invoice-document > div,
+  .supplier-order-document > div {
+    border: none !important;
+    margin: 0 !important;
+    page-break-after: always !important;
+  }
+
+  /* Don't add page break after last page */
+  .invoice-document > div:last-child,
+  .supplier-order-document > div:last-child {
+    page-break-after: avoid !important;
+  }
 }
 
 @layer base {

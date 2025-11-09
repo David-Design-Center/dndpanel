@@ -314,7 +314,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   // For label emails only
   const [emails, setEmails] = useState<Email[]>([]);
   const [currentPageToken, setCurrentPageToken] = useState<string | undefined>(undefined);
-  const [hasMoreEmails, setHasMoreEmails] = useState(false);
+  const [, setHasMoreEmails] = useState(false);
 
   // Email storage for each tab type - always maintained separately
   type TabKey = 'all' | 'unread' | 'sent' | 'drafts' | 'trash' | 'important' | 'starred' | 'spam' | 'allmail';
@@ -379,7 +379,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   });
 
   // Category page tokens for each folder context
-  const [categoryPageTokens, setCategoryPageTokens] = useState({
+  const [, setCategoryPageTokens] = useState({
     all: {
       primary: undefined as string | undefined,
       updates: undefined as string | undefined,
@@ -414,7 +414,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   });
 
   // Has more category emails for each folder context
-  const [hasMoreCategoryEmails, setHasMoreCategoryEmails] = useState({
+  const [, setHasMoreCategoryEmails] = useState({
     all: {
       primary: false,
       updates: false,
@@ -1131,26 +1131,10 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
           important: !!response.nextPageToken
         }));
       } else if (tabType === 'sent') {
-        // Load more sent emails using pagination
-        const pageToken = force ? undefined : (pageTokens.sent === 'has-more' ? undefined : pageTokens.sent);
-        const response = await getSentEmails(force, 20, pageToken);
-        const newEmails = response.emails || [];
-        
-        setAllTabEmails(prev => ({
-          ...prev,
-          sent: [...(force ? [] : prev.sent), ...newEmails]
-        }));
+        // SENT emails are now loaded via paginated system (loadPaginatedEmails)
+        // This legacy tab-specific loading is disabled to prevent duplicates
+        console.log('📧 Sent tab uses paginated loading - skipping legacy tab loader');
         setTabLoaded(prev => ({ ...prev, sent: true }));
-
-        setPageTokens(prev => ({
-          ...prev,
-          sent: response.nextPageToken
-        }));
-
-        setHasMoreForTabs(prev => ({
-          ...prev,
-          sent: !!response.nextPageToken
-        }));
       } else if (tabType === 'drafts') {
         // Load more drafts
         const currentCount = force ? 0 : allTabEmails.drafts.length;
@@ -1604,14 +1588,61 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
 
   // Listen for draft events from Compose window
   useEffect(() => {
-    const handleDraftCreated = (event: CustomEvent) => {
+    const handleDraftCreated = async (event: CustomEvent) => {
       console.log('📨 Draft created event received:', event.detail);
-      // Refresh drafts tab to show new draft (only if on drafts tab)
+      const { draftId } = event.detail;
+      
+      // Fetch and add the new draft to the UI immediately
       if (activeTab === 'drafts' || pageType === 'drafts') {
-        // Don't do a full refresh - that's expensive
-        // Instead, just clear the cache so next view loads fresh data
-        console.log('📨 Clearing draft cache to trigger fresh load');
-        clearEmailCache();
+        try {
+          // Fetch the draft details
+          const response = await window.gapi.client.gmail.users.drafts.get({
+            userId: 'me',
+            id: draftId,
+            format: 'metadata',
+            metadataHeaders: ['From', 'To', 'Subject', 'Date']
+          });
+          
+          if (response.result?.message) {
+            const message = response.result.message;
+            const headers = message.payload?.headers || [];
+            
+            // Convert to Email format
+            const getHeader = (name: string) => {
+              const header = headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase());
+              return header?.value || '';
+            };
+            
+            const draftEmail: Email = {
+              id: message.id,
+              threadId: message.threadId || message.id,
+              subject: getHeader('Subject') || '(No Subject)',
+              from: { name: getHeader('From'), email: getHeader('From') },
+              to: [{ name: getHeader('To'), email: getHeader('To') }],
+              cc: [],
+              date: new Date(parseInt(message.internalDate || '0')).toISOString(),
+              internalDate: message.internalDate || '0',
+              body: '',
+              preview: '',
+              isRead: false,
+              labelIds: message.labelIds || ['DRAFT'],
+              attachments: []
+            };
+            
+            // Add to repository and update UI
+            emailRepository.addEmail(draftEmail);
+            setAllTabEmails(prev => ({
+              ...prev,
+              drafts: [draftEmail, ...prev.drafts]
+            }));
+            
+            console.log('📨 Draft added to UI:', draftId);
+          }
+        } catch (error) {
+          console.error('❌ Failed to fetch draft:', error);
+          // Fallback: clear cache to trigger refresh
+          clearEmailCache();
+        }
       }
     };
 
@@ -1623,17 +1654,22 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       if (oldDraftId !== newDraftId) {
         // Remove old draft from repository
         emailRepository.deleteEmail(oldDraftId);
+        // Remove from UI
+        setAllTabEmails(prev => ({
+          ...prev,
+          drafts: prev.drafts.filter(d => d.id !== oldDraftId)
+        }));
         // The new draft will appear on next refresh/fetch
         clearEmailCache();
       }
     };
 
-    window.addEventListener('draft-created', handleDraftCreated as EventListener);
-    window.addEventListener('draft-updated', handleDraftUpdated as EventListener);
+    window.addEventListener('draft-created', handleDraftCreated as any);
+    window.addEventListener('draft-updated', handleDraftUpdated as any);
 
     return () => {
-      window.removeEventListener('draft-created', handleDraftCreated as EventListener);
-      window.removeEventListener('draft-updated', handleDraftUpdated as EventListener);
+      window.removeEventListener('draft-created', handleDraftCreated as any);
+      window.removeEventListener('draft-updated', handleDraftUpdated as any);
     };
   }, [activeTab, pageType]);
 
@@ -2049,12 +2085,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   }, [anyVisibleSelected, allVisibleSelected]);
 
   const isInboxContext = pageType === 'inbox' && !labelName;
-  const inboxTabHasMore = hasMoreForTabs[activeTab] || false;
-  const categoryHasMore = supportsCategoryTabs ? !!hasMoreCategoryEmails[folderContextForTab]?.[activeCategory] : false;
-  const currentHasMore = isInboxContext
-    ? (supportsCategoryTabs ? categoryHasMore : inboxTabHasMore)
-    : (labelName ? hasMoreEmails : false);
-  const hasNextLoaded = (pageIndex + 1) * PAGE_SIZE < totalLoadedEmails;
 
   useEffect(() => {
     if (!isInboxContext) return;
@@ -2828,6 +2858,36 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                   <div></div>
                 )}
                 <div className="flex items-center gap-3">
+                  {/* Empty Trash button - only in trash tab */}
+                  {pageType === 'trash' && filteredEmails.length > 0 && (
+                    <button
+                      onClick={async () => {
+                        if (window.confirm(`Are you sure you want to permanently delete all ${filteredEmails.length} email${filteredEmails.length > 1 ? 's' : ''} from trash? This action cannot be undone.`)) {
+                          const loadingToastId = toast.loading(`Emptying trash (${filteredEmails.length} emails)...`);
+                          try {
+                            // Delete all emails in trash
+                            await Promise.all(filteredEmails.map(email => deleteEmail(email.id)));
+                            
+                            toast.dismiss(loadingToastId);
+                            toast.success('Trash emptied successfully!');
+                            
+                            // Refresh the view
+                            await handleRefresh();
+                          } catch (error) {
+                            console.error('Error emptying trash:', error);
+                            toast.dismiss(loadingToastId);
+                            toast.error('Failed to empty trash. Please try again.');
+                          }
+                        }
+                      }}
+                      className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition-colors"
+                      title="Permanently delete all emails in trash"
+                    >
+                      <Trash2 size={16} />
+                      Empty Trash
+                    </button>
+                  )}
+                  
                   {/* Refresh button */}
                   <button 
                     onClick={handleRefresh}
@@ -3326,11 +3386,12 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
             ) : (
               <div className="p-8 text-center">
                 <p className="text-gray-500">
-                  {labelName ? `No emails found for folder "${labelName}"` :
-                   pageType === 'drafts' ? 'No drafts' : 
+                  {pageType === 'drafts' ? 'No drafts' :
                    pageType === 'sent' ? 'No sent emails' : 
                    pageType === 'trash' ? 'Trash is empty' : 
                    pageType === 'unread' ? 'No unread emails' : 
+                   labelName ? `No emails found for folder "${labelName}"` :
+                   activeTab === 'drafts' ? 'No drafts' :
                    activeTab === 'unread' ? 'No unread emails' :
                    activeTab === 'important' ? 'No important emails' :
                    'No emails'}

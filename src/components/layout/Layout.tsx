@@ -105,7 +105,6 @@ function LayoutContent({
   currentProfile, 
   profileLoading, 
   selectProfile, 
-  navigate, 
   setShowSuccess, 
   hasAutoSelected, 
   setHasAutoSelected, 

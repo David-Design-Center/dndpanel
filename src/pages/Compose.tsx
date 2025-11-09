@@ -942,17 +942,6 @@ function Compose() {
     }, 150);
   };
 
-  const handleCcInputKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && ccInput.trim()) {
-      e.preventDefault();
-      // Add email if it's valid and not already in the list
-      const email = ccInput.trim();
-      if (email && !ccRecipients.includes(email) && email.includes('@')) {
-        setCcRecipients(prev => [...prev, email]);
-        setCcInput('');
-      }
-    }
-  };
 
   // Prevent pressing Enter in the To field from submitting the entire form.
   const handleToInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -985,9 +974,6 @@ function Compose() {
     setCcRecipients(prev => prev.filter(recipient => recipient !== email));
   };
 
-  const addCcRecipient = () => {
-    setCcRecipients(prev => [...prev, '']);
-  };
 
 
 
@@ -1328,19 +1314,39 @@ function Compose() {
                       type="text"
                       value={toInput}
                       onChange={(e) => {
-                        setToInput(e.target.value);
+                        const value = e.target.value;
+                        setToInput(value);
                         handleToInputChange(e);
-                      }}
-                      onFocus={handleToInputFocus}
-                      onBlur={handleToInputBlur}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ',' || e.key === ' ') {
-                          e.preventDefault();
-                          const email = toInput.trim();
-                          if (email && email.includes('@')) {
+                        
+                        // Auto-convert to badge when space, comma, or Enter is detected
+                        if (value.endsWith(' ') || value.endsWith(',')) {
+                          const email = value.slice(0, -1).trim();
+                          if (email && email.includes('@') && !toRecipients.includes(email)) {
                             setToRecipients([...toRecipients, email]);
                             setToInput('');
-                            setTo([...toRecipients, email].join(', ')); // Update backward compat field
+                            setTo([...toRecipients, email].join(', '));
+                          }
+                        }
+                      }}
+                      onFocus={handleToInputFocus}
+                      onBlur={() => {
+                        // Convert to badge on blur if valid email
+                        const email = toInput.trim();
+                        if (email && email.includes('@') && !toRecipients.includes(email)) {
+                          setToRecipients([...toRecipients, email]);
+                          setToInput('');
+                          setTo([...toRecipients, email].join(', '));
+                        }
+                        handleToInputBlur();
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const email = toInput.trim();
+                          if (email && email.includes('@') && !toRecipients.includes(email)) {
+                            setToRecipients([...toRecipients, email]);
+                            setToInput('');
+                            setTo([...toRecipients, email].join(', '));
                           }
                         } else {
                           handleToInputKeyDown(e);
@@ -1429,11 +1435,41 @@ function Compose() {
                       <input
                         type="text"
                         value={ccInput}
-                        onChange={handleCcInputChange}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          handleCcInputChange(e);
+                          
+                          // Auto-convert to badge when space or comma is detected
+                          if (value.endsWith(' ') || value.endsWith(',')) {
+                            const email = value.slice(0, -1).trim();
+                            if (email && email.includes('@') && !ccRecipients.includes(email)) {
+                              setCcRecipients([...ccRecipients, email]);
+                              setCcInput('');
+                            }
+                          }
+                        }}
                         onFocus={handleCcInputFocus}
-                        onBlur={handleCcInputBlur}
-                        onKeyDown={handleCcInputKeyDown}
-                        onKeyPress={handleCcInputKeyPress}
+                        onBlur={() => {
+                          // Convert to badge on blur if valid email
+                          const email = ccInput.trim();
+                          if (email && email.includes('@') && !ccRecipients.includes(email)) {
+                            setCcRecipients([...ccRecipients, email]);
+                            setCcInput('');
+                          }
+                          handleCcInputBlur();
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            const email = ccInput.trim();
+                            if (email && email.includes('@') && !ccRecipients.includes(email)) {
+                              setCcRecipients([...ccRecipients, email]);
+                              setCcInput('');
+                            }
+                          } else {
+                            handleCcInputKeyDown(e);
+                          }
+                        }}
                         className="flex-1 min-w-[100px] outline-none text-xs py-0.5"
                         placeholder={ccRecipients.length === 0 ? "" : ""}
                       />
@@ -1448,36 +1484,36 @@ function Compose() {
                           <div
                             key={`cc-${contact.email}-${index}`}
                             onClick={() => handleCcContactSelect(contact)}
-                            className="flex items-center px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                            className="flex items-center px-2 py-1.5 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
                           >
                             {contact.photoUrl ? (
                               <img
                                 src={contact.photoUrl}
                                 alt={contact.name}
-                                className="w-8 h-8 rounded-full mr-3 flex-shrink-0"
+                                className="w-6 h-6 rounded-full mr-2 flex-shrink-0"
                               />
                             ) : (
-                              <div className="w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center text-sm font-medium mr-3 flex-shrink-0">
+                              <div className="w-6 h-6 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-medium mr-2 flex-shrink-0">
                                 {getProfileInitial(contact.name, contact.email)}
                               </div>
                             )}
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="text-sm font-medium text-gray-900 truncate">
+                              <div className="flex items-center gap-1">
+                                <span className="text-xs font-medium text-gray-900 truncate">
                                   {contact.name}
                                 </span>
                                 {contact.isFrequentlyContacted && (
-                                  <span className="px-2 py-1 text-xs bg-green-100 text-green-700 rounded-full flex-shrink-0">
+                                  <span className="px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full flex-shrink-0">
                                     Frequent
                                   </span>
                                 )}
                               </div>
-                              <p className="text-sm text-gray-500 truncate">{contact.email}</p>
+                              <p className="text-[10px] text-gray-500 truncate">{contact.email}</p>
                             </div>
                           </div>
                         ))
                       ) : (
-                        <div className="px-4 py-3 text-gray-500 text-sm">No contacts found</div>
+                        <div className="px-2 py-2 text-gray-500 text-xs">No contacts found</div>
                       )}
                     </div>
                   )}
@@ -1511,8 +1547,8 @@ function Compose() {
                 />
               </div>
               
-              {/* Rich Text Editor - fixed height */}
-              <div className="h-[250px]">
+              {/* Rich Text Editor - fills remaining space */}
+              <div className="flex-1 min-h-0">
                 <RichTextEditor
                   value={newBodyHtml}
                   onChange={(value) => {

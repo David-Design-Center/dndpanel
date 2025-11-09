@@ -3,7 +3,7 @@ import { useProfile } from '../../contexts/ProfileContext';
 import { useAuth } from '../../contexts/AuthContext';
 import RichTextEditor from './RichTextEditor';
 import { Button } from '../ui/button';
-import { Save, AlertCircle } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
 
 // Default signatures
 

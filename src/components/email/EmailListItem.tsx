@@ -90,7 +90,23 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
   })();
 
   // Format sender text for display
+  // Determine if this is a sent email to show recipient instead of sender
+  const isSentEmail = email.labelIds?.includes('SENT');
+  
   const senderText = (() => {
+    // For sent emails, show recipient (TO) instead of sender (FROM)
+    if (isSentEmail) {
+      const firstRecipient = email.to?.[0];
+      if (firstRecipient?.name) {
+        return cleanEncodingIssues(firstRecipient.name);
+      }
+      if (firstRecipient?.email) {
+        return cleanEmailAddress(firstRecipient.email);
+      }
+      return 'Unknown Recipient';
+    }
+    
+    // For other emails, show sender (FROM)
     if (email.from?.name) {
       return cleanEncodingIssues(email.from.name);
     }

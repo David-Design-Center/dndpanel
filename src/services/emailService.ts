@@ -737,9 +737,11 @@ const getEmailsByLabelIds = async (
       requestParams.pageToken = pageToken;
     }
 
-    const response = await window.gapi.client.gmail.users.messages.list(requestParams);
+    // Use threads.list instead of messages.list to fetch threads
+    // Note: Gmail API supports threads.list but it's not in the type definitions
+    const response = await (window.gapi.client.gmail.users.threads as any).list(requestParams);
 
-    if (!response.result.messages || response.result.messages.length === 0) {
+    if (!response.result.threads || response.result.threads.length === 0) {
       return {
         emails: [],
         nextPageToken: undefined,
@@ -748,18 +750,42 @@ const getEmailsByLabelIds = async (
     }
 
     const emails: Email[] = [];
+    const seenThreadIds = new Set<string>(); // Track thread IDs to prevent duplicates
     
-    // Fetch emails sequentially to avoid rate limits
-    for (const message of response.result.messages) {
-      if (!message.id) continue;
+    // Fetch threads sequentially to avoid rate limits
+    for (const thread of response.result.threads) {
+      if (!thread.id) continue;
+      
+      // Skip if we've already processed this thread (deduplication)
+      if (seenThreadIds.has(thread.id)) {
+        console.log(`⚠️ Skipping duplicate thread: ${thread.id}`);
+        continue;
+      }
+      seenThreadIds.add(thread.id);
 
       try {
-        const msg = await window.gapi.client.gmail.users.messages.get({
+        // Fetch the full thread
+        const threadData = await window.gapi.client.gmail.users.threads.get({
           userId: 'me',
-          id: message.id,
+          id: thread.id,
           format: 'metadata',
           metadataHeaders: ['Subject', 'From', 'To', 'Date']
         });
+
+        if (!threadData.result || !threadData.result.messages || threadData.result.messages.length === 0) continue;
+        
+        // For SENT threads, use the FIRST message (the one you sent)
+        // For other threads, use the LATEST message
+        const isSentThread = labelIds.includes('SENT');
+        const targetMessage = isSentThread 
+          ? threadData.result.messages[0]  // First message for sent
+          : threadData.result.messages[threadData.result.messages.length - 1];  // Latest for others
+        const msg = { result: targetMessage };
+        
+        // Check if ANY message in the thread has UNREAD label (for proper unread status)
+        const hasUnreadInThread = threadData.result.messages.some((m: any) => 
+          m.labelIds?.includes('UNREAD')
+        );
 
         if (!msg.result || !msg.result.payload) continue;
         const payload = msg.result.payload;
@@ -789,25 +815,28 @@ const getEmailsByLabelIds = async (
         let preview = msg.result.snippet || '';
         let body = preview;
 
+        // Use thread.id as the primary ID to avoid duplicates when displaying threads
+        // This ensures each conversation appears only once in the list
         emails.push({
-          id: message.id,
+          id: thread.id,  // Use thread ID as primary identifier
           from: { name: fromName, email: fromEmail },
           to: [{ name: toName, email: toEmail }],
           subject: subject,
           body: body,
           preview: preview,
-          isRead: !msg.result.labelIds?.includes('UNREAD'),
-          isImportant: msg.result.labelIds?.includes('IMPORTANT'),
-          isStarred: msg.result.labelIds?.includes('STARRED'),
+          isRead: !hasUnreadInThread,  // Check thread-level unread status
+          isImportant: targetMessage.labelIds?.includes('IMPORTANT'),
+          isStarred: targetMessage.labelIds?.includes('STARRED'),
           date: format(new Date(dateHeader), "yyyy-MM-dd'T'HH:mm:ss"),
-          labelIds: msg.result.labelIds || [],
+          labelIds: targetMessage.labelIds || [],
           attachments: undefined,
-          threadId: msg.result.threadId
+          threadId: thread.id,
+          internalDate: targetMessage.internalDate
         } as Email);
 
         await new Promise(resolve => setTimeout(resolve, 25));
-      } catch (messageError) {
-        console.warn(`Failed to fetch message ${message.id}:`, messageError);
+      } catch (threadError) {
+        console.warn(`Failed to fetch thread ${thread.id}:`, threadError);
       }
     }
 
