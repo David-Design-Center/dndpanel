@@ -192,12 +192,8 @@ export const fetchGmailMessages = async (
       throw new Error('Not signed in to Gmail');
     }
 
-    // If fetching inbox, exclude emails with user labels (they should only appear in their folders)
-    // Use Gmail's has:nouserlabels operator to show only unlabeled emails in inbox
-    let finalQuery = query;
-    if (query.includes('in:inbox') && !query.includes('has:nouserlabels')) {
-      finalQuery = query.replace('in:inbox', 'in:inbox has:nouserlabels');
-    }
+    // Use query as-is - thread-level filtering is applied client-side
+    const finalQuery = query;
 
     const requestParams: any = {
       userId: 'me',
@@ -222,22 +218,54 @@ export const fetchGmailMessages = async (
       };
     }
 
+    // Import thread filtering utility
+    const { threadBelongsInInbox } = await import('../../../utils/threadLabelFilter');
+    const isInboxQuery = finalQuery.includes('in:inbox');
+    const hasServerSideFilter = finalQuery.includes('-has:userlabels');
+
     const emails: Email[] = [];
     
     // Fetch thread details (latest message from each thread)
     for (const thread of response.result.threads) {
       if (!thread.id) continue;
 
-      try {
-        // Get thread with latest message metadata
-        const threadData = await threadsApi.get({
-          userId: 'me',
-          id: thread.id,
-          format: 'metadata',
-          metadataHeaders: ['Subject', 'From', 'To', 'Date']
-        });
+      let threadData;
+      let retryCount = 0;
+      const MAX_RETRIES = 1;
+      
+      // Retry logic for failed thread fetches
+      while (retryCount <= MAX_RETRIES) {
+        try {
+          // Get thread with latest message metadata
+          threadData = await threadsApi.get({
+            userId: 'me',
+            id: thread.id,
+            format: 'metadata',
+            metadataHeaders: ['Subject', 'From', 'To', 'Date']
+          });
+          break; // Success
+        } catch (error) {
+          retryCount++;
+          if (retryCount > MAX_RETRIES) {
+            console.error(`❌ Failed to fetch thread ${thread.id} after retries:`, error);
+            break;
+          }
+          console.warn(`⚠️ Retry ${retryCount}/${MAX_RETRIES} for thread ${thread.id}`);
+          await new Promise(resolve => setTimeout(resolve, 100 * retryCount));
+        }
+      }
+      
+      if (!threadData) continue;
 
+      try {
         const messages = threadData.result.messages || [];
+        if (messages.length === 0) continue;
+
+        // THREAD-LEVEL FILTERING: For inbox queries, use centralized filter
+        // Skip filtering if server-side filter is already applied via -has:userlabels
+        if (isInboxQuery && !hasServerSideFilter && !threadBelongsInInbox(messages)) {
+          continue; // Skip this thread
+        }
         if (messages.length === 0) continue;
 
         // Get the latest message in the thread

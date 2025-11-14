@@ -70,6 +70,78 @@ async function dedupeRequest<T>(
 }
 
 /**
+ * Optimized threads.list using query string for inbox (with thread-level filtering)
+ * FIXED: Now implements pagination loop to collect TARGET_COUNT unlabeled threads
+ */
+async function fetchThreadsByQuery(
+  query: string,
+  targetCount: number = 100,
+  filterInbox: boolean = false
+): Promise<PaginatedEmailResponse> {
+  const key = generateRequestKey('threads-by-query', {
+    query,
+    targetCount
+  });
+
+  return dedupeRequest(key, async () => {
+    const emails: Email[] = [];
+    let currentPageToken: string | undefined = undefined;
+    const MAX_API_CALLS = 5; // Safety limit
+    let apiCallCount = 0;
+    
+    console.log(`📧 Optimized fetch with pagination: query="${query}", target=${targetCount}, filter=${filterInbox}`);
+    
+    const threadsApi = (window.gapi.client.gmail.users as any).threads;
+    
+    // PAGINATION LOOP: Continue until we have enough threads or run out of pages
+    while (emails.length < targetCount && apiCallCount < MAX_API_CALLS) {
+      apiCallCount++;
+      
+      const params: any = {
+        userId: 'me',
+        q: query,
+        maxResults: 50, // Fetch more per page since filtering removes many
+      };
+      
+      if (currentPageToken) {
+        params.pageToken = currentPageToken;
+      }
+      
+      const response = await gapiCallWithRecovery(
+        () => threadsApi.list(params),
+        `threads.list with query="${query}"`
+      );
+      
+      if (!response.result.threads || response.result.threads.length === 0) {
+        console.log(`📭 No more threads available (API call ${apiCallCount})`);
+        break;
+      }
+
+      // Fetch thread metadata with filtering
+      const pageEmails = await fetchThreadsMetadataBatch(response.result.threads, filterInbox);
+      emails.push(...pageEmails);
+      
+      console.log(`📊 API call ${apiCallCount}: Collected ${pageEmails.length} threads, total: ${emails.length}/${targetCount}`);
+      
+      currentPageToken = response.result.nextPageToken;
+      
+      // Stop if no more pages or we have enough
+      if (!currentPageToken || emails.length >= targetCount) {
+        break;
+      }
+    }
+    
+    console.log(`✅ Pagination complete: ${emails.length} threads in ${apiCallCount} API calls`);
+    
+    return {
+      emails,
+      nextPageToken: currentPageToken,
+      resultSizeEstimate: emails.length
+    };
+  });
+}
+
+/**
  * Optimized messages.list using labelIds instead of query strings
  */
 async function fetchMessagesByLabelIds(
@@ -95,8 +167,14 @@ async function fetchMessagesByLabelIds(
       // Use minimal fields for better performance
       fields: 'messages(id,threadId),nextPageToken,resultSizeEstimate'
     };
-
-    console.log(`📧 Optimized fetch: labelIds=[${labelIds.join(',')}], maxResults=${maxResults}`);
+    
+    // For INBOX, exclude emails with user labels
+    if (labelIds.includes('INBOX')) {
+      params.q = 'has:nouserlabels';
+      console.log(`📧 Optimized fetch: labelIds=[${labelIds.join(',')}], maxResults=${maxResults}, query=has:nouserlabels`);
+    } else {
+      console.log(`📧 Optimized fetch: labelIds=[${labelIds.join(',')}], maxResults=${maxResults}`);
+    }
     
     const response = await gapiCallWithRecovery(
       () => window.gapi.client.gmail.users.messages.list(params),
@@ -276,6 +354,123 @@ async function fetchMessageMetadataBatch(messageList: any[]): Promise<Email[]> {
 }
 
 /**
+ * Fetch thread metadata with thread-level label filtering
+ * For inbox, checks ALL messages in each thread to ensure no user labels exist
+ * FIXED: Added retry logic for failed thread fetches
+ */
+async function fetchThreadsMetadataBatch(threadList: any[], filterInbox: boolean = false): Promise<Email[]> {
+  if (threadList.length === 0) return [];
+  
+  const { threadBelongsInInbox } = await import('../utils/threadLabelFilter');
+  const emails: Email[] = [];
+  
+  console.log(`📦 Fetching ${threadList.length} threads with metadata...`);
+  const startTime = Date.now();
+  
+  const threadsApi = (window.gapi.client.gmail.users as any).threads;
+  
+  for (const thread of threadList) {
+    if (!thread.id) continue;
+    
+    let threadData;
+    let retryCount = 0;
+    const MAX_RETRIES = 1;
+    
+    // Retry logic for failed fetches
+    while (retryCount <= MAX_RETRIES) {
+      try {
+        // Get full thread with all messages
+        threadData = await threadsApi.get({
+          userId: 'me',
+          id: thread.id,
+          format: 'metadata',
+          metadataHeaders: ['Subject', 'From', 'To', 'Date']
+        });
+        break; // Success
+      } catch (error) {
+        retryCount++;
+        if (retryCount > MAX_RETRIES) {
+          console.error(`❌ Failed to fetch thread ${thread.id} after ${MAX_RETRIES} retries:`, error);
+          continue; // Skip this thread after retries exhausted
+        }
+        console.warn(`⚠️ Retry ${retryCount}/${MAX_RETRIES} for thread ${thread.id}`);
+        await new Promise(resolve => setTimeout(resolve, 100 * retryCount)); // Backoff
+      }
+    }
+    
+    if (!threadData) continue;
+    
+    try {
+      const messages = threadData.result.messages || [];
+      if (messages.length === 0) continue;
+      
+      // Apply thread-level filtering for inbox using centralized function
+      if (filterInbox && !threadBelongsInInbox(messages)) {
+        continue; // Skip this thread
+      }
+      
+      // Use latest message for display
+      const latestMessage = messages[messages.length - 1];
+      
+      // Import parsing utilities
+      const { 
+        getHeaderValue,
+        decodeRfc2047,
+        parseEmailAddresses 
+      } = await import('../integrations/gmail');
+      const { decodeHtmlEntities } = await import('../integrations/gmail/parsing/charset');
+      const { format: formatDate } = await import('date-fns');
+      
+      const payload = latestMessage.payload as any;
+      const headers = payload.headers || [];
+      
+      const subject = decodeRfc2047(getHeaderValue(headers, 'subject') || 'No Subject');
+      const fromHeader = decodeRfc2047(getHeaderValue(headers, 'from') || '');
+      const toHeader = decodeRfc2047(getHeaderValue(headers, 'to') || '');
+      const dateHeader = getHeaderValue(headers, 'date') || new Date().toISOString();
+      
+      const fromAddresses = parseEmailAddresses(fromHeader);
+      const fromEmail = fromAddresses[0]?.email || fromHeader;
+      const fromName = fromAddresses[0]?.name || fromHeader;
+      
+      const toAddresses = parseEmailAddresses(toHeader);
+      const toEmail = toAddresses[0]?.email || toHeader;
+      const toName = toAddresses[0]?.name || toHeader;
+      
+      const snippet = latestMessage.snippet ? decodeHtmlEntities(latestMessage.snippet) : '';
+      const labelIds = latestMessage.labelIds || [];
+      const isRead = !labelIds.includes('UNREAD');
+      const isImportant = labelIds.includes('IMPORTANT');
+      const isStarred = labelIds.includes('STARRED');
+      
+      emails.push({
+        id: latestMessage.id,
+        from: { name: fromName, email: fromEmail },
+        to: [{ name: toName, email: toEmail }],
+        subject,
+        body: '',
+        preview: snippet,
+        isRead,
+        isImportant,
+        isStarred,
+        date: formatDate(new Date(dateHeader), "yyyy-MM-dd'T'HH:mm:ss"),
+        internalDate: latestMessage.internalDate,
+        labelIds,
+        threadId: thread.id
+      } as any);
+      
+    } catch (error) {
+      console.error(`❌ Failed to process thread ${thread.id}:`, error);
+    }
+  }
+  
+  const totalTime = Date.now() - startTime;
+  console.log(`✅ Fetched ${emails.length} threads in ${totalTime}ms`);
+  
+  return emails;
+}
+
+/**
  * Cached labels fetch with session storage
  */
 async function fetchLabelsOptimized(): Promise<GmailLabel[]> {
@@ -339,14 +534,16 @@ export async function loadCriticalInboxData(): Promise<CriticalInboxData> {
   
   try {
     // Single fetch: Get complete inbox with proper metadata
-    console.log(`📧 Fetching ${INBOX_SIZE} inbox emails with complete metadata...`);
+    // Use threads.list with -has:userlabels to exclude labeled emails server-side
+    console.log(`📧 Fetching ${INBOX_SIZE} inbox threads with complete metadata...`);
     
-    const inboxResponse = await fetchMessagesByLabelIds(
-      [GMAIL_SYSTEM_LABELS.INBOX], 
-      INBOX_SIZE
+    const inboxResponse = await fetchThreadsByQuery(
+      'in:inbox -has:userlabels', 
+      INBOX_SIZE,
+      false // Server-side filtering via query, no need for client-side filtering
     );
     
-    // fetchMessagesByLabelIds already includes metadata - no need to fetch again!
+    // fetchMessagesByQuery already includes metadata - no need to fetch again!
     const allEmails = inboxResponse.emails || [];
     
     console.log(`✅ Loaded ${allEmails.length} inbox emails with complete data`);

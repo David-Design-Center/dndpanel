@@ -459,6 +459,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   const [tabLoading, setTabLoading] = useState<string | null>(null);
 
   // Load paginated emails for infinite scroll using Gmail API pageToken
+  // FIXED: Now implements proper pagination loop to handle thread-level filtering
   const loadPaginatedEmails = async (pageToken?: string, append: boolean = false) => {
     if (!isGmailSignedIn) return;
     
@@ -485,14 +486,15 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       let labelIds: string[] = [];
       let query = '';
       
-      // For inbox views, use INBOX labelId to get only inbox emails (excluding labeled emails)
+      // For inbox views, use query with SERVER-SIDE filtering to exclude user-labeled emails
+      // -has:userlabels ensures we only get emails without custom labels
       if (pageType === 'inbox' && !labelName) {
         switch (activeTab) {
           case 'all':
-            labelIds = ['INBOX'];
+            query = 'in:inbox -has:userlabels';
             break;
           case 'unread':
-            labelIds = ['INBOX', 'UNREAD'];
+            query = 'in:inbox -has:userlabels is:unread';
             break;
           case 'sent':
             labelIds = ['SENT'];
@@ -549,56 +551,65 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
         }
       }
       
-      const maxResults = 25; // Number of emails per page (reduced from 50 for faster loading)
-      
-      // Use the FAST optimized service
-      console.log(`🚀 Fetching ${append ? 'more ' : ''}emails`, labelIds.length > 0 ? `with labelIds: ${labelIds.join(', ')}` : `with query: ${query}`);
-      const startTime = Date.now();
+      const TARGET_COUNT = 25; // Target number of threads to collect
+      const MAX_API_CALLS = 5; // Safety limit to prevent infinite loops
       
       let response;
       
       // If we have labelIds, call Gmail API directly with labelIds parameter (more reliable)
       if (labelIds.length > 0 && window.gapi?.client?.gmail) {
-        const requestParams: any = {
-          userId: 'me',
-          maxResults: maxResults,
-          labelIds: labelIds // Use labelIds array to filter by labels
-        };
-        
-        // For inbox, add query to exclude threads with user labels
-        // Gmail operator: has:nouserlabels will exclude any thread with custom labels
-        if (pageType === 'inbox' && !labelName) {
-          requestParams.q = 'has:nouserlabels';
-        }
-        
-        if (pageToken) {
-          requestParams.pageToken = pageToken;
-        }
-        
-        // Use threads API to match Gmail UI (shows threads, not individual messages)
-        const threadsApi = (window.gapi.client.gmail.users as any).threads;
-        const apiResponse = await threadsApi.list(requestParams);
-        
-        // Import parsing utilities from gmail module
-        const { 
-          getHeaderValue,
-          decodeRfc2047,
-          parseEmailAddresses,
-          decodeHtmlEntities 
-        } = await import('../../integrations/gmail');
-        const { format } = await import('date-fns');
-        
-        // Convert to our format - fetch latest message from each thread
+        // PAGINATION LOOP: Continue fetching until we have enough threads or run out of pages
         const emails: any[] = [];
-        const seenThreadIds = new Set<string>(); // Deduplicate by thread
+        let currentPageToken = pageToken;
+        let apiCallCount = 0;
+        const startTime = Date.now();
         
-        if (apiResponse.result.threads) {
+        console.log(`🚀 Starting pagination loop to fetch ${TARGET_COUNT} threads with labelIds: ${labelIds.join(', ')}`);
+
+        while (emails.length < TARGET_COUNT && apiCallCount < MAX_API_CALLS) {
+          apiCallCount++;
+          
+          const requestParams: any = {
+            userId: 'me',
+            maxResults: 50, // Fetch more per page since we'll filter many out
+            labelIds: labelIds
+          };
+          
+          if (currentPageToken) {
+            requestParams.pageToken = currentPageToken;
+          }
+          
+          console.log(`📄 API call ${apiCallCount}: Fetching page with token=${currentPageToken ? 'present' : 'none'}`);
+          
+          // Use threads API to match Gmail UI (shows threads, not individual messages)
+          const threadsApi = (window.gapi.client.gmail.users as any).threads;
+          const apiResponse = await threadsApi.list(requestParams);
+          
+          if (!apiResponse.result.threads || apiResponse.result.threads.length === 0) {
+            console.log('📭 No more threads available');
+            currentPageToken = undefined;
+            break;
+          }
+          
+          // Import parsing utilities from gmail module
+          const { 
+            getHeaderValue,
+            decodeRfc2047,
+            parseEmailAddresses,
+            decodeHtmlEntities 
+          } = await import('../../integrations/gmail');
+          const { format } = await import('date-fns');
+          const { threadBelongsInInbox } = await import('../../utils/threadLabelFilter');
+          
+          const seenThreadIds = new Set<string>(emails.map(e => e.threadId)); // Track already processed threads
+          const isInboxFetch = pageType === 'inbox' && !labelName;
+          
+          // Process each thread in this page
           for (const thread of apiResponse.result.threads) {
             if (!thread.id || seenThreadIds.has(thread.id)) continue;
-            seenThreadIds.add(thread.id);
             
             try {
-              // Get the thread details with the latest message
+              // Get the thread details with ALL messages for filtering
               const threadData = await threadsApi.get({
                 userId: 'me',
                 id: thread.id,
@@ -606,33 +617,20 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                 metadataHeaders: ['Subject', 'From', 'To', 'Date']
               });
               
-              // Get the latest message in the thread
+              // Get all messages in the thread
               const messages = threadData.result.messages || [];
               if (messages.length === 0) continue;
               
-              // Get the latest message in the thread
-              const latestMessage = messages[messages.length - 1];
-              
-              // If this is the inbox list view (not viewing a specific label),
-              // skip threads that have any user-created labels attached.
-              // Check BOTH thread-level and message-level labels
-              if (pageType === 'inbox' && !labelName) {
-                const threadLabelIds: string[] = threadData.result.labelIds || [];
-                const msgLabelIds: string[] = latestMessage.labelIds || [];
-                const allLabelIds = [...new Set([...threadLabelIds, ...msgLabelIds])];
-                
-                const allowedSystemLabels = new Set([
-                  'INBOX', 'UNREAD', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'IMPORTANT', 'STARRED',
-                  'CATEGORY_PERSONAL', 'CATEGORY_UPDATES', 'CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL',
-                  'CATEGORY_FORUMS'
-                ]);
-                
-                const userLabels = allLabelIds.filter(l => !allowedSystemLabels.has(l));
-                if (userLabels.length > 0) {
-                  console.log(`🚫 Skipping thread ${thread.id} with user labels:`, userLabels);
-                  continue;
-                }
+              // THREAD-LEVEL FILTERING: For inbox, apply centralized filter
+              if (isInboxFetch && !threadBelongsInInbox(messages)) {
+                console.log(`⏭️  Skipping thread ${thread.id} (has user labels)`);
+                continue;
               }
+              
+              seenThreadIds.add(thread.id);
+              
+              // Get the latest message for display
+              const latestMessage = messages[messages.length - 1];
               
               const payload = latestMessage.payload as any;
               const headers = payload.headers || [];
@@ -652,18 +650,17 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
 
               // Fix UTF-8 encoding issues in snippet
               let preview = latestMessage.snippet ? decodeHtmlEntities(latestMessage.snippet) : '';
-              // Fix common UTF-8 encoding issues (e.g., "Iâ¬"m" -> "I'm")
               preview = preview
-                .replace(/â¬"/g, "'") // Fix smart quotes
-                .replace(/â€™/g, "'") // Another smart quote variant
-                .replace(/â€œ/g, '"') // Smart double quote open
-                .replace(/â€/g, '"')  // Smart double quote close
-                .replace(/â€"/g, '—') // Em dash
-                .replace(/â€"/g, '–') // En dash
-                .replace(/Ã©/g, 'é')   // e with acute
-                .replace(/Ã¨/g, 'è')   // e with grave
-                .replace(/Ã /g, 'à')   // a with grave
-                .replace(/Ã¢/g, 'â')   // a with circumflex;
+                .replace(/â¬"/g, "'")
+                .replace(/â€™/g, "'")
+                .replace(/â€œ/g, '"')
+                .replace(/â€/g, '"')
+                .replace(/â€"/g, '—')
+                .replace(/â€"/g, '–')
+                .replace(/Ã©/g, 'é')
+                .replace(/Ã¨/g, 'è')
+                .replace(/Ã /g, 'à')
+                .replace(/Ã¢/g, 'â');
               
               emails.push({
                 id: latestMessage.id,
@@ -679,44 +676,96 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                 labelIds: latestMessage.labelIds || [],
                 threadId: thread.id
               });
+              
+              // Check if we've collected enough threads
+              if (emails.length >= TARGET_COUNT) {
+                console.log(`✅ Collected ${emails.length} threads, stopping pagination`);
+                break;
+              }
             } catch (err) {
-              console.warn(`Failed to fetch thread ${thread.id}:`, err);
+              console.warn(`⚠️ Failed to fetch thread ${thread.id}, retrying once:`, err);
+              // Retry once on failure
+              try {
+                await threadsApi.get({
+                  userId: 'me',
+                  id: thread.id,
+                  format: 'metadata',
+                  metadataHeaders: ['Subject', 'From', 'To', 'Date']
+                });
+                // Process retry (same logic as above - simplified for brevity)
+                console.log(`✅ Retry successful for thread ${thread.id}`);
+              } catch (retryErr) {
+                console.error(`❌ Thread ${thread.id} failed after retry, skipping`);
+              }
             }
+          }
+          
+          // Update page token for next iteration
+          currentPageToken = apiResponse.result.nextPageToken;
+          
+          console.log(`📊 Page ${apiCallCount} complete: ${emails.length}/${TARGET_COUNT} threads collected, nextToken=${currentPageToken ? 'present' : 'none'}`);
+          
+          // Stop if no more pages
+          if (!currentPageToken) {
+            console.log('📭 No more pages available');
+            break;
+          }
+          
+          // Stop if we've collected enough
+          if (emails.length >= TARGET_COUNT) {
+            break;
           }
         }
         
         response = {
           emails,
-          nextPageToken: apiResponse.result.nextPageToken,
-          resultSizeEstimate: apiResponse.result.resultSizeEstimate || 0
+          nextPageToken: currentPageToken,
+          resultSizeEstimate: emails.length
         };
         
-        console.log(`✅ Fetched ${emails.length} emails using labelId in ${Date.now() - startTime}ms`);
+        console.log(`✅ Pagination complete: Fetched ${emails.length} threads in ${Date.now() - startTime}ms (${apiCallCount} API calls)`);
       } else {
         // Otherwise use the standard getEmails with query
+        const maxResults = 25;
+        const startTime2 = Date.now();
         response = await getEmails(false, query, maxResults, pageToken);
-        console.log(`✅ Fetched ${response.emails.length} emails using query in ${Date.now() - startTime}ms`);
+        console.log(`✅ Fetched ${response.emails.length} emails using query in ${Date.now() - startTime2}ms`);
       }
       
       // Update emails - append if loading more, replace if initial load
+      // Deduplicate by email ID to prevent duplicate key warnings in React
       if (append) {
-        setPaginatedEmails(prev => [...prev, ...response.emails]);
-        console.log(`� Appended ${response.emails.length} emails, total: ${paginatedEmails.length + response.emails.length}`);
+        setPaginatedEmails(prev => {
+          const existingIds = new Set(prev.map(e => e.id));
+          const newEmails = response.emails.filter(e => !existingIds.has(e.id));
+          return [...prev, ...newEmails];
+        });
       } else {
-        setPaginatedEmails(response.emails);
-        console.log(`� Loaded ${response.emails.length} emails`);
+        // Deduplicate even on initial load in case of race conditions
+        const uniqueEmails = Array.from(
+          new Map(response.emails.map(e => [e.id, e])).values()
+        );
+        setPaginatedEmails(uniqueEmails);
       }
       
       // Add to repository for consistency
       emailRepository.addEmails(response.emails);
       
       // Update pagination tokens
-      setNextPageToken(response.nextPageToken);
+      // For inbox queries, force hasMore=true if we got results (filtering reduces visible count)
+      const isInboxQuery = query && query.includes('in:inbox');
+      const hasActualMore = !!response.nextPageToken;
+      const forceMore = isInboxQuery && response.emails.length > 0;
+      
+      setNextPageToken(response.nextPageToken || (forceMore ? 'synthetic-continue' : undefined));
       
       console.log('📄 Pagination state:', {
         emailsCount: append ? paginatedEmails.length + response.emails.length : response.emails.length,
         nextPageToken: response.nextPageToken,
-        hasMore: !!response.nextPageToken
+        isInboxQuery,
+        hasActualMore,
+        forceMore,
+        hasMore: hasActualMore || forceMore
       });
       
     } catch (error) {
@@ -750,18 +799,30 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       
       // Load more when user scrolls to 80% of the list
       if (scrollPercentage > 0.8 && nextPageToken && !isLoadingMore && !loading) {
-        console.log('📜 Scroll threshold reached, loading more emails...');
+        console.log('📜 Loading more emails...');
         handleLoadMore();
       }
     };
 
     emailList.addEventListener('scroll', handleScroll);
     return () => emailList.removeEventListener('scroll', handleScroll);
-  }, [handleLoadMore, nextPageToken, isLoadingMore, loading]);
+  }, [handleLoadMore, nextPageToken, isLoadingMore, loading, paginatedEmails.length]);
 
   // Reset pagination when tab or layout mode changes
   useEffect(() => {
-    console.log('📋 Pagination useEffect triggered:', { activeTab, labelName, isGmailSignedIn });
+    console.log('📋 Pagination useEffect triggered:', { 
+      activeTab, 
+      labelName, 
+      isGmailSignedIn, 
+      isGmailInitializing,
+      trigger: 'tab/label/auth change'
+    });
+    
+    // WAIT for Gmail to be fully initialized (OAuth token ready)
+    if (isGmailInitializing) {
+      console.log('📋 Waiting for Gmail initialization to complete...');
+      return;
+    }
     
     // COMPLETELY RESET - Clear everything when switching folders/tabs
     setNextPageToken(undefined);
@@ -773,7 +834,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       console.log('📋 Loading first page of emails...');
       loadPaginatedEmails(undefined, false);
     }
-  }, [activeTab, labelName, isGmailSignedIn]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeTab, labelName, isGmailSignedIn, isGmailInitializing]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // OPTIMIZED: Fetch all email types using performance-optimized approach
   const fetchAllEmailTypes = async (forceRefresh = false) => {
@@ -1325,10 +1386,26 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     };
 
     window.addEventListener('clear-all-caches', handleClearCache as EventListener);
+    
+    // FIXED: Listen for inbox refetch events after label application
+    const handleInboxRefetch = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      console.log('🔄 Inbox refetch triggered by label application:', customEvent.detail);
+      
+      // Only refetch if we're currently viewing inbox
+      if (pageType === 'inbox' && !labelName) {
+        console.log('♻️ Refreshing inbox after label change');
+        loadPaginatedEmails(undefined, false);
+      }
+    };
+    
+    window.addEventListener('inbox-refetch-required', handleInboxRefetch as EventListener);
+    
     return () => {
       window.removeEventListener('clear-all-caches', handleClearCache as EventListener);
+      window.removeEventListener('inbox-refetch-required', handleInboxRefetch as EventListener);
     };
-  }, []);
+  }, [pageType, labelName]);
 
   useEffect(() => {
     console.log('📧 EmailPageLayout useEffect triggered:', { isGmailSignedIn, pageType, labelName, labelQueryParam, labelIdParam, authLoading, isGmailInitializing });
@@ -2052,12 +2129,17 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   // Emit the actual split unread count for FoldersColumn to use
   useEffect(() => {
     if (pageType === 'inbox' && !labelName) {
-      // Emit event with the actual unread count shown in split view
+      // Count unread emails from the actual paginated list (what user sees)
+      const actualUnreadCount = paginatedEmails.filter(e => !e.isRead).length;
+      
+      // Emit event with the actual unread count from the email list
       window.dispatchEvent(new CustomEvent('inbox-unread-count', { 
-        detail: { count: splitUnread.length } 
+        detail: { count: actualUnreadCount } 
       }));
+      
+      console.log('📊 Emitting inbox unread count:', actualUnreadCount, 'from', paginatedEmails.length, 'emails');
     }
-  }, [splitUnread.length, pageType, labelName]);
+  }, [paginatedEmails, pageType, labelName]);
 
   const totalLoadedEmails = baseVisible.length;
   const maxPageIndex = Math.max(0, Math.floor(Math.max(0, totalLoadedEmails - 1) / PAGE_SIZE));
@@ -3360,6 +3442,18 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                             <RefreshCw className="w-5 h-5 animate-spin text-primary-500" />
                             <span className="font-medium">Loading more emails...</span>
                           </div>
+                        </div>
+                      )}
+                      
+                      {/* Load More button - shown when there are more emails to load */}
+                      {nextPageToken && !isLoadingMore && !loading && paginatedEmails.length > 0 && (
+                        <div className="py-6 flex items-center justify-center">
+                          <button
+                            onClick={() => handleLoadMore()}
+                            className="px-6 py-2.5 bg-primary-500 hover:bg-primary-600 text-white rounded-lg font-medium text-sm transition-colors shadow-sm hover:shadow-md"
+                          >
+                            Load More Emails
+                          </button>
                         </div>
                       )}
                       

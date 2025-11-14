@@ -19,7 +19,8 @@ import {
   SquarePen,
   Flag,
   Star,
-  MailPlus
+  MailPlus,
+  RefreshCw
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -85,7 +86,7 @@ interface FoldersColumnProps {
 }
 
 function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) {
-  const { labels, loadingLabels, deleteLabel, addLabel, isAddingLabel, systemCounts, recentCounts } = useLabel();
+  const { labels, loadingLabels, deleteLabel, addLabel, isAddingLabel, systemCounts, recentCounts, refreshLabels } = useLabel();
   // recentCounts.inboxUnreadToday -> unread INBOX messages received since today's New York midnight
   // recentCounts.draftTotal -> total number of drafts (exact)
   const { onSystemFolderFilter } = useFoldersColumn();
@@ -97,9 +98,14 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
   const [parentLabel, setParentLabel] = useState('');
   const [nestUnder, setNestUnder] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [isRefreshing, setIsRefreshing] = useState(false);
   // Highlight selected system folder (visual state only)
   // Default to 'inbox' so the Inbox button starts in an active/disabled state
   const [selectedSystemFolder, setSelectedSystemFolder] = useState<string | null>('inbox');
+  
+  // Listen for actual inbox unread count from the email list
+  const [inboxUnreadFromList, setInboxUnreadFromList] = useState<number | null>(null);
+  
   const navigate = useNavigate();
 
   // Build hierarchical tree structure from flat labels
@@ -310,16 +316,26 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
       
       const systemLabelId = systemLabelIdMap[folder.name];
       if (systemLabelId) {
-        // Use system counts directly from Gmail labels
-        const systemCount = systemCounts[systemLabelId];
-        const fallbackCount = matchingLabel?.messagesUnread ?? 0;
-        unreadCount = systemCount ?? fallbackCount;
-        overLimit = unreadCount > 99;
+        // Special case for Inbox: use count from email list (single source of truth)
+        if (folder.name === 'Inbox' && inboxUnreadFromList !== null) {
+          unreadCount = inboxUnreadFromList;
+          overLimit = inboxUnreadFromList > 99;
+        } else if (folder.name === 'Inbox') {
+          // Fallback to recentCounts if list count not available yet
+          unreadCount = recentCounts.inboxUnreadToday ?? 0;
+          overLimit = recentCounts.inboxUnreadOverLimit;
+        } else {
+          // Use system counts directly from Gmail labels for other folders
+          const systemCount = systemCounts[systemLabelId];
+          const fallbackCount = matchingLabel?.messagesUnread ?? 0;
+          unreadCount = systemCount ?? fallbackCount;
+          overLimit = unreadCount > 99;
+        }
       }
 
       // Debug logging
       if (folder.name === 'Inbox') {
-        console.log('Inbox unread count:', unreadCount, 'systemCounts:', systemCounts);
+        console.log('Inbox unread count:', unreadCount, 'from email list:', inboxUnreadFromList, 'fallback:', recentCounts.inboxUnreadToday);
       }
 
       return {
@@ -332,7 +348,22 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
         color: selectedSystemFolder === folder.folderType ? '#272727ff' : '#4d4d4dff'
       };
     });
-  }, [labels, systemCounts, selectedSystemFolder, recentCounts]);
+  }, [labels, systemCounts, selectedSystemFolder, recentCounts, inboxUnreadFromList]);
+
+  // Listen for actual inbox unread count from email list (single source of truth)
+  useEffect(() => {
+    const handleInboxUnreadCount = (event: Event) => {
+      const customEvent = event as CustomEvent<{ count: number }>;
+      setInboxUnreadFromList(customEvent.detail.count);
+      console.log('📊 FoldersColumn received inbox unread count from list:', customEvent.detail.count);
+    };
+
+    window.addEventListener('inbox-unread-count', handleInboxUnreadCount as EventListener);
+    
+    return () => {
+      window.removeEventListener('inbox-unread-count', handleInboxUnreadCount as EventListener);
+    };
+  }, []);
 
   // (Removed explicit refresh effect to avoid duplicate rapid refresh loops; context handles initial load)
 
@@ -354,6 +385,27 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
       setExpandedFolders(new Set(allFolderPaths));
     }
   }, [labelTree]);
+
+  // Listen for label refresh requests when emails are labeled
+  useEffect(() => {
+    const handleLabelsNeedRefresh = async (event: Event) => {
+      const customEvent = event as CustomEvent;
+      console.log('🔄 Labels need refresh after email labeling:', customEvent.detail);
+      
+      // Force refresh labels to update counters (bypass cache)
+      try {
+        await refreshLabels(true);
+      } catch (error) {
+        console.error('Failed to refresh labels after email labeling:', error);
+      }
+    };
+
+    window.addEventListener('labels-need-refresh', handleLabelsNeedRefresh as EventListener);
+    
+    return () => {
+      window.removeEventListener('labels-need-refresh', handleLabelsNeedRefresh as EventListener);
+    };
+  }, [refreshLabels]);
 
   // Filter tree based on search term
   const filteredTree = useMemo(() => {
@@ -625,6 +677,26 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
     }
   };
 
+  const handleRefreshLabels = async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshLabels(true); // Force refresh to bypass cache
+      toast({
+        title: "Labels Refreshed",
+        description: "Successfully refreshed all labels",
+      });
+    } catch (error) {
+      console.error('Failed to refresh labels:', error);
+      toast({
+        title: "Error",
+        description: "Failed to refresh labels. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   return (
     <div className={`h-full bg-muted/30 border-r-1 border-gray-400 overflow-hidden relative ${!isGmailSignedIn ? 'blur-sm' : ''}`}>
       {/* Overlay for non-authenticated state */}
@@ -774,17 +846,27 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
                     placeholder=""
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-8 pr-12 text-xs h-8 border-gray-400"
+                    className="pl-8 pr-20 text-xs h-8 border-gray-400"
                   />
                   {searchTerm ? (
                     <button
                       onClick={() => setSearchTerm('')}
-                      className="absolute right-9 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      className="absolute right-16 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
                       title="Clear search"
                     >
                       <X size={14} />
                     </button>
                   ) : null}
+                  
+                  {/* Refresh Labels Button */}
+                  <button
+                    onClick={handleRefreshLabels}
+                    disabled={isRefreshing || loadingLabels}
+                    className="absolute right-9 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded p-0.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Refresh labels"
+                  >
+                    <RefreshCw size={14} className={`text-gray-600 ${isRefreshing ? 'animate-spin' : ''}`} />
+                  </button>
                   
                   {/* Create Label Dialog */}
                   <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>

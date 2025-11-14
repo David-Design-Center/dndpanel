@@ -19,7 +19,7 @@ export function getRolling24hCutoffUnixSeconds(): number {
 export function get24hInboxQuery(includeRead = false): string {
   const cutoffSeconds = getRolling24hCutoffUnixSeconds();
   const readFilter = includeRead ? '' : ' is:unread';
-  return `label:INBOX${readFilter} after:${cutoffSeconds}`;
+  return `label:INBOX -has:userlabels${readFilter} after:${cutoffSeconds}`;
 }
 
 /**

@@ -14,7 +14,7 @@ import { subscribeLabelUpdateEvent } from '../utils/labelUpdateEvents';
 interface LabelContextType {
   labels: GmailLabel[];
   loadingLabels: boolean;
-  refreshLabels: () => Promise<void>;
+  refreshLabels: (forceRefresh?: boolean) => Promise<void>;
   clearLabelsCache: () => void;
   error: string | null;
   addLabel: (name: string) => Promise<void>;
@@ -69,11 +69,12 @@ const SYSTEM_LABEL_IDS = new Set([
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-const fetchInboxUnreadSinceCutoff = async (cutoffSeconds: number): Promise<{ count: number; overLimit: boolean; }> => {
+const fetchInboxUnreadSinceCutoff = async (_cutoffSeconds: number): Promise<{ count: number; overLimit: boolean; }> => {
   let pageToken: string | undefined;
   let total = 0;
   let overLimit = false;
-  const query = `label:INBOX is:unread after:${cutoffSeconds}`;
+  // Match the email list query exactly - no time filter, just unread inbox without user labels
+  const query = `label:INBOX -has:userlabels is:unread`;
 
   for (let page = 0; page < MAX_UNREAD_PAGES; page++) {
     const response = await window.gapi.client.gmail.users.messages.list({
@@ -507,7 +508,7 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     };
   }, [isGmailSignedIn]);
 
-  const refreshLabels = useCallback(async () => {
+  const refreshLabels = useCallback(async (forceRefresh: boolean = false) => {
     // Security check: Block all data fetches during auth flow
     if (shouldBlockDataFetches(location.pathname)) {
       return;
@@ -535,12 +536,12 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     const startProgress = () => emitLoadingProgress('labels', 'start');
     const finishProgress = (status: 'success' | 'error') => emitLoadingProgress('labels', status);
 
-    // Check cache first to prevent unnecessary API calls
+    // Check cache first to prevent unnecessary API calls (unless forceRefresh is true)
     // Use profile userEmail + ID for cache key to ensure separation between different profiles
     const cacheKey = `${currentProfile.id}-${currentProfile.userEmail || 'no-email'}`;
-    console.log('🏷️ Labels cache key:', cacheKey);
+    console.log('🏷️ Labels cache key:', cacheKey, 'forceRefresh:', forceRefresh);
     const cached = labelsCache.current[cacheKey];
-    if (cached && (Date.now() - cached.timestamp) < CACHE_DURATION) {
+    if (!forceRefresh && cached && (Date.now() - cached.timestamp) < CACHE_DURATION) {
       console.log('📦 Using cached labels for profile:', currentProfile.name);
       startProgress();
       setLabels(cached.labels);

@@ -415,7 +415,7 @@ export interface PaginatedEmailServiceResponse {
 // Service functions
 export const getEmails = async (
   forceRefresh = false,
-  query = 'in:inbox',
+  query = 'in:inbox -has:userlabels',
   maxResults = 10,
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
@@ -510,11 +510,10 @@ export const getEmails = async (
 
 // Specialized query functions
 export const getUnreadEmails = async (forceRefresh = false): Promise<Email[]> => {
-  // Use 24h filtered query to match real Gmail and folder counter
-  const { get24hInboxQuery } = await import('../lib/utils');
-  const query = get24hInboxQuery(false); // Only unread emails from last 24h
+  // Match the email list query exactly - no time filter
+  const query = 'label:INBOX -has:userlabels is:unread';
   const response = await getEmails(forceRefresh, query);
-  console.log('📧 getUnreadEmails using 24h filter:', query);
+  console.log('📧 getUnreadEmails using query:', query);
   return response.emails;
 };
 
@@ -559,9 +558,9 @@ export const getAllInboxEmails = async (
   maxResults = INBOX_FETCH_BATCH_SIZE, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
-  // Fetch recent Inbox messages regardless of age to support Everything else backfill
-  // Use labelIds for efficiency and to avoid unintended search-time filtering
-  return getEmailsByLabelIds(['INBOX'], forceRefresh, maxResults, pageToken);
+  // Fetch inbox threads with server-side filtering to exclude labeled emails
+  // Force refresh to bypass old cache without -has:userlabels filter
+  return getEmails(true, 'in:inbox -has:userlabels', maxResults, pageToken);
 };
 
 export const getSentEmails = async (
@@ -716,6 +715,7 @@ export const getAllMailEmails = async (
 };
 
 // Helper function to fetch emails by labelIds (more efficient than search queries)
+// FIXED: Added pagination loop, centralized filtering, and retry logic
 const getEmailsByLabelIds = async (
   labelIds: string[], 
   _forceRefresh = false, 
@@ -727,19 +727,28 @@ const getEmailsByLabelIds = async (
       throw new Error('Not signed in to Gmail');
     }
 
+    // Import centralized filter
+    const { threadBelongsInInbox } = await import('../utils/threadLabelFilter');
+    const isInboxFetch = labelIds.includes('INBOX');
+
+    const emails: Email[] = [];
+    let currentPageToken = pageToken;
+    const seenThreadIds = new Set<string>(); // Track thread IDs to prevent duplicates
+    
+    // Use threads.list instead of messages.list to fetch threads
+    const threadsApi = (window.gapi.client.gmail.users.threads as any);
+    
     const requestParams: any = {
       userId: 'me',
       maxResults: maxResults,
       labelIds: labelIds
     };
 
-    if (pageToken) {
-      requestParams.pageToken = pageToken;
+    if (currentPageToken) {
+      requestParams.pageToken = currentPageToken;
     }
 
-    // Use threads.list instead of messages.list to fetch threads
-    // Note: Gmail API supports threads.list but it's not in the type definitions
-    const response = await (window.gapi.client.gmail.users.threads as any).list(requestParams);
+    const response = await threadsApi.list(requestParams);
 
     if (!response.result.threads || response.result.threads.length === 0) {
       return {
@@ -748,9 +757,6 @@ const getEmailsByLabelIds = async (
         resultSizeEstimate: response.result.resultSizeEstimate || 0
       };
     }
-
-    const emails: Email[] = [];
-    const seenThreadIds = new Set<string>(); // Track thread IDs to prevent duplicates
     
     // Fetch threads sequentially to avoid rate limits
     for (const thread of response.result.threads) {
@@ -763,16 +769,41 @@ const getEmailsByLabelIds = async (
       }
       seenThreadIds.add(thread.id);
 
-      try {
-        // Fetch the full thread
-        const threadData = await window.gapi.client.gmail.users.threads.get({
-          userId: 'me',
-          id: thread.id,
-          format: 'metadata',
-          metadataHeaders: ['Subject', 'From', 'To', 'Date']
-        });
+      let threadData;
+      let retryCount = 0;
+      const MAX_RETRIES = 1;
+      
+      // Retry logic for failed thread fetches
+      while (retryCount <= MAX_RETRIES) {
+        try {
+          // Fetch the full thread
+          threadData = await window.gapi.client.gmail.users.threads.get({
+            userId: 'me',
+            id: thread.id,
+            format: 'metadata',
+            metadataHeaders: ['Subject', 'From', 'To', 'Date']
+          });
+          break; // Success
+        } catch (error) {
+          retryCount++;
+          if (retryCount > MAX_RETRIES) {
+            console.error(`❌ Failed to fetch thread ${thread.id} after retries:`, error);
+            break; // Skip this thread
+          }
+          console.warn(`⚠️ Retry ${retryCount}/${MAX_RETRIES} for thread ${thread.id}`);
+          await new Promise(resolve => setTimeout(resolve, 100 * retryCount));
+        }
+      }
+      
+      if (!threadData) continue;
 
+      try {
         if (!threadData.result || !threadData.result.messages || threadData.result.messages.length === 0) continue;
+        
+        // THREAD-LEVEL FILTERING: For inbox, use centralized filter
+        if (isInboxFetch && !threadBelongsInInbox(threadData.result.messages)) {
+          continue; // Skip this thread
+        }
         
         // For SENT threads, use the FIRST message (the one you sent)
         // For other threads, use the LATEST message
@@ -1288,6 +1319,7 @@ export const markAsUnread = async (id: string): Promise<{success: boolean}> => {
 
 /**
  * Apply labels to an email
+ * FIXED: Now triggers automatic inbox refetch to remove labeled threads from inbox view
  */
 export const applyLabelsToEmail = async (
   messageId: string,
@@ -1295,12 +1327,12 @@ export const applyLabelsToEmail = async (
   removeLabelIds: string[] = []
 ): Promise<void> => {
   try {
-    console.log(`Applying labels to email ${messageId} via email service`);
+    console.log(`Applying labels to email ${messageId}:`, { add: addLabelIds, remove: removeLabelIds });
     
     // Call the Gmail API to apply labels to the message
     await applyGmailLabels(messageId, addLabelIds, removeLabelIds);
     
-    // Invalidate the email list cache to ensure the change is reflected immediately
+    // Invalidate all caches to ensure the change is reflected immediately
     if (emailCache.list) {
       emailCache.list.timestamp = 0;
       console.log('Email list cache invalidated after label update');
@@ -1317,6 +1349,20 @@ export const applyLabelsToEmail = async (
         delete emailCache.threads[threadId];
       }
     });
+    
+    // Trigger inbox refetch if a user label was added (thread should be removed from inbox)
+    const hasUserLabelAdded = addLabelIds.length > 0 && !addLabelIds.every(id => 
+      ['INBOX', 'UNREAD', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'IMPORTANT', 'STARRED', 'CHAT'].includes(id) ||
+      id.startsWith('CATEGORY_')
+    );
+    
+    if (hasUserLabelAdded) {
+      console.log('🔄 User label applied - triggering inbox refetch');
+      // Dispatch custom event to trigger refetch in EmailPageLayout
+      window.dispatchEvent(new CustomEvent('inbox-refetch-required', { 
+        detail: { messageId, addedLabels: addLabelIds }
+      }));
+    }
     
     console.log(`Successfully applied labels to email ${messageId}`);
   } catch (error) {
