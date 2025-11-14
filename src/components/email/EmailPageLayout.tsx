@@ -161,13 +161,10 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   // Layout preference: 'list' (single column) or 'split' (unread/read sections)
   const [layoutMode] = useState<'list' | 'split'>('list');
   
-  // Gmail API pagination tokens for list view
+  // Gmail API pagination tokens for infinite scroll
   const [nextPageToken, setNextPageToken] = useState<string | undefined>(undefined);
-  const [, setPageTokenStack] = useState<string[]>([]); // Stack of previous page tokens
-  const [currentPageIndex, setCurrentPageIndex] = useState(0);
-  const [paginatedEmails, setPaginatedEmails] = useState<Email[]>([]); // Cache for paginated emails
-  const [paginatedEmailsCache, setPaginatedEmailsCache] = useState<Map<number, Email[]>>(new Map()); // Cache all pages
-  const [, setPageTokensCache] = useState<Map<number, string | undefined>>(new Map()); // Cache page tokens for each page
+  const [paginatedEmails, setPaginatedEmails] = useState<Email[]>([]); // All loaded emails for infinite scroll
+  const [isLoadingMore, setIsLoadingMore] = useState(false); // Loading more emails indicator
   
   // Wrapper function to switch view mode and clear selections
   const switchInboxViewMode = (mode: 'split' | 'unread' | 'read') => {
@@ -461,105 +458,118 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   // Track explicit tab-level loading (distinct from global optimized first paint)
   const [tabLoading, setTabLoading] = useState<string | null>(null);
 
-  // Load paginated emails for list view using Gmail API pageToken
-  const loadPaginatedEmails = async (pageToken?: string, pageIndex?: number) => {
+  // Load paginated emails for infinite scroll using Gmail API pageToken
+  const loadPaginatedEmails = async (pageToken?: string, append: boolean = false) => {
     if (!isGmailSignedIn) return;
-    
-    const targetPageIndex = pageIndex ?? currentPageIndex;
     
     console.log(`🔍 loadPaginatedEmails called:`, {
       pageToken: pageToken ? 'present' : 'none',
-      pageIndex,
-      targetPageIndex,
-      currentPageIndex,
-      cacheSize: paginatedEmailsCache.size,
-      cachedPages: Array.from(paginatedEmailsCache.keys())
+      append,
+      currentEmailsCount: paginatedEmails.length
     });
     
-    // DISABLE CACHING - Always fetch fresh to avoid email mixing issues
-    // if (paginatedEmailsCache.has(targetPageIndex)) {
-    //   console.log(`📦 Using cached emails for page ${targetPageIndex}`);
-    //   const cachedEmails = paginatedEmailsCache.get(targetPageIndex)!;
-    //   setPaginatedEmails(cachedEmails);
-    //   
-    //   // Restore the nextPageToken for this page from cache
-    //   const cachedNextToken = pageTokensCache.get(targetPageIndex);
-    //   setNextPageToken(cachedNextToken);
-    //   console.log(`📦 Restored nextPageToken from cache:`, cachedNextToken ? 'present' : 'none');
-    //   
-    //   return;
-    // }
+    // Prevent duplicate loading
+    if (append && isLoadingMore) {
+      console.log('⏳ Already loading more, skipping...');
+      return;
+    }
     
-    console.log(`🌐 Always fetching fresh from API - caching disabled`);
+    if (append) {
+      setIsLoadingMore(true);
+    } else {
+      setLoading(true);
+    }
     
-    setLoading(true);
     try {
-      // Build query based on active tab
+      // Build labelIds array and query based on active tab
+      let labelIds: string[] = [];
       let query = '';
-      switch (activeTab) {
-        case 'all':
-          query = 'in:inbox -in:sent -in:spam -in:trash';
-          break;
-        case 'unread':
-          query = 'is:unread in:inbox';
-          break;
-        case 'sent':
-          query = 'in:sent';
-          break;
-        case 'drafts':
-          query = 'in:drafts';
-          break;
-        case 'trash':
-          query = 'in:trash';
-          break;
-        case 'important':
-          query = 'is:important';
-          break;
-        case 'starred':
-          query = 'is:starred';
-          break;
-        case 'spam':
-          query = 'in:spam';
-          break;
-        case 'allmail':
-          query = ''; // All mail
-          break;
-        default:
-          query = 'in:inbox';
-      }
       
-      // Add label filter if viewing a specific label
-      if (labelName) {
-        // Use the actual label ID if available (more reliable than label name)
-        // The label ID is passed via URL params
+      // For inbox views, use INBOX labelId to get only inbox emails (excluding labeled emails)
+      if (pageType === 'inbox' && !labelName) {
+        switch (activeTab) {
+          case 'all':
+            labelIds = ['INBOX'];
+            break;
+          case 'unread':
+            labelIds = ['INBOX', 'UNREAD'];
+            break;
+          case 'sent':
+            labelIds = ['SENT'];
+            break;
+          case 'drafts':
+            labelIds = ['DRAFT'];
+            break;
+          case 'trash':
+            labelIds = ['TRASH'];
+            break;
+          case 'important':
+            labelIds = ['IMPORTANT'];
+            break;
+          case 'starred':
+            labelIds = ['STARRED'];
+            break;
+          case 'spam':
+            labelIds = ['SPAM'];
+            break;
+          case 'allmail':
+            // All mail - no label restriction
+            query = '';
+            break;
+          default:
+            labelIds = ['INBOX'];
+        }
+      } else if (labelName) {
+        // Viewing a specific custom label
         if (labelIdParam) {
-          // When we have the label ID, we'll use it directly in the API call below
-          // For now, set query to empty as we'll use labelIds parameter
-          query = ''; // We'll use labelIds parameter instead
+          labelIds = [labelIdParam];
           console.log('📧 Using label ID for filtering:', labelIdParam);
         } else {
           // Fallback: Use label name in query
-          // Gmail search syntax: label:"exact name" with quotes
           query = `label:"${labelName}"`;
           console.log('📧 Using label name for filtering:', labelName, 'Query:', query);
+        }
+      } else {
+        // Other page types (sent, drafts, trash, unread)
+        switch (pageType) {
+          case 'sent':
+            labelIds = ['SENT'];
+            break;
+          case 'drafts':
+            labelIds = ['DRAFT'];
+            break;
+          case 'trash':
+            labelIds = ['TRASH'];
+            break;
+          case 'unread':
+            labelIds = ['INBOX', 'UNREAD'];
+            break;
+          default:
+            labelIds = ['INBOX'];
         }
       }
       
       const maxResults = 25; // Number of emails per page (reduced from 50 for faster loading)
       
       // Use the FAST optimized service
-      console.log(`🚀 Fetching page ${targetPageIndex}`, labelIdParam ? `with labelId: ${labelIdParam}` : `with query: ${query}`);
+      console.log(`🚀 Fetching ${append ? 'more ' : ''}emails`, labelIds.length > 0 ? `with labelIds: ${labelIds.join(', ')}` : `with query: ${query}`);
       const startTime = Date.now();
       
       let response;
       
-      // If we have a labelId, call Gmail API directly with labelIds parameter (more reliable)
-      if (labelIdParam && window.gapi?.client?.gmail) {
+      // If we have labelIds, call Gmail API directly with labelIds parameter (more reliable)
+      if (labelIds.length > 0 && window.gapi?.client?.gmail) {
         const requestParams: any = {
           userId: 'me',
           maxResults: maxResults,
-          labelIds: [labelIdParam] // Use labelIds array instead of query
+          labelIds: labelIds // Use labelIds array to filter by labels
         };
+        
+        // For inbox, add query to exclude threads with user labels
+        // Gmail operator: has:nouserlabels will exclude any thread with custom labels
+        if (pageType === 'inbox' && !labelName) {
+          requestParams.q = 'has:nouserlabels';
+        }
         
         if (pageToken) {
           requestParams.pageToken = pageToken;
@@ -602,6 +612,28 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
               
               // Get the latest message in the thread
               const latestMessage = messages[messages.length - 1];
+              
+              // If this is the inbox list view (not viewing a specific label),
+              // skip threads that have any user-created labels attached.
+              // Check BOTH thread-level and message-level labels
+              if (pageType === 'inbox' && !labelName) {
+                const threadLabelIds: string[] = threadData.result.labelIds || [];
+                const msgLabelIds: string[] = latestMessage.labelIds || [];
+                const allLabelIds = [...new Set([...threadLabelIds, ...msgLabelIds])];
+                
+                const allowedSystemLabels = new Set([
+                  'INBOX', 'UNREAD', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'IMPORTANT', 'STARRED',
+                  'CATEGORY_PERSONAL', 'CATEGORY_UPDATES', 'CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL',
+                  'CATEGORY_FORUMS'
+                ]);
+                
+                const userLabels = allLabelIds.filter(l => !allowedSystemLabels.has(l));
+                if (userLabels.length > 0) {
+                  console.log(`🚫 Skipping thread ${thread.id} with user labels:`, userLabels);
+                  continue;
+                }
+              }
+              
               const payload = latestMessage.payload as any;
               const headers = payload.headers || [];
               
@@ -666,23 +698,14 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
         console.log(`✅ Fetched ${response.emails.length} emails using query in ${Date.now() - startTime}ms`);
       }
       
-      // CACHING DISABLED - Don't store in cache to avoid mixing issues
-      // setPaginatedEmailsCache(prev => {
-      //   const newCache = new Map(prev);
-      //   newCache.set(targetPageIndex, response.emails);
-      //   console.log(`💾 Cached page ${targetPageIndex}, total cached pages:`, Array.from(newCache.keys()));
-      //   return newCache;
-      // });
-      // 
-      // setPageTokensCache(prev => {
-      //   const newCache = new Map(prev);
-      //   newCache.set(targetPageIndex, response.nextPageToken);
-      //   console.log(`💾 Cached token for page ${targetPageIndex}:`, response.nextPageToken ? 'present' : 'none');
-      //   return newCache;
-      // });
-      
-      // Update current view
-      setPaginatedEmails(response.emails);
+      // Update emails - append if loading more, replace if initial load
+      if (append) {
+        setPaginatedEmails(prev => [...prev, ...response.emails]);
+        console.log(`� Appended ${response.emails.length} emails, total: ${paginatedEmails.length + response.emails.length}`);
+      } else {
+        setPaginatedEmails(response.emails);
+        console.log(`� Loaded ${response.emails.length} emails`);
+      }
       
       // Add to repository for consistency
       emailRepository.addEmails(response.emails);
@@ -691,8 +714,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       setNextPageToken(response.nextPageToken);
       
       console.log('📄 Pagination state:', {
-        currentPage: targetPageIndex,
-        emailsCount: response.emails.length,
+        emailsCount: append ? paginatedEmails.length + response.emails.length : response.emails.length,
         nextPageToken: response.nextPageToken,
         hasMore: !!response.nextPageToken
       });
@@ -701,74 +723,55 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       console.error('Failed to load paginated emails:', error);
       toast.error('Failed to load emails');
     } finally {
-      setLoading(false);
+      if (append) {
+        setIsLoadingMore(false);
+      } else {
+        setLoading(false);
+      }
     }
   };
 
-  // Handle next page navigation
-  const handleNextPageGmail = async () => {
-    if (!nextPageToken || loading) return;
+  // Load more emails when user scrolls near bottom (infinite scroll)
+  const handleLoadMore = useCallback(async () => {
+    if (!nextPageToken || isLoadingMore || loading) return;
     
-    const nextPageIndex = currentPageIndex + 1;
-    
-    console.log(`➡️ Moving to next page:`, {
-      from: currentPageIndex,
-      to: nextPageIndex,
-      token: nextPageToken ? 'present' : 'none'
-    });
-    
-    // Update page index FIRST before loading
-    setCurrentPageIndex(nextPageIndex);
-    
-    // Save current token to stack before moving forward
-    setPageTokenStack(prev => [...prev, nextPageToken]);
-    
-    // Load next page with the correct page index
-    await loadPaginatedEmails(nextPageToken, nextPageIndex);
-  };
+    console.log('📜 Loading more emails...');
+    await loadPaginatedEmails(nextPageToken, true);
+  }, [nextPageToken, isLoadingMore, loading]);
 
-  // Handle previous page navigation
-  const handlePrevPageGmail = async () => {
-    if (currentPageIndex === 0) return;
-    
-    const prevPageIndex = currentPageIndex - 1;
-    
-    console.log(`⬅️ Moving to previous page:`, {
-      from: currentPageIndex,
-      to: prevPageIndex
-    });
-    
-    setCurrentPageIndex(prevPageIndex);
-    
-    // Load from cache (no page token needed for cached pages)
-    await loadPaginatedEmails(undefined, prevPageIndex);
-    
-    // Update token stack - remove last token
-    setPageTokenStack(prev => {
-      const newStack = [...prev];
-      newStack.pop();
-      return newStack;
-    });
-  };
+  // Add scroll listener for infinite scroll
+  useEffect(() => {
+    const emailList = emailListRef.current;
+    if (!emailList) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = emailList;
+      const scrollPercentage = (scrollTop + clientHeight) / scrollHeight;
+      
+      // Load more when user scrolls to 80% of the list
+      if (scrollPercentage > 0.8 && nextPageToken && !isLoadingMore && !loading) {
+        console.log('📜 Scroll threshold reached, loading more emails...');
+        handleLoadMore();
+      }
+    };
+
+    emailList.addEventListener('scroll', handleScroll);
+    return () => emailList.removeEventListener('scroll', handleScroll);
+  }, [handleLoadMore, nextPageToken, isLoadingMore, loading]);
 
   // Reset pagination when tab or layout mode changes
   useEffect(() => {
-    // Always use list mode now (split view disabled)
     console.log('📋 Pagination useEffect triggered:', { activeTab, labelName, isGmailSignedIn });
     
     // COMPLETELY RESET - Clear everything when switching folders/tabs
     setNextPageToken(undefined);
-    setPageTokenStack([]);
-    setCurrentPageIndex(0);
-    setPaginatedEmailsCache(new Map());
-    setPageTokensCache(new Map());
     setPaginatedEmails([]); // CLEAR EMAILS - blank slate on every switch
     setLoading(true); // Show loading state immediately
     
     // Load first page
     if (isGmailSignedIn) {
       console.log('📋 Loading first page of emails...');
-      loadPaginatedEmails(undefined, 0);
+      loadPaginatedEmails(undefined, false);
     }
   }, [activeTab, labelName, isGmailSignedIn]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1393,13 +1396,9 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     setIsRefreshLoading(true);
     setAllTabEmails({ all: [], unread: [], sent: [], drafts: [], trash: [], important: [], starred: [], spam: [], allmail: [] });
     
-    // Clear pagination cache to fetch fresh emails
-    setPaginatedEmailsCache(new Map());
-    setPageTokensCache(new Map());
+    // Clear pagination to fetch fresh emails
     setPaginatedEmails([]);
     setNextPageToken(undefined);
-    setPageTokenStack([]);
-    setCurrentPageIndex(0);
     
     if (labelName && effectiveLabelQuery) {
       // For labels, refresh label emails
@@ -1408,7 +1407,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       // For inbox, refresh all email types and categories
       await Promise.all([
         fetchAllEmailTypes(true),
-        loadPaginatedEmails(undefined, 0) // Reload first page
+        loadPaginatedEmails(undefined, false) // Reload first page
       ]);
     }
     
@@ -1431,25 +1430,21 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       // Clear relevant caches to ensure fresh data
       clearEmailCache();
       
-      // Clear pagination cache to fetch fresh emails
-      setPaginatedEmailsCache(new Map());
-      setPageTokensCache(new Map());
+      // Clear pagination to fetch fresh emails
       setPaginatedEmails([]);
       setNextPageToken(undefined);
-      setPageTokenStack([]);
-      setCurrentPageIndex(0);
       
       if (labelName && effectiveLabelQuery) {
         // For label pages, refresh only the current label
         console.log(`🔄 Refreshing label: ${labelName}`);
         await fetchLabelEmails(true);
-        await loadPaginatedEmails(undefined, 0); // Reload first page
+        await loadPaginatedEmails(undefined, false); // Reload first page
       } else if (pageType === 'inbox') {
         // For inbox, refresh based on current tab
         console.log(`🔄 Refreshing current tab: ${activeTab}`);
         
         // Always reload paginated emails for inbox
-        await loadPaginatedEmails(undefined, 0);
+        await loadPaginatedEmails(undefined, false);
         
         switch (activeTab) {
           case 'all':
@@ -2001,6 +1996,9 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
 
   // Always use paginated emails now (split view disabled)
   const filteredEmails = paginatedEmails.length > 0 ? paginatedEmails : getCurrentEmails();
+  
+  // For infinite scroll list view, use paginatedEmails directly
+  const emailsToDisplay = layoutMode === 'list' ? paginatedEmails : filteredEmails;
   
   // Apply Unread/Starred/Attachments chips as client-side filters
   const applyChipFilters = (items: Email[]): Email[] => {
@@ -3325,10 +3323,10 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                   </div>
                 )}
               </div>
-            ) : loading || filteredEmails.length > 0 ? (
+            ) : loading || emailsToDisplay.length > 0 ? (
               <div className="flex-1 flex flex-col min-h-0 relative">
                 <div ref={emailListRef} className="flex-1 overflow-y-auto max-w-full min-h-0" style={{ height: '0' }}>
-                  {loading && filteredEmails.length === 0 ? (
+                  {loading && emailsToDisplay.length === 0 ? (
                     <div className="flex items-center justify-center h-full">
                       <div className="flex flex-col items-center space-y-3">
                         <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary-500"></div>
@@ -3336,52 +3334,46 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                       </div>
                     </div>
                   ) : (
-                    <Table>
-                      <TableBody>
-                        {visibleEmails.map((email) => (
-                          <EmailListItem 
-                            key={email.id} 
-                            email={email} 
-                            onClick={handleEmailClick}
-                            onEmailUpdate={handleEmailUpdate}
-                            onEmailDelete={handleEmailDelete}
-                            onCreateFilter={handleCreateFilter}
-                            isSelected={selectedEmails.has(email.id)}
-                            onToggleSelect={handleToggleSelectEmail}
-                            renderAsTableRow
-                          />
-                        ))}
-                      </TableBody>
-                    </Table>
+                    <>
+                      <Table>
+                        <TableBody>
+                          {emailsToDisplay.map((email) => (
+                            <EmailListItem 
+                              key={email.id} 
+                              email={email} 
+                              onClick={handleEmailClick}
+                              onEmailUpdate={handleEmailUpdate}
+                              onEmailDelete={handleEmailDelete}
+                              onCreateFilter={handleCreateFilter}
+                              isSelected={selectedEmails.has(email.id)}
+                              onToggleSelect={handleToggleSelectEmail}
+                              renderAsTableRow
+                            />
+                          ))}
+                        </TableBody>
+                      </Table>
+                      
+                      {/* Loading more indicator - shown inside scroll area */}
+                      {isLoadingMore && (
+                        <div className="py-8 flex items-center justify-center">
+                          <div className="flex items-center gap-3 text-sm text-gray-600 bg-white px-4 py-3 rounded-lg shadow-sm border border-gray-200">
+                            <RefreshCw className="w-5 h-5 animate-spin text-primary-500" />
+                            <span className="font-medium">Loading more emails...</span>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* End of list indicator */}
+                      {!nextPageToken && !isLoadingMore && !loading && paginatedEmails.length > 0 && (
+                        <div className="py-6 flex items-center justify-center">
+                          <div className="text-xs text-gray-400 bg-gray-50 px-4 py-2 rounded-full">
+                            All emails loaded • {paginatedEmails.length} total
+                          </div>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
-                
-                {/* Gmail API Pagination Controls - Only for list view */}
-                {layoutMode === 'list' && (
-                  <div className="flex-shrink-0 border-t border-gray-200 px-4 py-2 flex items-center justify-between bg-gray-50">
-                    <div className="text-xs text-gray-600">
-                      Page {currentPageIndex + 1}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={handlePrevPageGmail}
-                        disabled={currentPageIndex === 0 || loading}
-                        className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      >
-                        <ChevronLeft size={14} />
-                        Previous
-                      </button>
-                      <button
-                        onClick={handleNextPageGmail}
-                        disabled={!nextPageToken || loading}
-                        className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      >
-                        Next
-                        <ChevronRight size={14} />
-                      </button>
-                    </div>
-                  </div>
-                )}
               </div>
             ) : (
               <div className="p-8 text-center">

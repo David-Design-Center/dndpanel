@@ -8,7 +8,6 @@ import { useInboxLayout } from '../../contexts/InboxLayoutContext';
 import { useEmailPreloader } from '../../contexts/EmailPreloaderContext';
 import { Toggle } from '../ui/liquid-toggle';
 import ProfileSelector from '../profile/ProfileSelector';
-import TutorialsDialog from '../common/TutorialsDialog';
 
 interface SidebarProps {
 }
@@ -227,6 +226,24 @@ function Sidebar({ }: SidebarProps) {
                 <Tooltip delayDuration={300}>
                   <TooltipTrigger asChild>
                     <Link
+                      to="/tutorials"
+                      className={`flex items-center justify-center p-2 text-sm font-medium transition-all duration-200 rounded-xl ${
+                        location.pathname === '/tutorials'
+                          ? 'text-gray-800 bg-white shadow-lg'
+                          : 'text-gray-600 hover:bg-white hover:shadow-md'
+                      }`}
+                    >
+                      <GraduationCap size={16} className="text-indigo-500" />
+                    </Link>
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="bg-gray-800 text-white border-gray-700">
+                    <p>Tutorials</p>
+                  </TooltipContent>
+                </Tooltip>
+                
+                <Tooltip delayDuration={300}>
+                  <TooltipTrigger asChild>
+                    <Link
                       to="/settings"
                       className={`flex items-center justify-center p-2 text-sm font-medium transition-all duration-200 rounded-xl ${
                         location.pathname === '/settings'
@@ -239,19 +256,6 @@ function Sidebar({ }: SidebarProps) {
                   </TooltipTrigger>
                   <TooltipContent side="right" className="bg-gray-800 text-white border-gray-700">
                     <p>Settings</p>
-                  </TooltipContent>
-                </Tooltip>
-
-                <Tooltip delayDuration={300}>
-                  <TooltipTrigger asChild>
-                    <TutorialsDialog variant="icon">
-                      <div className="flex items-center justify-center p-2 text-sm font-medium transition-all duration-200 rounded-xl text-gray-600 hover:bg-white hover:shadow-md cursor-pointer">
-                        <GraduationCap size={16} className="text-indigo-500" />
-                      </div>
-                    </TutorialsDialog>
-                  </TooltipTrigger>
-                  <TooltipContent side="right" className="bg-gray-800 text-white border-gray-700">
-                    <p>Tutorials</p>
                   </TooltipContent>
                 </Tooltip>
               </>
@@ -319,6 +323,18 @@ function Sidebar({ }: SidebarProps) {
                 </Link>
                 
                 <Link
+                  to="/tutorials"
+                  className={`flex items-center px-4 py-3 text-sm font-medium transition-all duration-200 rounded-xl min-w-0 overflow-hidden ${
+                    location.pathname === '/tutorials'
+                      ? 'text-gray-800 bg-white shadow-lg'
+                      : 'text-gray-600 hover:bg-white hover:shadow-md'
+                  }`}
+                >
+                  <span className="mr-3 flex-shrink-0"><GraduationCap size={20} className="text-indigo-500" /></span>
+                  <span className="truncate">Tutorials</span>
+                </Link>
+                
+                <Link
                   to="/settings"
                   className={`flex items-center px-4 py-3 text-sm font-medium transition-all duration-200 rounded-xl min-w-0 overflow-hidden ${
                     location.pathname === '/settings'
@@ -329,10 +345,6 @@ function Sidebar({ }: SidebarProps) {
                   <span className="mr-3 flex-shrink-0"><Settings size={20} /></span>
                   <span className="truncate">Settings</span>
                 </Link>
-                
-                <div className="flex items-center px-4 py-3 text-sm font-medium transition-all duration-200 rounded-xl min-w-0 overflow-hidden text-gray-600 hover:bg-white hover:shadow-md cursor-pointer">
-                  <TutorialsDialog variant="sidebar" size={20} />
-                </div>
               </>
             )}
           </div>

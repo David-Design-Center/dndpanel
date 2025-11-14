@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, FileText, Package, Truck, Edit2, Save, AlertTriangle } from 'lucide-react';
+import { X, FileText, Package, Edit2, Save, AlertTriangle } from 'lucide-react';
 import { Shipment, ShipmentDocument } from '../../types';
 import { DocumentsList } from './documents-list';
 import { useAuth } from '../../contexts/AuthContext';
@@ -40,6 +40,9 @@ export function ShipmentDetailsModal({ isOpen, onClose, shipment, documents, onU
         .from('shipments')
         .update({
           ref: editedShipment.ref,
+          etd: editedShipment.etd || null,
+          eta: editedShipment.eta || null,
+          container_n: editedShipment.container_n || null,
           updated_at: new Date().toISOString()
         })
         .eq('id', editedShipment.id);
@@ -74,7 +77,6 @@ export function ShipmentDetailsModal({ isOpen, onClose, shipment, documents, onU
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
           <div className="flex items-center">
-            <Truck className="w-6 h-6 text-blue-600 mr-3" />
             <div>
               <h2 className="text-xl font-semibold text-gray-900">
                 {isEditing ? 'Edit Shipment' : 'Shipment Details'}
@@ -106,7 +108,7 @@ export function ShipmentDetailsModal({ isOpen, onClose, shipment, documents, onU
               isAdmin && (
                 <button
                   onClick={() => setIsEditing(true)}
-                  className="px-3 py-1.5 text-sm text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 flex items-center"
+                  className="px-3 py-1.5 text-sm text-gray-600 bg-gray-50 border border-gray-300 rounded-md hover:bg-gray-100 flex items-center"
                 >
                   <Edit2 className="w-4 h-4 mr-1" />
                   Edit
@@ -140,22 +142,71 @@ export function ShipmentDetailsModal({ isOpen, onClose, shipment, documents, onU
                   Shipment Information
                 </h3>
                 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Reference</label>
-                  {isEditing ? (
-                    <input
-                      type="text"
-                      value={editedShipment?.ref || ''}
-                      onChange={(e) => setEditedShipment(prev => prev ? { ...prev, ref: e.target.value } : null)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  ) : (
-                    <p className="text-sm text-gray-900 font-mono bg-gray-50 px-3 py-2 rounded">{shipment.ref}</p>
-                  )}
-                </div>
-                <div>
-                </div>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Reference</label>
+                    {isEditing ? (
+                      <input
+                        type="text"
+                        value={editedShipment?.ref || ''}
+                        onChange={(e) => setEditedShipment(prev => prev ? { ...prev, ref: e.target.value } : null)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    ) : (
+                      <p className="text-sm text-gray-900 font-mono bg-gray-50 px-3 py-2 rounded">{shipment.ref}</p>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">ETD</label>
+                      {isEditing ? (
+                        <input
+                          type="date"
+                          value={editedShipment?.etd || ''}
+                          onChange={(e) => setEditedShipment(prev => prev ? { ...prev, etd: e.target.value } : null)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      ) : (
+                        <p className="text-sm text-gray-900 bg-gray-50 px-3 py-2 rounded">
+                          {shipment.etd ? new Date(shipment.etd).toLocaleDateString() : 'N/A'}
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">ETA</label>
+                      {isEditing ? (
+                        <input
+                          type="date"
+                          value={editedShipment?.eta || ''}
+                          onChange={(e) => setEditedShipment(prev => prev ? { ...prev, eta: e.target.value } : null)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      ) : (
+                        <p className="text-sm text-gray-900 bg-gray-50 px-3 py-2 rounded">
+                          {shipment.eta ? new Date(shipment.eta).toLocaleDateString() : 'N/A'}
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Container</label>
+                      {isEditing ? (
+                        <input
+                          type="text"
+                          value={editedShipment?.container_n || ''}
+                          onChange={(e) => setEditedShipment(prev => prev ? { ...prev, container_n: e.target.value } : null)}
+                          placeholder="e.g., ABC123"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      ) : (
+                        <p className="text-sm text-gray-900 bg-gray-50 px-3 py-2 rounded">
+                          {shipment.container_n || 'N/A'}
+                        </p>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -174,16 +225,6 @@ export function ShipmentDetailsModal({ isOpen, onClose, shipment, documents, onU
               />
             </div>
           </div>
-        </div>
-
-        {/* Footer */}
-        <div className="flex justify-end px-6 py-4 border-t border-gray-200 bg-gray-50">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            Close
-          </button>
         </div>
       </div>
     </div>

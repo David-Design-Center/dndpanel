@@ -139,24 +139,24 @@ export const PONumberDisplay = ({ poNumbers, className }: PONumberDisplayProps) 
     });
   };
 
-  if (!poNumbers || poNumbers.length === 0) {
-    return (
-      <div className="flex items-center text-xs text-gray-400">
-        <div className="relative">
-          <div
-            className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center relative"
-            style={{
-              background: "linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%)",
-              boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-            }}
-          >
-            <FileText className="h-4 w-4 text-gray-400" />
-          </div>
+if (!poNumbers || poNumbers.length === 0) {
+  return (
+    <div className="flex items-center text-xs text-gray-400">
+      <div className="relative">
+        <div
+          className="w-10 h-10 rounded-lg flex items-center justify-center relative"
+          style={{
+            background: "linear-gradient(135deg, #000000 0%, #4b5563 100%)",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+          }}
+        >
+          <FileText className="h-4 w-4 text-gray-200" />
         </div>
-        <span className="ml-2">No Invoices</span>
       </div>
-    );
-  }
+      <span className="ml-2 text-gray-500">No Invoices</span>
+    </div>
+  );
+}
 
   const getBackgroundStyle = (): React.CSSProperties => {
     return { 

@@ -152,7 +152,7 @@ const GoogleCalendar = forwardRef<FullCalendar, GoogleCalendarProps>((_props, fo
         />
       )}
       
-      <div className="modern-calendar rounded-xl bg-white shadow-sm border border-gray-100 overflow-hidden h-full">      
+      <div className="modern-calendar rounded-xl bg-white shadow-xl overflow-hidden h-full">      
         <FullCalendar
           ref={ref as any}
           plugins={plugins}

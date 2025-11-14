@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useContacts } from '../../contexts/ContactsContext';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, RefreshCw } from 'lucide-react';
 import ContactsTable from '../../components/ui/contacts-table';
 import { EditContactModal } from '../../components/ui/edit-contact-modal';
 import { 
@@ -201,13 +201,10 @@ function Contacts() {
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {/* Header */}
-      <header className="flex-none bg-white border-b border-gray-200 px-6 py-4">
+      <header className="flex-1 overflow-y-auto">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-semibold text-gray-900">Contacts</h1>
-            <p className="text-sm text-gray-600 mt-1">
-              Manage customer contacts from orders
-            </p>
           </div>
           <div className="flex items-center space-x-2">
             <button
@@ -215,9 +212,9 @@ function Contacts() {
                 setEditingContact(null);
                 setIsEditModalOpen(true);
               }}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center space-x-2"
+              className="px-3 py-1.5 text-sm bg-primary hover:bg-primary-950 text-white rounded-md flex items-center"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-3.5 h-3.5 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
               </svg>
               <span>Add Contact</span>
@@ -225,16 +222,17 @@ function Contacts() {
             <button
               onClick={loadContacts}
               disabled={loading}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="px-3 py-1.5 text-sm bg-primary hover:bg-primary-950 text-white rounded-md flex items-center"
             >
-              {loading ? 'Refreshing...' : 'Refresh'}
+              <RefreshCw size={20} className={`mr-0 ${loading ? 'animate-spin' : ''}`} />
+              {loading ? 'Refreshing...' : ''}
             </button>
           </div>
         </div>
       </header>
 
       {/* Content */}
-      <main className="flex-1 overflow-auto bg-gray-50 p-6">
+      <main className="flex-1 overflow-auto bg-gray-50 pt-4">
         {error ? (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
             <div className="flex">
@@ -255,19 +253,12 @@ function Contacts() {
           <>
             {!loading && (
               <div className="mb-6">
-                <div className="bg-white rounded-lg border border-gray-200 p-4">
+                <div className="bg-gradient-to-r from-black to-gray-500 rounded-lg p-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <h2 className="text-lg font-medium text-gray-900">Contact Summary</h2>
-                      <p className="text-sm text-gray-600">
+                      <h2 className="text-lg font-medium text-white">Contact Summary</h2>
+                      <p className="text-sm text-gray-200">
                         Total contacts: <span className="font-semibold">{contacts.length}</span>
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm text-gray-600">
-                        Total invoices: <span className="font-semibold">
-                          {contacts.reduce((total, contact) => total + (contact.invoiceCount || 0), 0)}
-                        </span>
                       </p>
                     </div>
                   </div>

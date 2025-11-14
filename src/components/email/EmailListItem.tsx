@@ -534,7 +534,48 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
       setTimeout(() => labelSearchRef.current?.focus(), 0);
       toast.success(`Label "${fullName}" created`);
 
-      // (Auto-filter feature temporarily disabled and code removed to reduce complexity.)
+      // Auto-filter feature: create a Gmail filter if checkbox was checked
+      if (autoFilterFuture) {
+        const sender = cleanEmailAddress(email.from?.email || '');
+        if (!sender) {
+          toast.error('Cannot create auto-filter: missing sender email');
+          return;
+        }
+
+        try {
+          toast.message('Creating auto-filter rule...');
+          
+          // Find the label ID by the full name we just created
+          const labelsList = await fetchGmailLabels();
+          const gmailLabelName = `INBOX/${fullName}`; // Gmail stores custom labels with INBOX/ prefix
+          const match = labelsList
+            .map(l => ({ id: (l as any).id, name: (l as any).name }))
+            .find(l => l.name === gmailLabelName || l.name === fullName);
+
+          if (!match?.id) {
+            toast.error('Label created but auto-filter failed: could not find label in Gmail');
+            return;
+          }
+
+          // Create the Gmail filter to auto-apply this label AND remove from inbox
+          // This ensures labeled emails only appear in their folders, not in inbox
+          await createGmailFilter(
+            { from: sender },
+            { 
+              addLabelIds: [match.id],
+              removeLabelIds: ['INBOX'] // Remove from inbox so it only shows in the folder
+            }
+          );
+
+          toast.success(`Auto-filter created! Future emails from ${sender} will be moved to "${fullName}"`);
+          
+          // Notify parent component if callback exists
+          onCreateFilter?.(email);
+        } catch (filterErr) {
+          console.error('Failed to create auto-filter:', filterErr);
+          toast.error('Label created, but auto-filter creation failed. Please create the rule manually.');
+        }
+      }
     } catch (err) {
       toast.error('Failed to create label');
     }
@@ -612,13 +653,17 @@ function EmailListItem({ email, onClick, isDraggable = true, onEmailUpdate, onEm
         return;
       }
 
-      // 2) Create the Gmail filter
+      // 2) Create the Gmail filter with inbox removal
+      // This ensures labeled emails only appear in their folders, not in inbox
       await createGmailFilter(
         { from: sender },
-        { addLabelIds: [match.id] }
+        { 
+          addLabelIds: [match.id],
+          removeLabelIds: ['INBOX'] // Remove from inbox so it only shows in the folder
+        }
       );
 
-      toast.success('Rule created. Future emails will be moved.');
+      toast.success('Rule created. Future emails will be moved to folder.');
       // Let parent know (optional hook)
       onCreateFilter?.(email);
     } catch (err) {

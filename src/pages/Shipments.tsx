@@ -1,17 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Package, RefreshCw, Upload, FileText, ArrowUpDown, Trash2, FileSpreadsheet, AlertCircle, Eye } from 'lucide-react';
+import { Package, RefreshCw, Upload, FileText, ArrowUpDown, Trash2, AlertCircle, MousePointerClick } from 'lucide-react';
 import { Shipment, ShipmentDocument } from '../types';
-import { fetchShipments, createShipment, importShipments } from '../services/backendApi';
+import { fetchShipments } from '../services/backendApi';
 import { GoogleDriveService } from '../services/googleDriveService';
-import { UploadDocumentsModal } from '../components/ui/upload-documents-modal';
-import { AddShipmentModal } from '../components/ui/add-shipment-modal-new';
-import { CsvImportModal } from '../components/ui/csv-import-modal';
+import { ShipmentUploadModal } from '../components/ui/shipment-upload-modal';
 import { ShipmentDetailsModal } from '../components/ui/shipment-details-modal';
 import { ColumnManagerModal } from '../components/ui/column-manager-modal';
 import { DocumentPreviewModal } from '../components/ui/document-preview-modal';
-import { BulkUploadModal } from '../components/ui/bulk-upload-modal';
 import { supabase } from '../lib/supabase';
 
 function Shipments() {
@@ -25,19 +22,13 @@ function Shipments() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
-  const [addShipmentModalOpen, setAddShipmentModalOpen] = useState(false);
-  const [csvImportModalOpen, setCsvImportModalOpen] = useState(false);
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   const [columnManagerModalOpen, setColumnManagerModalOpen] = useState(false);
-  const [bulkUploadModalOpen, setBulkUploadModalOpen] = useState(false);
   const [selectedShipments, setSelectedShipments] = useState<Set<number>>(new Set());
   const [selectedDocuments, setSelectedDocuments] = useState<Set<string>>(new Set());
-  const [selectedShipmentForUpload, setSelectedShipmentForUpload] = useState<{ id: number; containerNumber: string } | null>(null);
   const [selectedShipmentForDetails, setSelectedShipmentForDetails] = useState<Shipment | null>(null);
-  const [isExitingButtons, setIsExitingButtons] = useState(false);
   const [documentPreviewModalOpen, setDocumentPreviewModalOpen] = useState(false);
   const [selectedDocumentForPreview, setSelectedDocumentForPreview] = useState<ShipmentDocument | null>(null);
-  const [pendingAssignDocumentId, setPendingAssignDocumentId] = useState<string | null>(null);
   
   // Dynamic columns state - Updated for simplified schema
   const [visibleColumns, _setVisibleColumns] = useState<string[]>([
@@ -53,23 +44,6 @@ function Shipments() {
   // Fetch shipments and documents on component mount
   useEffect(() => {
     fetchShipmentData();
-  }, []);
-
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const custom = e as CustomEvent;
-      const documentId = custom.detail?.documentId as string | undefined;
-      
-      if (documentId) {
-        console.log('Received open-add-shipment-with-doc event:', documentId);
-        setPendingAssignDocumentId(documentId);
-        setAddShipmentModalOpen(true);
-      }
-    };
-
-    window.addEventListener('open-add-shipment-with-doc', handler as EventListener);
-
-    return () => window.removeEventListener('open-add-shipment-with-doc', handler as EventListener);
   }, []);
 
   // Function to fetch shipments
@@ -144,109 +118,9 @@ function Shipments() {
     setSelectedDocumentForPreview(null);
   };
 
-  // Handle upload completion
-  const handleUploadComplete = async () => {
-    if (selectedShipmentForUpload) {
-      console.log(`🔄 Upload completed for shipment ${selectedShipmentForUpload.id}, refreshing...`);
-      
-      // Small delay to ensure database transaction is committed
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Refresh documents for this specific shipment
-      await fetchShipmentDocumentsData(selectedShipmentForUpload.id);
-      
-      // Also refresh all shipments data to ensure consistency
-      await fetchShipmentData(true);
-    }
-  };
-
   // Handle refresh button click
   const handleRefresh = () => {
     fetchShipmentData(true);
-  };
-
-  // Handle creating a new shipment
-  const handleCreateShipment = async (shipmentData: {
-    ref: string;
-    eta: string;
-    etd: string;
-    container_n: string;
-    documents?: File[];
-  }) => {
-    try {
-      console.log('Creating new shipment:', shipmentData);
-      const newShipment = await createShipment(shipmentData);
-      console.log('Successfully created shipment:', newShipment);
-
-      await fetchShipmentData(true);
-
-      if (pendingAssignDocumentId) {
-        try {
-          const { error: linkError } = await supabase
-            .from('documents')
-            .update({ shipment_id: newShipment.id })
-            .eq('id', pendingAssignDocumentId);
-          if (linkError) {
-            console.error('Failed to link document to new shipment:', linkError);
-          } else {
-            console.log(`Linked document ${pendingAssignDocumentId} to shipment ${newShipment.id}`);
-            // Silently refresh documents for this new shipment so details modal will have them if opened
-            fetchShipmentDocumentsData(newShipment.id);
-          }
-        } catch (e) {
-          console.error('Unexpected error linking document', e);
-        } finally {
-          setPendingAssignDocumentId(null);
-        }
-      }
-
-      setAddShipmentModalOpen(false);
-    } catch (error) {
-      console.error('Error creating shipment:', error);
-      throw error;
-    }
-  };
-
-  // Handle CSV import
-  const handleCsvImport = async (csvData: any[]) => {
-    try {
-      console.log('Importing CSV data:', csvData);
-      await importShipments(csvData);
-      console.log('Successfully imported CSV data');
-      
-      // Refresh the shipments list
-      await fetchShipmentData(true);
-      
-      // Close the modal
-      setCsvImportModalOpen(false);
-    } catch (error) {
-      console.error('Error importing CSV:', error);
-      throw error;
-    }
-  };
-
-  // Handle bulk file upload
-  const handleBulkUpload = async (files: File[]) => {
-    try {
-      console.log('Starting bulk upload for', files.length, 'files');
-      
-      // Upload all files to Google Drive without assigning to specific shipments
-      // Note: This uploads to a general "Bulk Documents" folder for later assignment
-      const uploadPromises = files.map(file => 
-        GoogleDriveService.uploadFile(file, 0, undefined) // shipmentId = 0 for bulk uploads
-      );
-      
-      await Promise.all(uploadPromises);
-      console.log('Successfully uploaded', files.length, 'files');
-      
-      // Refresh documents data for all shipments
-      await fetchShipmentData(true);
-      
-      setBulkUploadModalOpen(false);
-    } catch (error) {
-      console.error('Error in bulk upload:', error);
-      throw error;
-    }
   };
 
   // Handle checkbox selection
@@ -258,19 +132,7 @@ function Shipments() {
       newSelected.delete(shipmentId);
     }
     
-    // Handle exit animation when going from some selected to none selected
-    const wasSomeSelected = selectedShipments.size > 0;
-    const willBeSomeSelected = newSelected.size > 0;
-    
-    if (wasSomeSelected && !willBeSomeSelected) {
-      setIsExitingButtons(true);
-      setTimeout(() => {
-        setSelectedShipments(newSelected);
-        setIsExitingButtons(false);
-      }, 300);
-    } else {
-      setSelectedShipments(newSelected);
-    }
+    setSelectedShipments(newSelected);
   };
 
   // Handle select all
@@ -279,13 +141,8 @@ function Shipments() {
       setSelectedShipments(new Set(shipments.map(s => s.id)));
       setSelectedDocuments(new Set(unassignedDocuments.map(d => d.id)));
     } else {
-      // Handle exit animation when deselecting all
-      setIsExitingButtons(true);
-      setTimeout(() => {
-        setSelectedShipments(new Set());
-        setSelectedDocuments(new Set());
-        setIsExitingButtons(false);
-      }, 300);
+      setSelectedShipments(new Set());
+      setSelectedDocuments(new Set());
     }
   };
 
@@ -308,37 +165,6 @@ function Shipments() {
   };
 
   // Export shipments to CSV
-  const exportToCSV = (shipmentsToExport: Shipment[] = selectedShipments.size > 0 
-    ? shipments.filter(s => selectedShipments.has(s.id))
-    : shipments
-  ) => {
-    const headers = [
-      'Reference',
-      'ETA', 
-      'ETD',
-      'Container Number'
-    ];
-    
-    const csvContent = [
-      headers.join(','),
-      ...shipmentsToExport.map(shipment => [
-        `"${shipment.ref || ''}"`,
-        `"${shipment.eta || ''}"`,
-        `"${shipment.etd || ''}"`,
-        `"${shipment.container_n || ''}"`,
-      ].join(','))
-    ].join('\\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `shipments_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
 
   // Handle bulk delete
   const handleBulkDelete = async () => {
@@ -346,15 +172,31 @@ function Shipments() {
     if (totalSelected === 0) return;
 
     const confirmDelete = window.confirm(
-      `Are you sure you want to delete ${totalSelected} item(s)? This action cannot be undone.`
+      `Are you sure you want to delete ${totalSelected} item(s)? This will also delete the Google Drive folders and all files. This action cannot be undone.`
     );
     
     if (!confirmDelete) return;
 
     try {
-      // Delete shipments
+      // Delete shipments (including Google Drive folders)
       if (selectedShipments.size > 0) {
         const shipmentIds = Array.from(selectedShipments);
+        
+        // First, delete Google Drive folders for each shipment
+        for (const shipmentId of shipmentIds) {
+          const shipment = shipments.find(s => s.id === shipmentId);
+          if (shipment) {
+            try {
+              console.log(`🗑️ Deleting Drive folder for shipment: ${shipment.ref}`);
+              await GoogleDriveService.deleteShipmentFolder(shipment.id, shipment.ref);
+            } catch (driveError) {
+              console.error(`Failed to delete Drive folder for ${shipment.ref}:`, driveError);
+              // Continue with database deletion even if Drive deletion fails
+            }
+          }
+        }
+        
+        // Then delete from database
         const { error: shipmentError } = await supabase
           .from('shipments')
           .delete()
@@ -405,7 +247,7 @@ function Shipments() {
 
   // Function to get header classes
   const getHeaderClasses = (_columnName: string) => {
-    return "px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider";
+    return "px-3 py-3 text-left text-xs font-medium text-white uppercase tracking-wider";
   };  // Format date strings for display
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return 'N/A';
@@ -465,71 +307,36 @@ function Shipments() {
   return (
     <div className="fade-in pb-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4 mt-10">
+      <div className="flex items-center justify-between mb-4">
         <div className="flex items-center">
-          <div className="mr-3 p-2">
-            <Package className="w-5 h-5 text-red-500" />
-          </div>
           <h1 className="text-2xl font-semibold text-gray-800">Shipments</h1>
         </div>
         <div className="flex items-center space-x-2">
-          {/* Export Selected - Admin only */}
-          {isAdmin && ((selectedShipments.size > 0 || selectedDocuments.size > 0) || isExitingButtons) && (
-            <button
-              onClick={() => exportToCSV(shipments.filter(s => selectedShipments.has(s.id)))}
-              className={`px-3 py-1.5 text-sm border border-blue-300 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 flex items-center transition-all duration-300 ${
-                isExitingButtons ? 'animate-bounce-down opacity-0 scale-95' : 'animate-bounce-up opacity-100'
-              }`}
-              style={{
-                animation: isExitingButtons ? 'bounceDown 0.3s ease-in-out' : 'bounceUp 0.3s ease-in-out'
-              }}
-            >
-              <FileSpreadsheet size={14} className="mr-1.5" />
-              Export Selected ({selectedShipments.size + selectedDocuments.size})
-            </button>
-          )}
-
           {/* Delete Selected - Admin only */}
-          {isAdmin && ((selectedShipments.size > 0 || selectedDocuments.size > 0) || isExitingButtons) && (
+          {isAdmin && (selectedShipments.size > 0 || selectedDocuments.size > 0) && (
             <button
               onClick={handleBulkDelete}
-              className={`px-3 py-1.5 text-sm border border-red-300 rounded-md bg-red-50 hover:bg-red-100 text-red-700 flex items-center transition-all duration-300 ${
-                isExitingButtons ? 'animate-bounce-down opacity-0 scale-95' : 'animate-bounce-up opacity-100'
-              }`}
-              style={{
-                animation: isExitingButtons 
-                  ? 'bounceDown 0.3s ease-in-out 0.1s both' 
-                  : 'bounceUp 0.3s ease-in-out 0.1s both'
-              }}
+              className="px-3 py-1.5 text-sm bg-red-600 hover:bg-red-700 text-white rounded-md flex items-center"
             >
               <Trash2 size={14} className="mr-1.5" />
               Delete Selected ({selectedShipments.size + selectedDocuments.size})
             </button>
           )}
           
-          {/* Admin-only buttons */}
+          {/* Admin-only upload button */}
           {isAdmin && (
-            <>
-              <button
-                onClick={() => setAddShipmentModalOpen(true)}
-                className="px-3 py-1.5 text-sm bg-gray-600 hover:bg-gray-700 text-white rounded-md flex items-center"
-              >
-                <Upload size={14} className="mr-1.5" />
-                Upload
-              </button>
-              <button
-                onClick={() => setBulkUploadModalOpen(true)}
-                className="px-3 py-1.5 text-sm bg-gray-600 hover:bg-gray-700 text-white rounded-md flex items-center"
-              >
-                <Upload size={14} className="mr-1.5" />
-                Upload Many
-              </button>
-            </>
+            <button
+              onClick={() => setUploadModalOpen(true)}
+              className="px-3 py-1.5 text-sm bg-primary hover:bg-primary-950 text-white rounded-md flex items-center"
+            >
+              <Upload size={14} className="mr-1.5" />
+              Upload
+            </button>
           )}
           
           <button
             onClick={handleRefresh}
-            className="px-3 py-1.5 text-sm bg-gray-600 hover:bg-gray-700 text-white rounded-md flex items-center"
+            className="px-3 py-1.5 text-sm bg-primary hover:bg-primary-950 text-white rounded-md flex items-center"
             disabled={refreshing}
           >
             <RefreshCw size={20} className={`mr-0 ${refreshing ? 'animate-spin' : ''}`} />
@@ -560,19 +367,24 @@ function Shipments() {
         </div>
       ) : (
         <div className="bg-white rounded-lg shadow-sm overflow-hidden">
-          {/* Table */}
-          <div className="overflow-x-auto border border-gray-300 rounded-lg">
-            <table className="min-w-full divide-y divide-gray-300">
-              <thead className="bg-gray-50 border-b border-gray-300">
+        {/* Table */}
+          <div className="overflow-x-auto rounded-lg">
+            <table className="min-w-full divide-y divide-gray-700">
+              <thead
+                className="text-white border-b border-gray-700"
+                style={{
+                  background: "linear-gradient(135deg, #000000 0%, #4b5563 100%)",
+                }}
+              >
                 <tr>
-                  <th className="w-8 px-2 py-3 text-left border-r border-gray-200">
+                  <th className="w-8 px-2 py-3 text-left border-r border-white/20">
                     {/* Only show select all checkbox for admin users */}
                     {isAdmin ? (
                       <input
                         type="checkbox"
                         checked={isAllSelected}
                         onChange={(e) => handleSelectAll(e.target.checked)}
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        className="rounded border-white/40 bg-white/20 text-blue-600 focus:ring-blue-500"
                       />
                     ) : (
                       <div className="w-4 h-4"></div> // Empty space to maintain column width
@@ -580,7 +392,7 @@ function Shipments() {
                   </th>
                   {visibleColumns.map((columnName, index) => (
                     <th key={columnName} className={`${getHeaderClasses(columnName)} ${
-                      index < visibleColumns.length - 1 ? 'border-r border-gray-200' : ''
+                      index < visibleColumns.length - 1 ? 'border-r border-white/20' : ''
                     }`}>
                       <div className="flex items-center cursor-pointer">
                         {allColumns[columnName] || columnName}
@@ -588,8 +400,7 @@ function Shipments() {
                       </div>
                     </th>
                   ))}
-                  <th className="w-16 px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Actions
+                  <th className="w-16 px-3 py-3 text-center text-xs font-medium text-gray-900 uppercase tracking-wider">
                   </th>
                 </tr>
               </thead>
@@ -636,16 +447,7 @@ function Shipments() {
                         ))}
                         <td className="w-32 px-3 py-3 whitespace-nowrap text-xs font-medium">
                           <div className="flex items-center justify-center space-x-1">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDocumentPreview(shipmentDocuments[shipment.id]?.[0]);
-                              }}
-                              className="text-blue-600 hover:text-blue-800 p-1"
-                              title="Preview"
-                            >
-                              <Eye className="w-4 h-4" />
-                            </button>
+                            <MousePointerClick className="w-6 h-6 text-primary" style={{ animation: 'subtleZoom 2.5s ease-in-out infinite' }} />
                           </div>
                         </td>
                       </tr>
@@ -698,16 +500,7 @@ function Shipments() {
                         ))}
                         <td className="w-32 px-3 py-3 whitespace-nowrap text-xs font-medium">
                           <div className="flex items-center justify-center space-x-1">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDocumentPreview(doc);
-                              }}
-                              className="text-blue-600 hover:text-blue-800 p-1"
-                              title="Preview"
-                            >
-                              <Eye className="w-4 h-4" />
-                            </button>
+                            <MousePointerClick className="w-4 h-4 text-gray-400" style={{ animation: 'subtleZoom 2.5s ease-in-out infinite' }} />
                           </div>
                         </td>
                       </tr>
@@ -720,30 +513,13 @@ function Shipments() {
         </div>
       )}
       
-      {/* Upload Documents Modal */}
-      {uploadModalOpen && selectedShipmentForUpload && (
-        <UploadDocumentsModal
-          isOpen={uploadModalOpen}
-          onClose={() => setUploadModalOpen(false)}
-          shipmentId={selectedShipmentForUpload.id}
-          containerNumber={selectedShipmentForUpload.containerNumber}
-          onUploadComplete={handleUploadComplete}
-        />
-      )}
-      
-      {/* Add Shipment Modal */}
-      <AddShipmentModal
-        isOpen={addShipmentModalOpen}
-        onClose={() => setAddShipmentModalOpen(false)}
-        onSubmit={handleCreateShipment}
-        assigningDocumentId={pendingAssignDocumentId}
-      />
-      
-      {/* CSV Import Modal */}
-      <CsvImportModal
-        isOpen={csvImportModalOpen}
-        onClose={() => setCsvImportModalOpen(false)}
-        onImport={handleCsvImport}
+      {/* Shipment Upload Modal */}
+      <ShipmentUploadModal
+        isOpen={uploadModalOpen}
+        onClose={() => setUploadModalOpen(false)}
+        onUploadComplete={() => {
+          fetchShipmentData(true);
+        }}
       />
       
       {/* Shipment Details Modal */}
@@ -776,13 +552,19 @@ function Shipments() {
         />
       )}
 
-      {/* Bulk Upload Modal */}
-      <BulkUploadModal
-        isOpen={bulkUploadModalOpen}
-        onClose={() => setBulkUploadModalOpen(false)}
-        onUpload={handleBulkUpload}
-        title="Bulk File Upload"
-      />
+      {/* Custom CSS for subtle click icon animation */}
+      <style>{`
+        @keyframes subtleZoom {
+          0%, 100% {
+            transform: scale(1);
+            opacity: 0.6;
+          }
+          50% {
+            transform: scale(1.15);
+            opacity: 1;
+          }
+        }
+      `}</style>
     </div>
   );
 }

@@ -114,6 +114,13 @@ function LayoutContent({
 }: any) {
   const { isFoldersColumnExpanded, toggleFoldersColumn } = useFoldersColumn();
   const { isComposeOpen, openCompose } = useCompose();
+  const location = useLocation();
+  const [animationKey, setAnimationKey] = useState(0);
+
+  // Trigger animation on route change
+  useEffect(() => {
+    setAnimationKey(prev => prev + 1);
+  }, [location.pathname]);
 
   // Auto-select profile for non-admin users (only once)
   useEffect(() => {
@@ -182,13 +189,13 @@ function LayoutContent({
               
               <div className="flex flex-col flex-1 overflow-hidden">
                 {isEmailRoute ? (
-                  <main className="flex-1 overflow-hidden">
+                  <main className="flex-1 overflow-hidden" key={animationKey} style={{ animation: 'fadeInFromTop 0.6s ease-out' }}>
                     <div className="w-full h-full">
                       <Outlet />
                     </div>
                   </main>
                 ) : (
-                  <main className="flex-1 overflow-y-auto p-4">
+                  <main className="flex-1 overflow-y-auto p-4" key={animationKey} style={{ animation: 'fadeInFromTop 0.6s ease-out' }}>
                     <div className="max-w-6xl mx-auto">
                       <Outlet />
                     </div>

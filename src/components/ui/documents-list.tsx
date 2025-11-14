@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { FileText, Image, Film, FileSpreadsheet, Eye, Download, Trash2 } from 'lucide-react';
+import { FileText, Image, Film, FileSpreadsheet, Download, Trash2 } from 'lucide-react';
 import { ShipmentDocument } from '../../types';
 import { DocumentPreviewModal } from './document-preview-modal';
 import { GoogleDriveService } from '../../services/googleDriveService';
@@ -94,7 +94,8 @@ export const DocumentsList: React.FC<DocumentsListProps> = ({
         {documents.map((doc) => (
           <div
             key={doc.id}
-            className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+            onClick={() => handlePreview(doc)}
+            className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
           >
             <div className="flex items-center flex-1 min-w-0">
               {getFileIcon(doc.file_type || '')}
@@ -109,15 +110,12 @@ export const DocumentsList: React.FC<DocumentsListProps> = ({
             </div>
 
             <div className="flex items-center space-x-2">
+              {/* Eye button removed - entire row is clickable for preview */}
               <button
-                onClick={() => handlePreview(doc)}
-                className="p-1.5 text-blue-600 hover:text-blue-800 hover:bg-blue-100 rounded-md"
-                title="Preview"
-              >
-                <Eye className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => handleDownload(doc)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDownload(doc);
+                }}
                 className="p-1.5 text-gray-600 hover:text-gray-800 hover:bg-gray-200 rounded-md"
                 title="Download"
               >
@@ -127,7 +125,10 @@ export const DocumentsList: React.FC<DocumentsListProps> = ({
               {/* Only show delete button for admin users */}
               {isAdmin && (
                 <button
-                  onClick={() => handleDelete(doc)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDelete(doc);
+                  }}
                   disabled={deletingDocuments.has(doc.id)}
                   className="p-1.5 text-red-600 hover:text-red-800 hover:bg-red-100 rounded-md disabled:opacity-50"
                   title="Delete"

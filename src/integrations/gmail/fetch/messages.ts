@@ -179,7 +179,8 @@ const isGmailSignedIn = (): boolean => {
 };
 
 /**
- * Fetch messages from Gmail with pagination
+ * Fetch threads (not individual messages) from Gmail with pagination
+ * This ensures each thread appears once in the list, matching Gmail UI behavior
  */
 export const fetchGmailMessages = async (
   query: string = 'in:inbox',
@@ -191,10 +192,17 @@ export const fetchGmailMessages = async (
       throw new Error('Not signed in to Gmail');
     }
 
+    // If fetching inbox, exclude emails with user labels (they should only appear in their folders)
+    // Use Gmail's has:nouserlabels operator to show only unlabeled emails in inbox
+    let finalQuery = query;
+    if (query.includes('in:inbox') && !query.includes('has:nouserlabels')) {
+      finalQuery = query.replace('in:inbox', 'in:inbox has:nouserlabels');
+    }
+
     const requestParams: any = {
       userId: 'me',
       maxResults: maxResults,
-      q: query
+      q: finalQuery
     };
 
     // Add pageToken if provided
@@ -202,9 +210,11 @@ export const fetchGmailMessages = async (
       requestParams.pageToken = pageToken;
     }
 
-    const response = await window.gapi.client.gmail.users.messages.list(requestParams);
+    // Use threads API instead of messages API to show one row per thread
+    const threadsApi = (window.gapi.client.gmail.users as any).threads;
+    const response = await threadsApi.list(requestParams);
 
-    if (!response.result.messages || response.result.messages.length === 0) {
+    if (!response.result.threads || response.result.threads.length === 0) {
       return {
         emails: [],
         nextPageToken: undefined,
@@ -214,20 +224,27 @@ export const fetchGmailMessages = async (
 
     const emails: Email[] = [];
     
-    // Fetch emails sequentially to avoid rate limits
-    for (const message of response.result.messages) {
-      if (!message.id) continue;
+    // Fetch thread details (latest message from each thread)
+    for (const thread of response.result.threads) {
+      if (!thread.id) continue;
 
       try {
-        const msg = await window.gapi.client.gmail.users.messages.get({
+        // Get thread with latest message metadata
+        const threadData = await threadsApi.get({
           userId: 'me',
-          id: message.id,
+          id: thread.id,
           format: 'metadata',
           metadataHeaders: ['Subject', 'From', 'To', 'Date']
         });
 
-        if (!msg.result || !msg.result.payload) continue;
-        const payload = msg.result.payload as EmailPart;
+        const messages = threadData.result.messages || [];
+        if (messages.length === 0) continue;
+
+        // Get the latest message in the thread
+        const latestMessage = messages[messages.length - 1];
+        if (!latestMessage.id || !latestMessage.payload) continue;
+        
+        const payload = latestMessage.payload as EmailPart;
 
         const headers = payload.headers || [];
         const subject = gmailDecodeRfc2047(gmailGetHeaderValue(headers, 'subject') || 'No Subject');
@@ -243,30 +260,30 @@ export const fetchGmailMessages = async (
         const toEmail = toAddresses[0]?.email || toHeader;
         const toName = toAddresses[0]?.name || toHeader;
 
-        let preview = msg.result.snippet ? decodeHtmlEntities(msg.result.snippet) : '';
+        let preview = latestMessage.snippet ? decodeHtmlEntities(latestMessage.snippet) : '';
         let body = preview;
 
         const attachments: NonNullable<Email['attachments']> = [];
 
         emails.push({
-          id: message.id,
+          id: latestMessage.id,
           from: { name: fromName, email: fromEmail },
           to: [{ name: toName, email: toEmail }],
           subject: subject,
           body: body,
           preview: preview,
-          isRead: !msg.result.labelIds?.includes('UNREAD'),
-          isImportant: msg.result.labelIds?.includes('IMPORTANT'),
-          isStarred: msg.result.labelIds?.includes('STARRED'),
+          isRead: !latestMessage.labelIds?.includes('UNREAD'),
+          isImportant: latestMessage.labelIds?.includes('IMPORTANT'),
+          isStarred: latestMessage.labelIds?.includes('STARRED'),
           date: format(new Date(dateHeader), "yyyy-MM-dd'T'HH:mm:ss"),
-          labelIds: msg.result.labelIds || [],
+          labelIds: latestMessage.labelIds || [],
           attachments: attachments.length > 0 ? attachments : undefined,
-          threadId: msg.result.threadId
+          threadId: thread.id
         } as Email);
 
         await new Promise(resolve => setTimeout(resolve, 25));
       } catch (messageError) {
-        console.warn(`Failed to fetch message ${message.id}:`, messageError);
+        console.warn(`Failed to fetch thread ${thread.id}:`, messageError);
       }
     }
 

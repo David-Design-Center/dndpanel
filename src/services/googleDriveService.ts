@@ -83,12 +83,12 @@ export class GoogleDriveService {
   }
 
   /**
-   * Create or get the shipment documents folder in Google Drive
+   * Create or get the root shipment documents folder in Google Drive
    */
-  private static async ensureShipmentFolder(): Promise<string> {
+  private static async ensureRootFolder(): Promise<string> {
     if (!this.accessToken) await this.initialize();
 
-    console.log(`📁 Looking for folder: "${this.DRIVE_FOLDER_NAME}"`);
+    console.log(`📁 Looking for root folder: "${this.DRIVE_FOLDER_NAME}"`);
 
     // Search for existing folder
     const searchResponse = await fetch(
@@ -101,14 +101,14 @@ export class GoogleDriveService {
     );
 
     const searchData = await searchResponse.json();
-    console.log('🔍 Folder search result:', searchData);
+    console.log('🔍 Root folder search result:', searchData);
     
     if (searchData.files && searchData.files.length > 0) {
-      console.log(`✅ Found existing folder: ${searchData.files[0].name} (ID: ${searchData.files[0].id})`);
+      console.log(`✅ Found existing root folder: ${searchData.files[0].name} (ID: ${searchData.files[0].id})`);
       return searchData.files[0].id;
     }
 
-    console.log(`📁 Creating new folder: "${this.DRIVE_FOLDER_NAME}"`);
+    console.log(`📁 Creating new root folder: "${this.DRIVE_FOLDER_NAME}"`);
 
     // Create folder if it doesn't exist
     const createResponse = await fetch('https://www.googleapis.com/drive/v3/files', {
@@ -124,7 +124,57 @@ export class GoogleDriveService {
     });
 
     const createData = await createResponse.json();
-    console.log('📁 Folder creation result:', createData);
+    console.log('📁 Root folder creation result:', createData);
+    return createData.id;
+  }
+
+  /**
+   * Create or get a shipment-specific subfolder within the root Shipment Documents folder
+   * @param shipmentRef - The shipment reference (e.g., "EXM-2501215")
+   * @param parentFolderId - The parent folder ID (root Shipment Documents folder)
+   */
+  private static async ensureShipmentSubfolder(shipmentRef: string, parentFolderId: string): Promise<string> {
+    if (!this.accessToken) await this.initialize();
+
+    console.log(`📁 Looking for shipment subfolder: "${shipmentRef}" in parent: ${parentFolderId}`);
+
+    // Search for existing subfolder with this shipment reference
+    const searchQuery = `name='${shipmentRef}' and '${parentFolderId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+    const searchResponse = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(searchQuery)}&fields=files(id,name)`,
+      {
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+        },
+      }
+    );
+
+    const searchData = await searchResponse.json();
+    console.log(`🔍 Subfolder search result for "${shipmentRef}":`, searchData);
+    
+    if (searchData.files && searchData.files.length > 0) {
+      console.log(`✅ Found existing subfolder: ${searchData.files[0].name} (ID: ${searchData.files[0].id})`);
+      return searchData.files[0].id;
+    }
+
+    console.log(`📁 Creating new subfolder: "${shipmentRef}"`);
+
+    // Create subfolder if it doesn't exist
+    const createResponse = await fetch('https://www.googleapis.com/drive/v3/files', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: shipmentRef,
+        mimeType: 'application/vnd.google-apps.folder',
+        parents: [parentFolderId],
+      }),
+    });
+
+    const createData = await createResponse.json();
+    console.log('📁 Subfolder creation result:', createData);
     return createData.id;
   }
 
@@ -139,7 +189,38 @@ export class GoogleDriveService {
     try {
       if (!this.accessToken) await this.initialize();
 
-      const folderId = await this.ensureShipmentFolder();
+      let folderId: string;
+      
+      // Get shipment reference for folder organization
+      if (shipmentId > 0) {
+        console.log(`📂 Verifying shipment ${shipmentId} exists...`);
+        const { data: shipment, error: fetchError } = await supabase
+          .from('shipments')
+          .select('id, ref')
+          .eq('id', shipmentId)
+          .single();
+
+        if (fetchError) {
+          console.error('❌ Database fetch error:', fetchError);
+          throw fetchError;
+        }
+
+        if (!shipment) {
+          console.error(`❌ Shipment ${shipmentId} not found in database!`);
+          throw new Error(`Shipment ${shipmentId} does not exist`);
+        }
+
+        console.log('✅ Shipment verification successful:', shipment);
+
+        // Create folder structure: Shipment Documents/EXM-2501215/
+        const rootFolderId = await this.ensureRootFolder();
+        folderId = await this.ensureShipmentSubfolder(shipment.ref, rootFolderId);
+        console.log(`📁 Using shipment folder: ${shipment.ref} (ID: ${folderId})`);
+      } else {
+        // For bulk uploads without specific shipment, use root folder
+        console.log('📁 Bulk upload mode - using root folder');
+        folderId = await this.ensureRootFolder();
+      }
 
       // Create file metadata
       const metadata = {
@@ -173,7 +254,7 @@ export class GoogleDriveService {
       // Create document record
       const document: ShipmentDocument = {
         id: crypto.randomUUID(),
-        shipment_id: shipmentId,
+        shipment_id: shipmentId > 0 ? shipmentId : null,
         file_name: driveFile.name,
         drive_file_id: driveFile.id,
         drive_file_url: driveFile.webViewLink,
@@ -182,33 +263,6 @@ export class GoogleDriveService {
         uploaded_by: userId || 'unknown',
         uploaded_at: new Date().toISOString(),
       };
-
-      // Check if shipment exists (skip for bulk uploads with shipmentId = 0)
-      if (shipmentId > 0) {
-        console.log(`📂 Verifying shipment ${shipmentId} exists...`);
-        const { data: shipment, error: fetchError } = await supabase
-          .from('shipments')
-          .select('id, ref')
-          .eq('id', shipmentId)
-          .single();
-
-        if (fetchError) {
-          console.error('❌ Database fetch error:', fetchError);
-          // If database fetch fails, delete the uploaded file from Drive
-          await this.deleteFileFromDrive(driveFile.id);
-          throw fetchError;
-        }
-
-        if (!shipment) {
-          console.error(`❌ Shipment ${shipmentId} not found in database!`);
-          await this.deleteFileFromDrive(driveFile.id);
-          throw new Error(`Shipment ${shipmentId} does not exist`);
-        }
-
-        console.log('✅ Shipment verification successful:', shipment);
-      } else {
-        console.log('📁 Bulk upload mode - skipping shipment verification');
-      }
 
       // Save document to the documents table instead of shipments table
       console.log(`� Saving document to documents table:`, document);
@@ -338,6 +392,50 @@ export class GoogleDriveService {
 
     if (!response.ok) {
       throw new Error(`Failed to delete file from Drive: ${response.statusText}`);
+    }
+  }
+
+  /**
+   * Delete a shipment folder from Google Drive (including all files)
+   */
+  static async deleteShipmentFolder(shipmentId: number, shipmentRef: string): Promise<void> {
+    try {
+      if (!this.accessToken) await this.initialize();
+
+      console.log(`🗑️ Deleting shipment folder for: ${shipmentRef} (ID: ${shipmentId})`);
+
+      // Get root folder
+      const rootFolderId = await this.ensureRootFolder();
+
+      // Search for the shipment folder by name
+      const searchResponse = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q=name='${shipmentRef}' and '${rootFolderId}' in parents and mimeType='application/vnd.google-apps.folder'&fields=files(id,name)`,
+        {
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+          },
+        }
+      );
+
+      if (!searchResponse.ok) {
+        throw new Error(`Failed to search for shipment folder: ${searchResponse.statusText}`);
+      }
+
+      const searchData = await searchResponse.json();
+      
+      if (searchData.files && searchData.files.length > 0) {
+        // Delete each folder found (in case of duplicates)
+        for (const folder of searchData.files) {
+          console.log(`🗑️ Deleting Drive folder: ${folder.name} (ID: ${folder.id})`);
+          await this.deleteFileFromDrive(folder.id);
+        }
+        console.log(`✅ Successfully deleted ${searchData.files.length} Drive folder(s) for shipment ${shipmentRef}`);
+      } else {
+        console.log(`⚠️ No Drive folder found for shipment ${shipmentRef}`);
+      }
+    } catch (error) {
+      console.error(`❌ Error deleting shipment folder for ${shipmentRef}:`, error);
+      throw error;
     }
   }
 

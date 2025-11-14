@@ -786,6 +786,12 @@ function Compose() {
       setSuccessRecipient(combinedTo);
       setShowSuccessMessage(true);
       
+      // Close compose window immediately
+      closeCompose();
+      
+      // Reset sending state
+      setIsSending(false);
+      
       // Determine navigation destination - ALWAYS stay in thread if we have a threadId
       const isThreadReply = !!currentThreadId;
       const navigationDestination = isThreadReply ? `/email/${currentThreadId}` : '/inbox';
@@ -810,6 +816,7 @@ function Compose() {
       
     } catch (error) {
       console.error('Error sending email:', error);
+      alert('Failed to send email. Please try again.');
       setIsSending(false);
     }
   };
@@ -1265,7 +1272,7 @@ function Compose() {
               </div>
             )}
             
-            <div className="px-3 py-2 bg-gray-100 border-b border-gray-200 flex items-center justify-between">
+            <div className="px-3 py-2 bg-gray-100 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
               <div className="flex items-center gap-2">
                 <h2 className="text-sm font-medium">
                   {currentDraftId ? 'Edit Draft' : 'New Message'}
@@ -1288,7 +1295,7 @@ function Compose() {
           
           {/* Compose Form */}
           {(
-          <form onSubmit={handleSubmit} className="flex flex-col h-full">
+          <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
             <div className="flex-1 min-h-0 overflow-y-auto">
               <div className="p-3 space-y-2">
               {/* TO Section */}

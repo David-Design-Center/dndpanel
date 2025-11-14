@@ -121,15 +121,32 @@ Factors:
 
 ## 📂 ALL REPORTS
 
+### Gmail/Email System
 ```
-Project Root/
 ├─ COMPLETE_STATUS_REPORT.md      [READ THIS FIRST]
 ├─ GMAIL_INVENTORY_REPORT.md      [Detailed breakdown]
 ├─ EXTRACTION_ROADMAP.md          [Visual roadmap]
 ├─ DEVELOPER_MINDSET.md           [Strategic options]
 ├─ GAPISERVICE_BREAKDOWN.md       [Initial analysis]
 ├─ REFACTORING_NOTES.md           [Historical notes]
-└─ (this file)
+└─ EMAIL_ARCHITECTURE_ANALYSIS.md [Email repository pattern]
+```
+
+### Shipments System
+```
+├─ SHIPMENTS_QUICK_START.md              [⭐ START HERE - User guide]
+├─ SHIPMENTS_RESTRUCTURE_SUMMARY.md      [Implementation summary]
+├─ SHIPMENTS_FOLDER_RESTRUCTURE.md       [Detailed user guide]
+├─ SHIPMENTS_FOLDER_ARCHITECTURE.md      [Technical architecture]
+├─ SHIPMENTS_UPLOAD_FEATURE.md           [Original upload feature]
+└─ GOOGLE_DRIVE_SETUP.md                 [Google Drive integration]
+```
+
+### Other Features
+```
+├─ CONTACTS_DROPDOWN_IMPLEMENTATION.md   [Contacts feature]
+├─ BRANDS_VS_SUPPLIERS_ANALYSIS.md       [Brand consolidation]
+└─ (this file - ANALYSIS_INDEX.md)
 ```
 
 ---

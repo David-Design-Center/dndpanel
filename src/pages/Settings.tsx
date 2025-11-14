@@ -89,17 +89,27 @@ function Settings() {
       
       <div className="space-y-4">
         {/* Email Connection Card - Keep at top as requested */}
-        <div className="bg-white p-3 rounded-lg shadow-sm border-l-3 border-blue-500">
+        <div
+          className="p-3 rounded-xl shadow-xl"
+          style={{
+            background: "linear-gradient(135deg, #000000 0%, #4b5563 100%)",
+          }}
+        >
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center">
-              <div className="p-2 mr-3 rounded-full bg-gradient-to-br from-blue-100 to-blue-50 shadow-sm">
-                <Mail className="w-4 h-4 text-blue-600" />
+              <div
+                className="p-2 mr-3 rounded-full shadow-sm"
+                style={{
+                  background: "linear-gradient(135deg, #000000 0%, #4b5563 100%)",
+                }}
+              >
+                <Mail className="w-4 h-4 text-white" />
               </div>
               <div>
-                <h3 className="font-semibold text-base text-gray-800">Email Connection</h3>
+          <h3 className="font-semibold text-base text-gray-100">Email Connection</h3>
                 <div className="flex items-center">
                   <div className={`w-2 h-2 rounded-full mr-1.5 ${isGmailSignedIn ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                  <span className="text-xs text-gray-600">
+                  <span className="text-xs text-white">
                     {isGmailSignedIn 
                       ? `Connected (${currentProfile?.name || 'current profile'})` 
                       : 'Not connected'}
@@ -110,7 +120,7 @@ function Settings() {
             {isGmailSignedIn ? (
               <button 
                 onClick={handleSignOutGmail}
-                className="px-5 py-2.5 bg-red-50 hover:bg-red-100 text-red-700 rounded-md text-sm font-semibold transition-colors animate-pulse"
+                className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-md text-sm font-semibold transition-colors animate-pulse"
               >
                 Disconnect
               </button>
@@ -125,7 +135,7 @@ function Settings() {
             )}
           </div>  
           
-          <p className="text-xs text-gray-600">
+          <p className="text-xs text-white">
             {isGmailSignedIn 
               ? `Gmail account is connected for ${currentProfile?.name} (${currentProfile?.userEmail || 'no email'}). You can view and send emails directly from this app.` 
               : currentProfile 

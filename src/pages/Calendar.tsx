@@ -1,23 +1,14 @@
-import React, { useState, useRef } from 'react';
+import React, { useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { AlertCircle, CalendarIcon } from 'lucide-react';
+import { AlertCircle, CalendarIcon, Plus } from 'lucide-react';
 import GoogleCalendar from '../components/calendar/GoogleCalendar';
-import CalendarSidebar from '../components/calendar/CalendarSidebar';
+import AddEventForm from '../components/calendar/AddEventForm';
 
 const Calendar: React.FC = () => {
   const { isGmailSignedIn } = useAuth();
   const navigate = useNavigate();
-  const [activeCalendars, setActiveCalendars] = useState(['primary']);
   const calendarRef = useRef<any>(null);
-
-  const handleCalendarToggle = (calendarId: string, visible: boolean) => {
-    if (visible) {
-      setActiveCalendars(prev => [...prev, calendarId]);
-    } else {
-      setActiveCalendars(prev => prev.filter(id => id !== calendarId));
-    }
-  };
 
   const handleRefreshCalendar = () => {
     if (calendarRef.current) {
@@ -52,23 +43,29 @@ const Calendar: React.FC = () => {
   }
 
   return (
-    <div className="h-full flex">
-      <CalendarSidebar 
-        onCalendarToggle={handleCalendarToggle}
-        activeCalendars={activeCalendars}
-        onRefreshCalendar={handleRefreshCalendar}
-      />
-      
-      <div className="flex-1 flex flex-col">
-        <div className="p-6 border-b border-gray-200">
-          <h1 className="text-2xl font-bold text-gray-900">Calendar</h1>
-          <p className="text-gray-600 mt-1">Manage your schedule and events</p>
-        </div>
-        
-        <div className="flex-1 p-6">
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 h-full p-4">
-            <GoogleCalendar ref={calendarRef} />
+    <div className="h-full flex flex-col">
+      <div className="flex-none mb-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold text-gray-800">Calendar</h1>
           </div>
+          <div className="flex items-center space-x-2">
+            <AddEventForm 
+              trigger={
+                <button className="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2">
+                  <Plus size={14} className="mr-1.5" />
+                  <span>Add Event</span>
+                </button>
+              }
+              onEventCreated={handleRefreshCalendar}
+            />
+          </div>
+        </div>
+      </div>
+      
+      <div className="flex-1 pb-6">
+        <div className="bg-white rounded-xl shadow-xl h-full">
+          <GoogleCalendar ref={calendarRef} />
         </div>
       </div>
     </div>

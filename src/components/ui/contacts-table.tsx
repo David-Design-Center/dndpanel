@@ -201,7 +201,7 @@ function ContactsTable({
 
   if (loading) {
     return (
-      <div className="container my-10 space-y-4 p-4 border border-border rounded-lg bg-background shadow-sm overflow-x-auto">
+      <div className="container my-8 space-y-4 p-4 border border-border rounded-lg bg-background shadow-sm overflow-x-auto">
         <div className="flex items-center justify-center py-20">
           <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-gray-400"></div>
           <span className="ml-3 text-gray-600">Loading contacts...</span>
@@ -211,7 +211,7 @@ function ContactsTable({
   }
 
   return (
-    <div className="container my-10 space-y-4 p-4 border border-border rounded-lg bg-background shadow-sm overflow-x-auto">
+    <div className="container my-8 space-y-4 p-4 border border-border rounded-lg bg-background shadow-sm overflow-x-auto">
       {/* Action Bar */}
       <div className="flex flex-wrap gap-4 items-center justify-between mb-6">
         <div className="flex gap-2 flex-wrap">
