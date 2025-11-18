@@ -1,82 +1,68 @@
-EmailPageLayout.tsx:2223 📧 Current state: {activeTab: 'all', filteredEmailsLength: 0, loading: true, authLoading: false, isGmailInitializing: false, …}
-EmailPageLayout.tsx:813 📋 Pagination useEffect triggered: {activeTab: 'all', labelName: null, isGmailSignedIn: true, isGmailInitializing: false, trigger: 'tab/label/auth change'}
-EmailPageLayout.tsx:834 📋 Loading first page of emails...
-EmailPageLayout.tsx:466 🔍 loadPaginatedEmails called: {pageToken: 'none', append: false, currentEmailsCount: 0}
-emailService.ts:435 📦 Using cached email list for query: in:inbox -has:userlabels (30 emails)
-EmailPageLayout.tsx:1411 📧 EmailPageLayout useEffect triggered: {isGmailSignedIn: true, pageType: 'inbox', labelName: null, labelQueryParam: null, labelIdParam: null, …}
-EmailPageLayout.tsx:1415 📧 Starting OPTIMIZED fetchAllEmailTypes...
-EmailPageLayout.tsx:845 � Starting OPTIMIZED email fetch - reduced from ~38 to ~6-8 API calls...
-optimizedInitialLoad.ts:531 🚀 STEP 1: Loading complete inbox data (single reliable fetch)...
-optimizedInitialLoad.ts:538 📧 Fetching 30 inbox threads with complete metadata...
-optimizedInitialLoad.ts:92 📧 Optimized fetch with pagination: query="in:inbox -has:userlabels", target=30, filter=false
-gapiCallWrapper.ts:20 📧 Making threads.list with query="in:inbox -has:userlabels"...
-emailService.ts:427 Fetching fresh email list (forced refresh) with query: in:inbox -has:userlabels
-emailService.ts:448 📧 Queueing Gmail API request for emails...
-requestQueue.ts:70 🔄 Executing queued request: fetch-emails-in:inbox--has:userlabels-1763154041752-ehhdjeact
-EmailPageLayout.tsx:732 ✅ Fetched 30 emails using query in 5ms
-EmailPageLayout.tsx:762 📄 Pagination state: {emailsCount: 30, nextPageToken: '14736881259192071713', isInboxQuery: true, hasActualMore: true, forceMore: true, …}
-EmailPageLayout.tsx:2223 📧 Current state: {activeTab: 'all', filteredEmailsLength: 30, loading: false, authLoading: false, isGmailInitializing: false, …}
-EmailPageLayout.tsx:2223 📧 Current state: {activeTab: 'all', filteredEmailsLength: 0, loading: true, authLoading: false, isGmailInitializing: false, …}
-EmailPageLayout.tsx:813 📋 Pagination useEffect triggered: {activeTab: 'all', labelName: null, isGmailSignedIn: true, isGmailInitializing: false, trigger: 'tab/label/auth change'}
-EmailPageLayout.tsx:834 📋 Loading first page of emails...
-EmailPageLayout.tsx:466 🔍 loadPaginatedEmails called: {pageToken: 'none', append: false, currentEmailsCount: 0}
-emailService.ts:435 📦 Using cached email list for query: in:inbox -has:userlabels (30 emails)
-EmailPageLayout.tsx:1411 📧 EmailPageLayout useEffect triggered: {isGmailSignedIn: true, pageType: 'inbox', labelName: null, labelQueryParam: null, labelIdParam: null, …}
-EmailPageLayout.tsx:1415 📧 Starting OPTIMIZED fetchAllEmailTypes...
-EmailPageLayout.tsx:845 � Starting OPTIMIZED email fetch - reduced from ~38 to ~6-8 API calls...
-optimizedInitialLoad.ts:531 🚀 STEP 1: Loading complete inbox data (single reliable fetch)...
-optimizedInitialLoad.ts:538 📧 Fetching 30 inbox threads with complete metadata...
-optimizedInitialLoad.ts:59 🔄 Using in-flight request for key: threads-by-query:query:"in:inbox -has:userlabels"|targetCount:30
-emailService.ts:427 Fetching fresh email list (forced refresh) with query: in:inbox -has:userlabels
-emailService.ts:448 📧 Queueing Gmail API request for emails...
-requestQueue.ts:70 🔄 Executing queued request: fetch-emails-in:inbox--has:userlabels-1763154041783-qb8dtvo96
-EmailPageLayout.tsx:732 ✅ Fetched 30 emails using query in 1ms
-EmailPageLayout.tsx:762 📄 Pagination state: {emailsCount: 30, nextPageToken: '14736881259192071713', isInboxQuery: true, hasActualMore: true, forceMore: true, …}
-EmailPageLayout.tsx:2223 📧 Current state: {activeTab: 'all', filteredEmailsLength: 30, loading: false, authLoading: false, isGmailInitializing: false, …}
-optimizedInitialLoad.ts:367 📦 Fetching 50 threads with metadata...
-requestQueue.ts:73 ✅ Completed queued request: fetch-emails-in:inbox--has:userlabels-1763154041752-ehhdjeact
-EmailPageLayout.tsx:1132 📧 Fetched batch for all/unread: {total: 30, read: 28, unread: 2}
-requestQueue.ts:73 ✅ Completed queued request: fetch-emails-in:inbox--has:userlabels-1763154041783-qb8dtvo96
-EmailPageLayout.tsx:1132 📧 Fetched batch for all/unread: {total: 30, read: 28, unread: 2}
-EmailPageLayout.tsx:2223 📧 Current state: {activeTab: 'all', filteredEmailsLength: 30, loading: false, authLoading: false, isGmailInitializing: false, …}
-EmailPageLayout.tsx:2223 📧 Current state: {activeTab: 'all', filteredEmailsLength: 30, loading: false, authLoading: false, isGmailInitializing: false, …}
-optimizedInitialLoad.ts:468 ✅ Fetched 50 threads in 4648ms
-optimizedInitialLoad.ts:124 📊 API call 1: Collected 50 threads, total: 50/30
-optimizedInitialLoad.ts:134 ✅ Pagination complete: 50 threads in 1 API calls
-optimizedInitialLoad.ts:549 ✅ Loaded 50 inbox emails with complete data
-optimizedInitialLoad.ts:555 📊 Inbox loaded: 50 total, 2 unread
-optimizedInitialLoad.ts:549 ✅ Loaded 50 inbox emails with complete data
-optimizedInitialLoad.ts:555 📊 Inbox loaded: 50 total, 2 unread
-EmailPageLayout.tsx:893 ⚡ INSTANT: Showing 50 emails immediately (labels loading in background)
-optimizedInitialLoad.ts:481 📋 Using cached labels
-EmailPageLayout.tsx:893 ⚡ INSTANT: Showing 50 emails immediately (labels loading in background)
-optimizedInitialLoad.ts:481 📋 Using cached labels
-EmailPageLayout.tsx:925 📧 Background: Labels loaded (653 labels)
-optimizedInitialLoad.ts:600 Processing 2 unread primary emails for auto-reply (using cached data)
-optimizedInitialLoad.ts:620 🔄 STEP 2: Prefetching drafts only (for counter)...
-EmailPageLayout.tsx:975 ✅ OPTIMIZED fetch complete - UI updated with ~6-8 API calls instead of ~38!
-EmailPageLayout.tsx:925 📧 Background: Labels loaded (653 labels)
-optimizedInitialLoad.ts:600 Processing 2 unread primary emails for auto-reply (using cached data)
-optimizedInitialLoad.ts:620 🔄 STEP 2: Prefetching drafts only (for counter)...
-EmailPageLayout.tsx:975 ✅ OPTIMIZED fetch complete - UI updated with ~6-8 API calls instead of ~38!
-EmailPageLayout.tsx:2223 📧 Current state: {activeTab: 'all', filteredEmailsLength: 30, loading: false, authLoading: false, isGmailInitializing: false, …}
-EmailPageLayout.tsx:2223 📧 Current state: {activeTab: 'all', filteredEmailsLength: 30, loading: false, authLoading: false, isGmailInitializing: false, …}
-optimizedInitialLoad.ts:626 📧 Fetching draft emails...
-gmailLabels.ts:46 ✅ Valid Gmail labelIds: ['DRAFT']
-gmailLabels.ts:46 ✅ Valid Gmail labelIds: ['DRAFT']
-optimizedInitialLoad.ts:176 📧 Optimized fetch: labelIds=[DRAFT], maxResults=15
-gapiCallWrapper.ts:20 📧 Making messages.list with labelIds=[DRAFT]...
-optimizedInitialLoad.ts:626 📧 Fetching draft emails...
-gmailLabels.ts:46 ✅ Valid Gmail labelIds: ['DRAFT']
-optimizedInitialLoad.ts:59 🔄 Using in-flight request for key: messages-by-labels:labelIds:["DRAFT"]|maxResults:15
-optimizedInitialLoad.ts:214 📦 Fetching metadata for 15 messages using BATCH API...
-optimizedInitialLoad.ts:223 🔄 Processing 1 batch(es) of up to 100 messages each
-optimizedInitialLoad.ts:228 📤 Batch 1/1: Fetching 15 messages...
-optimizedInitialLoad.ts:341 ✅ Batch 1/1 completed in 118ms - 15 emails processed so far
-optimizedInitialLoad.ts:350 🎉 BATCH API: Fetched 15 messages in 118ms (8ms per message)
-optimizedInitialLoad.ts:351 📊 Performance: ~38x faster than individual calls
-optimizedInitialLoad.ts:634 ✅ Drafts loaded: 15 drafts
-optimizedInitialLoad.ts:634 ✅ Drafts loaded: 15 drafts
-EmailPageLayout.tsx:942 📧 Drafts loaded in background: 15 drafts
-EmailPageLayout.tsx:942 📧 Drafts loaded in background: 15 drafts
-EmailPageLayout.tsx:2223 📧 Current state: {activeTab: 'all', filteredEmailsLength: 30, loading: false, authLoading: false, isGmailInitializing: false, …}
+EmailPageLayout.tsx:784 📧 Current state: {activeTab: 'all', filteredEmailsLength: 25, loading: false, authLoading: false, isGmailInitializing: false, …}
+optimizedEmailService.ts:105 🚀 OptimizedEmailService: Fetching thread 19a88693cd405a9c
+optimizedEmailService.ts:110 ⚠️ Edge function disabled - falling back to direct Gmail API
+usePagination.ts:353 ⏸️ Pagination: Viewing email detail, skipping reset {basePath: '/inbox', prevBasePath: '/inbox', isViewingEmail: true, wasViewingEmail: false, isTransitioningToDetail: true, …}
+gmailVacationService.ts:97 Getting Gmail vacation responder settings...
+labels.ts:29 Fetching Gmail labels...
+emailService.ts:907 Using cached email for ID: 19a88693cd405a9c
+optimizedEmailService.ts:105 🚀 OptimizedEmailService: Fetching thread 19a88693cd405a9c
+optimizedEmailService.ts:110 ⚠️ Edge function disabled - falling back to direct Gmail API
+emailService.ts:987 Fetching all emails in thread: 19a88693cd405a9c
+EmailPageLayout.tsx:784 📧 Current state: {activeTab: 'all', filteredEmailsLength: 0, loading: true, authLoading: false, isGmailInitializing: false, …}
+optimizedEmailService.ts:105 🚀 OptimizedEmailService: Fetching thread 19a88693cd405a9c
+optimizedEmailService.ts:110 ⚠️ Edge function disabled - falling back to direct Gmail API
+usePagination.ts:353 ⏸️ Pagination: Viewing email detail, skipping reset {basePath: '/inbox', prevBasePath: undefined, isViewingEmail: true, wasViewingEmail: false, isTransitioningToDetail: true, …}
+useEmailFetch.ts:674 📧 EmailPageLayout useEffect triggered: {isGmailSignedIn: true, pageType: 'inbox', labelName: null, labelQueryParam: null, labelIdParam: null, …}
+useEmailFetch.ts:698 📧 Initial load delegated to usePagination
+emailService.ts:907 Using cached email for ID: 19a88693cd405a9c
+optimizedEmailService.ts:105 🚀 OptimizedEmailService: Fetching thread 19a88693cd405a9c
+optimizedEmailService.ts:110 ⚠️ Edge function disabled - falling back to direct Gmail API
+emailService.ts:987 Fetching all emails in thread: 19a88693cd405a9c
+EmailPageLayout.tsx:784 📧 Current state: {activeTab: 'all', filteredEmailsLength: 0, loading: true, authLoading: false, isGmailInitializing: false, …}
+gmailVacationService.ts:119 Gmail vacation settings retrieved: {enableAutoReply: false, responseSubject: 'Out of Office', responseBodyPlainText: '', responseBodyHtml: '<div style="font-family:Arial,sans-serif;line-heig…erstanding.</p>\n        <p>Marti</p>\n      </div>', restrictToContacts: false, …}
+labels.ts:40  Raw Gmail API response from list: {labels: Array(23)}
+labels.ts:41 Found 23 labels, now fetching details with counters...
+labels.ts:48  Fetching detailed info for 7 key system labels only
+labels.ts:69  Fetched details for SENT
+messages.ts:349 Email fetch successful, processing payload
+messages.ts:369 Finding body part...
+messages.ts:372 Body part found, type: text/html
+body.ts:22 📧 Decoding email part: mimeType=text/html, charset=utf-8
+body.ts:26 📦 Decoded 61496 bytes from base64url
+body.ts:32 🔐 Content-Transfer-Encoding: quoted-printable
+body.ts:36 🔄 Decoding quoted-printable...
+body.ts:38 📦 After QP decode: 61490 bytes
+body.ts:43 📝 Decoded to 61470 characters
+body.ts:46 📄 First 200 chars: <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html data-editor-version="2" class="sg-campaigns" xmlns="http://www.w3.org/1999/xhtml">
+messages.ts:376 🔍 Searching for inline attachments...
+messages.ts:94 📎 Total inline attachments found: 0
+messages.ts:383 ℹ️ No inline attachments found
+messages.ts:387 🔍 Searching for real attachments...
+messages.ts:59 📎 Total attachments found: 0
+messages.ts:349 Email fetch successful, processing payload
+messages.ts:369 Finding body part...
+messages.ts:372 Body part found, type: text/html
+body.ts:22 📧 Decoding email part: mimeType=text/html, charset=utf-8
+body.ts:26 📦 Decoded 61496 bytes from base64url
+body.ts:32 🔐 Content-Transfer-Encoding: quoted-printable
+body.ts:36 🔄 Decoding quoted-printable...
+body.ts:38 📦 After QP decode: 61490 bytes
+body.ts:43 📝 Decoded to 61470 characters
+body.ts:46 📄 First 200 chars: <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html data-editor-version="2" class="sg-campaigns" xmlns="http://www.w3.org/1999/xhtml">
+messages.ts:376 🔍 Searching for inline attachments...
+messages.ts:94 📎 Total inline attachments found: 0
+messages.ts:383 ℹ️ No inline attachments found
+messages.ts:387 🔍 Searching for real attachments...
+messages.ts:59 📎 Total attachments found: 0
+labels.ts:69  Fetched details for INBOX
+labels.ts:69  Fetched details for IMPORTANT
+labels.ts:69  Fetched details for TRASH
+labels.ts:69  Fetched details for DRAFT
+labels.ts:69  Fetched details for SPAM
+labels.ts:69  Fetched details for STARRED
+labels.ts:80  Raw label details with counters: (23) [{…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}]
+labels.ts:98 Found 5 labels with message counts
+labels.ts:101 KEY SYSTEM LABELS: (3) [{…}, {…}, {…}]
+labels.ts:107 Successfully fetched 23 Gmail labels

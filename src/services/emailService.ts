@@ -422,11 +422,14 @@ export const getEmails = async (
   // Normal search-based fetch with caching
 
   // If pageToken is provided, always fetch new data (don't use cache for pagination)
-  // If force refresh is requested, fetch new data
-  if (pageToken || forceRefresh) {
+  // If force refresh is requested OR it's an inbox query, fetch new data (don't use cache for inbox)
+  const isInboxQuery = query?.includes('inbox') || query?.includes('INBOX');
+  
+  if (pageToken || forceRefresh || isInboxQuery) {
     console.log('Fetching fresh email list' + 
       (forceRefresh ? ' (forced refresh)' : '') + 
       (pageToken ? ' (pagination)' : '') + 
+      (isInboxQuery ? ' (inbox - no cache)' : '') +
       ` with query: ${query}`);
   } else {
     // Try to get from cache first (with localStorage fallback)

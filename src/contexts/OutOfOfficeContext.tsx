@@ -91,8 +91,22 @@ export function OutOfOfficeProvider({ children }: OutOfOfficeProviderProps) {
 
   // Load status when profile changes or Gmail API becomes ready
   useEffect(() => {
+    // ✅ GUARD: Only load vacation status when on email-related pages or settings
+    const isOnEmailPage = location.pathname.startsWith('/inbox') || 
+                          location.pathname.startsWith('/unread') ||
+                          location.pathname.startsWith('/sent') ||
+                          location.pathname.startsWith('/drafts') ||
+                          location.pathname.startsWith('/trash') ||
+                          location.pathname.startsWith('/settings') ||
+                          location.pathname.startsWith('/email');
+
+    if (!isOnEmailPage) {
+      console.log('⏸️ OutOfOfficeContext: Not on email/settings page, skipping status check');
+      return;
+    }
+
     refreshStatus();
-  }, [currentProfile, isGmailApiReady]);
+  }, [currentProfile, isGmailApiReady, location.pathname]);
 
   // Listen for tab visibility refresh events (instead of relying on auth state changes)
   useEffect(() => {

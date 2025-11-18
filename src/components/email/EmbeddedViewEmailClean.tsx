@@ -309,10 +309,12 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
               new Date(a.date).getTime() - new Date(b.date).getTime()
             );
             setThreadMessages(sorted);
+            setLoadedImages(new Set());
             // Auto-expand the latest message
             setExpandedMessages(new Set([sorted[sorted.length - 1].id]));
           } else {
             setThreadMessages([fetchedEmail]);
+            setLoadedImages(new Set());
             setExpandedMessages(new Set([fetchedEmail.id]));
           }
         } catch {
@@ -321,10 +323,12 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
             new Date(a.date).getTime() - new Date(b.date).getTime()
           );
           setThreadMessages(sorted);
+          setLoadedImages(new Set());
           setExpandedMessages(new Set([sorted[sorted.length - 1].id]));
         }
       } else {
         setThreadMessages([fetchedEmail]);
+        setLoadedImages(new Set());
         setExpandedMessages(new Set([fetchedEmail.id]));
       }
     } catch (err) {
@@ -1173,6 +1177,48 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     };
   }, [showReplyComposer, isDirty, saveDraft]);
 
+  const loadInlineImagesForMessage = useCallback(async (messageId: string) => {
+    if (loadedImages.has(messageId)) return;
+
+    const message = threadMessages.find(m => m.id === messageId);
+    if (!message || !message.inlineAttachments || message.inlineAttachments.length === 0) {
+      return;
+    }
+
+    console.log(`🖼️ Loading ${message.inlineAttachments.length} inline images for message ${messageId}`);
+
+    const maxRetries = 3;
+    const delayMs = 1000;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`🔄 Attempt ${attempt}/${maxRetries} to load images for message ${messageId}`);
+
+        const updatedBody = await replaceCidReferences(
+          message.body,
+          message.inlineAttachments || [],
+          messageId
+        );
+
+        setThreadMessages(prev => 
+          prev.map(m => m.id === messageId ? { ...m, body: updatedBody } : m)
+        );
+
+        setLoadedImages(prev => new Set(prev).add(messageId));
+        console.log(`✅ Inline images loaded for message ${messageId} on attempt ${attempt}`);
+        return;
+      } catch (error) {
+        console.error(`❌ Attempt ${attempt}/${maxRetries} failed to load inline images:`, error);
+        if (attempt < maxRetries) {
+          console.log(`⏳ Retrying in ${delayMs}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+      }
+    }
+
+    console.error(`❌ All ${maxRetries} attempts failed for message ${messageId}`);
+  }, [loadedImages, threadMessages, setThreadMessages]);
+
   const toggleMessageExpansion = async (messageId: string) => {
     const wasExpanded = expandedMessages.has(messageId);
     
@@ -1186,52 +1232,23 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       return next;
     });
     
-    // If expanding and images not loaded yet, load them now
-    if (!wasExpanded && !loadedImages.has(messageId)) {
-      const message = threadMessages.find(m => m.id === messageId);
-      if (message?.inlineAttachments && message.inlineAttachments.length > 0) {
-        console.log(`🖼️ Lazy loading ${message.inlineAttachments.length} inline images for message ${messageId}`);
-        
-        // Retry logic for loading images
-        const loadWithRetry = async (maxRetries = 3, delayMs = 1000) => {
-          for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-              console.log(`🔄 Attempt ${attempt}/${maxRetries} to load images for message ${messageId}`);
-              
-              // Replace cid: references with actual data URIs
-              const updatedBody = await replaceCidReferences(
-                message.body,
-                message.inlineAttachments || [],
-                messageId
-              );
-              
-              // Update the message with loaded images
-              setThreadMessages(prev => 
-                prev.map(m => m.id === messageId ? { ...m, body: updatedBody } : m)
-              );
-              
-              // Mark as loaded
-              setLoadedImages(prev => new Set(prev).add(messageId));
-              console.log(`✅ Inline images loaded for message ${messageId} on attempt ${attempt}`);
-              return; // Success, exit retry loop
-              
-            } catch (error) {
-              console.error(`❌ Attempt ${attempt}/${maxRetries} failed to load inline images:`, error);
-              
-              if (attempt < maxRetries) {
-                console.log(`⏳ Retrying in ${delayMs}ms...`);
-                await new Promise(resolve => setTimeout(resolve, delayMs));
-              } else {
-                console.error(`❌ All ${maxRetries} attempts failed for message ${messageId}`);
-              }
-            }
-          }
-        };
-        
-        loadWithRetry();
-      }
+    if (!wasExpanded) {
+      loadInlineImagesForMessage(messageId);
     }
   };
+
+  // Ensure inline images load for any message currently expanded (including initial single-message threads)
+  useEffect(() => {
+    if (!threadMessages.length) return;
+
+    const targetIds = expandedMessages.size > 0
+      ? Array.from(expandedMessages)
+      : [threadMessages[threadMessages.length - 1].id];
+
+    targetIds.forEach(id => {
+      loadInlineImagesForMessage(id);
+    });
+  }, [expandedMessages, threadMessages, loadInlineImagesForMessage]);
 
   const handleDownloadAttachment = async (messageId: string, attachmentId: string, filename: string) => {
     try {
@@ -1347,6 +1364,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="referrer" content="no-referrer">
         <base target="_blank">
         <style>
           * { 
@@ -1410,7 +1428,8 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         title="Email content"
         className="w-full border-0"
         style={{ minHeight: '400px', height: 'auto' }}
-        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+        sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+        referrerPolicy="no-referrer"
         onLoad={(e) => {
           const iframe = e.target as HTMLIFrameElement;
           if (iframe.contentDocument) {

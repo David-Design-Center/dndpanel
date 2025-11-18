@@ -194,10 +194,13 @@ function App() {
           }
         >
             <Route index element={<Navigate to="/inbox" replace />} />
-            <Route path="inbox" element={<Inbox />} />
-            <Route path="inbox/email/:id" element={<Inbox />} />
-            <Route path="unread" element={<Unread />} />
-            <Route path="unread/email/:id" element={<Unread />} />
+            <Route path="inbox/*" element={<Inbox />}>
+              {/* Keep EmailPageLayout mounted while viewing an email detail */}
+              <Route path="email/:id" element={<></>} />
+            </Route>
+            <Route path="unread/*" element={<Unread />}>
+              <Route path="email/:id" element={<></>} />
+            </Route>
             <Route path="email/:id" element={
               <Suspense fallback={<div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-primary-500"></div></div>}>
                 <ViewEmail />

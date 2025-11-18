@@ -1,4 +1,4 @@
-import { useEffect, useState, Suspense, lazy } from 'react';
+import { useEffect, useState, Suspense, lazy, useMemo } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import FoldersColumn from '../email labels/FoldersColumn';
@@ -115,12 +115,14 @@ function LayoutContent({
   const { isFoldersColumnExpanded, toggleFoldersColumn } = useFoldersColumn();
   const { isComposeOpen, openCompose } = useCompose();
   const location = useLocation();
-  const [animationKey, setAnimationKey] = useState(0);
-
-  // Trigger animation on route change
-  useEffect(() => {
-    setAnimationKey(prev => prev + 1);
-  }, [location.pathname]);
+  const animationKey = useMemo(() => {
+    if (isEmailRoute) {
+      // Keep the same key when toggling between list and detail so EmailPageLayout stays mounted
+      const basePath = location.pathname.split('/email/')[0];
+      return basePath || location.pathname;
+    }
+    return location.pathname;
+  }, [location.pathname, isEmailRoute]);
 
   // Auto-select profile for non-admin users (only once)
   useEffect(() => {

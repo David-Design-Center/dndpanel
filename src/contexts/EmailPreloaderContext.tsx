@@ -189,12 +189,22 @@ export function EmailPreloaderProvider({ children }: { children: React.ReactNode
   }, []);
 
   // Ghost pre-loading: Aggressively preload all pages when Gmail is signed in
+  // ✅ DISABLED: Only preload when user actually visits email pages
+  // This prevents unnecessary API calls when connecting Gmail from Settings
   useEffect(() => {
-    if (isGmailSignedIn && !hasInitialPreload && !isRefreshing) {
+    // Check if user is on an email-related page
+    const isOnEmailPage = location.pathname.startsWith('/inbox') || 
+                          location.pathname.startsWith('/unread') ||
+                          location.pathname.startsWith('/sent') ||
+                          location.pathname.startsWith('/drafts') ||
+                          location.pathname.startsWith('/trash');
+
+    if (isGmailSignedIn && !hasInitialPreload && !isRefreshing && isOnEmailPage) {
+      console.log('📧 EmailPreloader: User on email page, starting preload');
       setIsGhostPreloadComplete(false);
       setHasInitialPreload(true);
       
-      // Single preload on sign-in
+      // Single preload on sign-in ONLY when on email pages
       preloadAllPages();
     } else if (!isGmailSignedIn) {
       setIsGhostPreloadComplete(false);
@@ -208,8 +218,10 @@ export function EmailPreloaderProvider({ children }: { children: React.ReactNode
         drafts: { emails: [], timestamp: 0, hasMoreEmails: false, isLoaded: false },
         trash: { emails: [], timestamp: 0, hasMoreEmails: false, isLoaded: false },
       });
+    } else if (isGmailSignedIn && !isOnEmailPage) {
+      console.log('⏸️ EmailPreloader: Not on email page, skipping preload');
     }
-  }, [isGmailSignedIn, hasInitialPreload, isRefreshing, preloadAllPages]);
+  }, [isGmailSignedIn, hasInitialPreload, isRefreshing, location.pathname, preloadAllPages]);
 
   // Listen for profile switches and clear cache
   useEffect(() => {

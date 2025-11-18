@@ -697,12 +697,40 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const wasOnEmailPageRef = useRef(false);
+  const lastRefreshKeyRef = useRef<string | null>(null);
+
   // Refresh labels when Gmail API becomes ready OR when the current profile changes
-  // This ensures we only fetch labels when the API is properly configured for the current profile
+  // Avoid re-fetching whenever the route changes within email pages (e.g., opening a message)
   useEffect(() => {
-    devLog.debug(`Label refresh triggered`);
+    const isOnEmailPage = location.pathname.startsWith('/inbox') ||
+                location.pathname.startsWith('/unread') ||
+                location.pathname.startsWith('/sent') ||
+                location.pathname.startsWith('/drafts') ||
+                location.pathname.startsWith('/trash') ||
+                location.pathname.startsWith('/email');
+
+    if (!isOnEmailPage) {
+      wasOnEmailPageRef.current = false;
+      console.log('⏸️ LabelContext: Not on email page, skipping label fetch');
+      return;
+    }
+
+    const refreshKey = `${currentProfile?.id || 'no-profile'}|${Number(isGmailSignedIn)}|${Number(isGmailApiReady)}|${Number(isDataLoadingAllowed)}`;
+    const alreadyRefreshedForKey = lastRefreshKeyRef.current === refreshKey;
+    const stayedOnEmailPage = wasOnEmailPageRef.current && alreadyRefreshedForKey;
+
+    if (stayedOnEmailPage) {
+      // No relevant dependency change; avoid redundant refresh when switching folders or opening messages
+      return;
+    }
+
+    wasOnEmailPageRef.current = true;
+    lastRefreshKeyRef.current = refreshKey;
+
+    devLog.debug('Label refresh triggered');
     refreshLabels();
-  }, [isGmailSignedIn, isGmailApiReady, currentProfile?.id, isDataLoadingAllowed]); // Depend on security policy
+  }, [isGmailSignedIn, isGmailApiReady, currentProfile?.id, isDataLoadingAllowed, location.pathname, refreshLabels]);
 
   // Listen for profile switches and clear cache
   useEffect(() => {

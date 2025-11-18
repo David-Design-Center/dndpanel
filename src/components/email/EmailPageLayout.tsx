@@ -1,105 +1,48 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   RefreshCw,
   Search,
+  ChevronLeft,
+  ChevronRight,
+  ArrowLeft,
+  Settings,
+  X,
   Trash2,
-  MailOpen,
   Mail,
-} from 'lucide-react';
-import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, MouseSensor, TouchSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core';
+  MailOpen,
+  MessageSquareWarning} from 'lucide-react';
+import { useCompose } from '@/contexts/ComposeContext';
+import EmailListItem from './EmailListItem';
+import ThreeColumnLayout from '../layout/ThreeColumnLayout';
+import { Email } from '../../types';
+import {
+  getSentEmails, 
+  getDraftEmails, 
+  deleteEmail,
+  clearEmailCache
+} from '../../services/emailService';
+import { emailRepository } from '../../services/emailRepository';
+import { useAuth } from '../../contexts/AuthContext';
+import { useInboxLayout } from '../../contexts/InboxLayoutContext';
+import { useFoldersColumn } from '../../contexts/FoldersColumnContext';
+import { toast } from 'sonner';
+// Import custom hooks
+import { usePagination, useEmailFetch, useEmailSelection, useEmailFilters, useEmailCounts, useTabManagement } from './EmailPageLayout/hooks';
+// Import DND packages
+import { 
+  DndContext, 
+  DragOverlay,
+  useSensor, 
+  useSensors, 
+  MouseSensor, 
+  TouchSensor, 
+  closestCenter,
+  DragEndEvent 
+} from '@dnd-kit/core';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { createPortal } from 'react-dom';
-import { toast } from 'sonner';
-
-import { Email } from '@/types';
 import { Table, TableBody } from '@/components/ui/table';
-import { useCompose } from '@/contexts/ComposeContext';
-import { useAuth } from '@/contexts/AuthContext';
-import { useInboxLayout } from '@/contexts/InboxLayoutContext';
-import { useFoldersColumn } from '@/contexts/FoldersColumnContext';
-
-import ThreeColumnLayout from '../layout/ThreeColumnLayout';
-import EmailListItem from './EmailListItem';
-
-import {
-  createInitialState,
-  TAB_KEYS,
-  type EmailPageLayoutState,
-  type TabKey,
-} from './EmailPageLayout';
-import {
-  fetchAllEmailTypes,
-  fetchLabelEmails,
-  handleDeleteEmail,
-  handleDeleteSelectedEmails,
-  handleMarkEmailAsRead,
-  handleMarkSelectedAsRead,
-  handleMarkSelectedAsUnread,
-} from './EmailPageLayout';
-import {
-  getCurrentEmails,
-  getTabDisplayName,
-  getTabBadgeCount,
-  shouldShowEmptyState,
-  getEmptyStateMessage,
-  getSelectionDisplayText,
-} from './EmailPageLayout';
-import { emailRepository } from '@/services/emailRepository';
-
-const FOLDER_TO_TAB: Record<string, TabKey> = {
-  inbox: 'all',
-  sent: 'sent',
-  drafts: 'drafts',
-  trash: 'trash',
-  spam: 'spam',
-  starred: 'starred',
-  important: 'important',
-};
-
-const NON_INBOX_ROUTE_TO_TAB: Record<string, TabKey> = {
-  unread: 'unread',
-  sent: 'sent',
-  drafts: 'drafts',
-  trash: 'trash',
-};
-
-const computeCountsFromRepository = (): Record<TabKey, number> => ({
-  all: emailRepository.getInboxEmails().length,
-  unread: emailRepository.getUnreadEmails().length,
-  sent: emailRepository.getSentEmails().length,
-  drafts: emailRepository.getDraftEmails().length,
-  trash: emailRepository.getTrashEmails().length,
-  important: emailRepository.getImportantEmails().length,
-  starred: emailRepository.getStarredEmails().length,
-  spam: emailRepository.getSpamEmails().length,
-  allmail: emailRepository.getAllMailEmails().length,
-});
-
-const getEmailsForTab = (tab: TabKey): Email[] => {
-  switch (tab) {
-    case 'all':
-      return emailRepository.getInboxEmails();
-    case 'unread':
-      return emailRepository.getUnreadEmails();
-    case 'sent':
-      return emailRepository.getSentEmails();
-    case 'drafts':
-      return emailRepository.getDraftEmails();
-    case 'trash':
-      return emailRepository.getTrashEmails();
-    case 'important':
-      return emailRepository.getImportantEmails();
-    case 'starred':
-      return emailRepository.getStarredEmails();
-    case 'spam':
-      return emailRepository.getSpamEmails();
-    case 'allmail':
-      return emailRepository.getAllMailEmails();
-    default:
-      return [];
-  }
-};
 
 type EmailPageType = 'inbox' | 'unread' | 'sent' | 'drafts' | 'trash';
 
@@ -112,458 +55,1845 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { isGmailSignedIn, loading: authLoading, isGmailInitializing } = useAuth();
-  const { selectEmail, clearSelection: clearInboxSelection } = useInboxLayout();
+  const { selectEmail } = useInboxLayout();
   const { setSystemFolderFilterHandler } = useFoldersColumn();
   const { openCompose } = useCompose();
 
-  const [viewState, setViewState] = useState<EmailPageLayoutState>(() => createInitialState());
-  const [repositoryVersion, setRepositoryVersion] = useState(0);
-  const [activeEmail, setActiveEmail] = useState<Email | null>(null);
+  // Ref to preserve scroll position during state updates
+  const emailListRef = useRef<HTMLDivElement>(null);
+  const scrollPositionRef = useRef<number>(0);
+  const selectAllCheckboxRef = useRef<HTMLInputElement>(null);
 
-  const sensors = useSensors(
-    useSensor(MouseSensor, {
-      activationConstraint: { distance: 10 },
-    }),
-    useSensor(TouchSensor, {
-      activationConstraint: { delay: 250, tolerance: 5 },
-    })
-  );
+  // Handle pagination for Show All views - fetch more if needed
+  const handleUnreadShowAllNextPage = async () => {
+    const nextPage = unreadShowAllPage + 1;
+    const startIdx = nextPage * SECTION_PAGE_SIZE;
+    
+    // Only fetch if we don't have enough emails for this page
+    if (startIdx >= splitUnread.length && !isLoadingUnreadShowAll) {
+      setIsLoadingUnreadShowAll(true);
+      try {
+        await loadMoreForTab('all');
+      } finally {
+        setIsLoadingUnreadShowAll(false);
+      }
+    }
+    
+    setUnreadShowAllPage(nextPage);
+  };
 
+  const handleReadShowAllNextPage = async () => {
+    const nextPage = readShowAllPage + 1;
+    const startIdx = nextPage * SECTION_PAGE_SIZE;
+    
+    // Only fetch if we don't have enough emails for this page
+    if (startIdx >= splitRead.length && !isLoadingReadShowAll) {
+      setIsLoadingReadShowAll(true);
+      try {
+        await loadMoreForTab('all');
+      } finally {
+        setIsLoadingReadShowAll(false);
+      }
+    }
+    
+    setReadShowAllPage(nextPage);
+  };
+
+  // Extract label name from URL parameters
   const urlParams = new URLSearchParams(location.search);
   const labelName = urlParams.get('labelName');
   const labelQueryParam = urlParams.get('labelQuery');
   const labelIdParam = urlParams.get('labelId');
   const effectiveLabelQuery = labelQueryParam || labelName || undefined;
-  const isLabelView = Boolean(labelName);
 
-  const setState = useCallback((updater: (prev: EmailPageLayoutState) => EmailPageLayoutState) => {
-    setViewState(prev => updater(prev));
-  }, []);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshCooldown, setRefreshCooldown] = useState(false);
+  // const [searchQuery, setSearchQuery] = useState(''); // NOW FROM useEmailFilters
+  // const [searchSuggestions, setSearchSuggestions] = useState<SearchSuggestion[]>([]); // NOW FROM useEmailFilters
+  // const [showSuggestions, setShowSuggestions] = useState(false); // NOW FROM useEmailFilters
+  // const [isSearching, setIsSearching] = useState(false); // NOW FROM useEmailFilters
+  // const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'sent' | 'drafts' | 'trash' | 'important' | 'starred' | 'spam' | 'allmail'>('all'); // NOW FROM useTabManagement
+  const [hasEverLoaded, setHasEverLoaded] = useState(false); // Track if we've ever successfully loaded
+  // Inbox split view mode: show Unread and Everything Else side-by-side vertically, or expand one
+  // const [inboxViewMode, setInboxViewMode] = useState<'split' | 'unread' | 'read'>('split'); // NOW FROM useTabManagement
+  // Layout preference: 'list' (single column) or 'split' (unread/read sections)
+  const [layoutMode] = useState<'list' | 'split'>('list');
+  
+  // Placeholder for tab management (initialized after emailFetch for loadMoreForTab dependency)
+  const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'sent' | 'drafts' | 'trash' | 'important' | 'starred' | 'spam' | 'allmail'>('all');
+  const [inboxViewMode, setInboxViewMode] = useState<'split' | 'unread' | 'read'>('split');
+  
+  // ========== PAGINATION (Extracted to usePagination hook) ==========
+  const pagination = usePagination({
+    isGmailSignedIn,
+    isGmailInitializing,
+    activeTab,
+    labelName,
+    labelQueryParam,
+    pageType,
+    setLoading,
+    emailListRef
+  });
+  
+  // Destructure for backwards compatibility
+  const {
+    paginatedEmails,
+    setPaginatedEmails,
+    nextPageToken,
+    setNextPageToken,
+    isLoadingMore,
+    loadPaginatedEmails,
+    handleLoadMore
+  } = pagination;
 
-  const bumpRepositoryVersion = useCallback(() => {
-    setRepositoryVersion(prev => prev + 1);
-  }, []);
 
-  const refreshFromRepository = useCallback(() => {
-    setState(prev => ({
-      ...prev,
-      emailCounts: computeCountsFromRepository(),
-    }));
-    bumpRepositoryVersion();
-  }, [bumpRepositoryVersion, setState]);
+  // Feature flags – client wants all under Inbox, no category tabs, no Focused/Other
+  const CATEGORIES_ENABLED = false;
+  const FOCUSED_TOGGLE_ENABLED = false;
+  
+  // Temp placeholders for cross-dependent hooks
+  const handleRefreshPlaceholder = async () => {};
+  const buildFiltersPlaceholder = () => ({});
 
-  const refreshData = useCallback(async (force = false) => {
-    if (!isGmailSignedIn || authLoading || isGmailInitializing) {
-      return;
+  const emailFetch = useEmailFetch({
+    isGmailSignedIn,
+    authLoading,
+    isGmailInitializing,
+    pageType,
+    labelName,
+    labelQueryParam,
+    labelIdParam,
+    setLoading,
+    setHasEverLoaded,
+    buildFilters: buildFiltersPlaceholder,
+    CATEGORIES_ENABLED
+  });
+  
+  // Destructure for backwards compatibility
+  const {
+    allTabEmails,
+    setAllTabEmails,
+    tabLoaded,
+    emailCounts,
+    setEmailCounts,
+    categoryEmails,
+    setCategoryEmails,
+    setPageTokens,
+    hasMoreForTabs,
+    setHasMoreForTabs,
+    emails,
+    setEmails,
+    fetchLabelEmails,
+    loadMoreForTab
+  } = emailFetch;
+  
+  // ========== EMAIL FILTERS (Extracted to useEmailFilters hook) ==========
+  const emailFilters = useEmailFilters({
+    pageType,
+    labelName,
+    activeTab,
+    allTabEmails,
+    emails,
+    setAllTabEmails,
+    setPageTokens,
+    setPaginatedEmails,
+    handleRefresh: handleRefreshPlaceholder
+  });
+  
+  // Destructure for backwards compatibility
+  const {
+    searchQuery,
+    searchSuggestions,
+    showSuggestions,
+    setShowSuggestions,
+    isSearching,
+    activeCategory,
+    activeFilters,
+    handleSearchInput,
+    handleSuggestionSelect,
+    handleSearchSubmit,
+    activeSearchQuery,
+    clearSearch
+  } = emailFilters;
+  
+  // ========== EMAIL COUNTS (Extracted to useEmailCounts hook) ==========
+  const emailCountsHook = useEmailCounts({
+    pageType,
+    labelName,
+    allTabEmails,
+    paginatedEmails,
+    emailCounts,
+    setEmailCounts
+  });
+  
+  // Destructure for backwards compatibility
+  const {
+    unreadCount,
+    draftsCount,
+    trashCount
+  } = emailCountsHook;
+  
+  // ========== EMAIL SELECTION (Extracted to useEmailSelection hook) ==========
+  const emailSelection = useEmailSelection({
+    pageType,
+    labelName,
+    setAllTabEmails,
+    setCategoryEmails,
+    setEmails
+  });
+  
+  // Destructure for backwards compatibility
+  const {
+    selectedEmails,
+    setSelectedEmails,
+    sectionSelectedEmails,
+    setSectionSelectedEmails,
+    handleToggleSelectEmail,
+    handleDeleteSelected,
+    handleMarkReadSelected,
+    handleMarkUnreadSelected,
+    clearSelection
+  } = emailSelection;
+  
+  // ========== TAB MANAGEMENT (Extracted to useTabManagement hook) ==========
+  const tabManagement = useTabManagement({
+    pageType,
+    labelName,
+    inboxViewMode,
+    setInboxViewMode,
+    setActiveTab,
+    tabLoaded,
+    setSystemFolderFilterHandler,
+    loadMoreForTab,
+    clearSelection
+  });
+  
+  // Destructure tab management utilities
+  const {
+    switchInboxViewMode
+  } = tabManagement;
+  
+  // Toolbar filter state
+  const [] = useState(false);
+  // const [selectedEmails, setSelectedEmails] = useState<Set<string>>(new Set()); // NOW FROM useEmailSelection
+  const [] = useState({
+    from: '',
+    hasAttachment: false,
+    dateRange: { start: '', end: '' }
+  });
+
+  // Focused/Other partitioning logic
+  const calculateFocusedScore = (email: Email): number => {
+    let score = 0;
+
+    // From frequent contacts / in Contacts → +3
+    // For now, we'll use heuristics based on email patterns
+    const senderEmail = email.from.email.toLowerCase();
+    const senderDomain = senderEmail.split('@')[1] || '';
+    
+    // Personal domains and common email providers get higher score
+    const personalDomains = ['gmail.com', 'outlook.com', 'yahoo.com', 'hotmail.com', 'icloud.com'];
+    if (personalDomains.includes(senderDomain)) {
+      score += 1;
     }
 
-    setState(prev => ({ ...prev, loading: true }));
+    // Avoid no-reply and automated senders
+    if (!senderEmail.includes('noreply') && !senderEmail.includes('no-reply') && 
+        !senderEmail.includes('support') && !senderEmail.includes('notification')) {
+      score += 1;
+    }
 
-    try {
-      if (isLabelView && labelIdParam) {
-        const result = await fetchLabelEmails(labelIdParam, undefined, force);
-        setState(prev => ({
-          ...prev,
-          labelEmails: result.emails,
-          labelPageToken: result.nextPageToken,
-          labelHasMoreEmails: Boolean(result.nextPageToken),
-          hasEverLoaded: true,
-          loading: false,
-        }));
-        refreshFromRepository();
+    // label:IMPORTANT → +2
+    if (email.labelIds?.includes('IMPORTANT')) {
+      score += 2;
+    }
+
+    // Starred emails are likely important → +2
+    if (email.labelIds?.includes('STARRED')) {
+      score += 2;
+    }
+
+    // To me only (not bulk) → +2
+    // Check if it's likely a personal email (single recipient, not marketing)
+    if (email.to && email.to.length === 1) {
+      score += 1;
+    }
+
+    // Not category:promotions|social → +1
+    // We can infer category from the current active category
+  const isPromotionsOrSocial = CATEGORIES_ENABLED && (activeCategory === 'promotions' || activeCategory === 'social');
+    if (!isPromotionsOrSocial) {
+      score += 1;
+    }
+
+    // Contains "unsubscribe" → −2
+    const bodyText = email.body?.toLowerCase() || '';
+    const subjectText = email.subject?.toLowerCase() || '';
+    if (bodyText.includes('unsubscribe') || subjectText.includes('unsubscribe')) {
+      score -= 2;
+    }
+
+    // Additional negative signals for bulk/marketing emails
+    const marketingKeywords = ['newsletter', 'promotion', 'sale', 'offer', 'deal', 'discount', 'limited time', 'act now'];
+    const hasMarketingKeywords = marketingKeywords.some(keyword => 
+      bodyText.includes(keyword) || subjectText.includes(keyword)
+    );
+    if (hasMarketingKeywords) {
+      score -= 1;
+    }
+
+    // Automated emails get lower score
+    const automatedKeywords = ['automated', 'automatic', 'noreply', 'do not reply', 'system generated'];
+    const isAutomated = automatedKeywords.some(keyword => 
+      bodyText.includes(keyword) || subjectText.includes(keyword) || senderEmail.includes(keyword.replace(' ', ''))
+    );
+    if (isAutomated) {
+      score -= 1;
+    }
+
+    // Long recipient lists suggest bulk emails → −1
+    if (email.to && email.to.length > 5) {
+      score -= 1;
+    }
+
+    return score;
+  };
+
+  const partitionEmailsByFocus = (emails: Email[]): { focused: Email[], other: Email[] } => {
+    const focused: Email[] = [];
+    const other: Email[] = [];
+
+    emails.forEach(email => {
+      const score = calculateFocusedScore(email);
+      if (score >= 1) { // Lowered threshold to be less restrictive
+        focused.push(email);
       } else {
-        await fetchAllEmailTypes(force);
-        setState(prev => ({
-          ...prev,
-          emailCounts: computeCountsFromRepository(),
-          hasEverLoaded: true,
-          loading: false,
-        }));
-        bumpRepositoryVersion();
+        other.push(email);
       }
-    } catch (error) {
-      console.error('Failed to refresh inbox', error);
-      setState(prev => ({ ...prev, loading: false }));
-      throw error;
-    }
-  }, [authLoading, bumpRepositoryVersion, isGmailInitializing, isGmailSignedIn, isLabelView, labelIdParam, refreshFromRepository, setState]);
-
-  useEffect(() => {
-    if (!isGmailSignedIn || authLoading || isGmailInitializing) {
-      return;
-    }
-
-    refreshData(false).catch(() => {
-      toast.error('Unable to load emails. Please try again.');
     });
-  }, [authLoading, isGmailInitializing, isGmailSignedIn, refreshData]);
 
-  useEffect(() => {
-    if (pageType !== 'inbox') {
-      const mappedTab = NON_INBOX_ROUTE_TO_TAB[pageType];
-      if (mappedTab && mappedTab !== viewState.activeTab) {
-        setState(prev => ({
-          ...prev,
-          activeTab: mappedTab,
-          selectedEmails: new Set(),
-        }));
-      }
+    return { focused, other };
+  };
+
+  // Focused/Other counts removed (feature disabled)
+  
+  // Inbox filtering mode removed (always 'all')
+
+  // DND Setup
+  const sensors = useSensors(
+    useSensor(MouseSensor, {
+      activationConstraint: {
+        distance: 10,
+      },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: {
+        delay: 250,
+        tolerance: 5,
+      },
+    })
+  );
+
+  const [activeEmail, setActiveEmail] = useState<Email | null>(null);
+  // Track explicit tab-level loading (distinct from global optimized first paint)
+  const [tabLoading, setTabLoading] = useState<string | null>(null);
+
+  const handleRefresh = async () => {
+    if (!isGmailSignedIn || refreshCooldown) return;
+    
+    setRefreshing(true);
+    setRefreshCooldown(true);
+    setIsRefreshLoading(true);
+    
+    // Clear pagination to fetch fresh emails
+    setPaginatedEmails([]);
+    setNextPageToken(undefined);
+    
+    if (labelName && effectiveLabelQuery) {
+      // For labels, refresh label emails
+      await fetchLabelEmails(true);
+    } else {
+      // ✅ Use pagination as single source - no need for fetchAllEmailTypes
+      await loadPaginatedEmails(undefined, false); // Reload first page
     }
-  }, [pageType, setState, viewState.activeTab]);
+    
+    setRefreshing(false);
+    setIsRefreshLoading(false);
+    
+    // 2 second cooldown before allowing another refresh
+    setTimeout(() => {
+      setRefreshCooldown(false);
+    }, 2000);
+  };
 
+  const handleRefreshCurrentTab = async () => {
+    if (!isGmailSignedIn || refreshing || refreshCooldown) return;
+    
+    setRefreshing(true);
+    setRefreshCooldown(true);
+    
+    try {
+      // Clear relevant caches to ensure fresh data
+      clearEmailCache();
+      
+      // Clear pagination to fetch fresh emails
+      setPaginatedEmails([]);
+      setNextPageToken(undefined);
+      
+      if (labelName && effectiveLabelQuery) {
+        // For label pages, refresh only the current label
+        console.log(`🔄 Refreshing label: ${labelName}`);
+        await fetchLabelEmails(true);
+        await loadPaginatedEmails(undefined, false); // Reload first page
+      } else if (pageType === 'inbox') {
+        // For inbox, refresh based on current tab
+        console.log(`🔄 Refreshing current tab: ${activeTab}`);
+        
+        // ✅ Always reload paginated emails for inbox (single source of truth)
+        await loadPaginatedEmails(undefined, false);
+        
+        // ✅ No need for fetchAllEmailTypes or tab-specific loads
+        // usePagination handles everything
+      } else {
+        // For other page types (sent, drafts, etc.), use pagination
+        console.log(`🔄 Refreshing page type: ${pageType}`);
+        await loadPaginatedEmails(undefined, false);
+      }
+      
+      // Show success message
+      toast.success('Refreshed successfully', {
+        description: `${labelName ? `Label "${labelName}"` : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} emails updated`,
+        duration: 3000
+      });
+      
+    } catch (error) {
+      console.error('Error refreshing current tab:', error);
+      toast.error('Failed to refresh', {
+        description: 'Please check your connection and try again',
+        duration: 4000
+      });
+    } finally {
+      setRefreshing(false);
+      
+      // 2 second cooldown before allowing another refresh
+      setTimeout(() => {
+        setRefreshCooldown(false);
+      }, 2000);
+    }
+  };
+  // Fallback: when activeTab changes to sent/drafts and list is still empty after initial attempts, force a fetch
   useEffect(() => {
-    const handler = (folderType: string) => {
-      const tab = FOLDER_TO_TAB[folderType] || 'all';
-      setState(prev => ({
-        ...prev,
-        activeTab: tab,
-        selectedEmails: new Set(),
-      }));
+    // Throttle repeated empty-drafts fallback fetches
+    const lastDraftFetchRef = (EmailPageLayout as any)._lastDraftFallbackRef || { current: 0 };
+    if (!(EmailPageLayout as any)._lastDraftFallbackRef) {
+      (EmailPageLayout as any)._lastDraftFallbackRef = lastDraftFetchRef;
+    }
+    const run = async () => {
+      if (pageType !== 'inbox' || labelName) return;
+      if (activeTab === 'sent' && allTabEmails.sent.length === 0 && !tabLoading) {
+        setTabLoading('sent');
+        try {
+          const sentResp = await getSentEmails(true, 50);
+          setAllTabEmails(prev => ({ ...prev, sent: sentResp.emails || [] }));
+          setPageTokens(prev => ({ ...prev, sent: sentResp.nextPageToken }));
+          setHasMoreForTabs(prev => ({ ...prev, sent: !!sentResp.nextPageToken }));
+        } finally {
+          setTabLoading(null);
+        }
+      }
+      if (activeTab === 'drafts' && allTabEmails.drafts.length === 0 && !tabLoading) {
+        const now = Date.now();
+        if (now - lastDraftFetchRef.current < 15000) { // 15s cooldown
+          return; // prevent rapid loop
+        }
+        lastDraftFetchRef.current = now;
+        setTabLoading('drafts');
+        try {
+          const draftList = await getDraftEmails(true);
+            setAllTabEmails(prev => ({ ...prev, drafts: draftList || [] }));
+            setHasMoreForTabs(prev => ({ ...prev, drafts: (draftList?.length || 0) > 20 }));
+        } finally {
+          setTabLoading(null);
+        }
+      }
+    };
+    run();
+  }, [activeTab, pageType, labelName, allTabEmails.sent.length, allTabEmails.drafts.length, tabLoading]);
+
+  // Listen for draft events from Compose window
+  useEffect(() => {
+    const handleDraftCreated = async (event: CustomEvent) => {
+      console.log('📨 Draft created event received:', event.detail);
+      const { draftId } = event.detail;
+      
+      // Fetch and add the new draft to the UI immediately
+      if (activeTab === 'drafts' || pageType === 'drafts') {
+        try {
+          // Fetch the draft details
+          const response = await window.gapi.client.gmail.users.drafts.get({
+            userId: 'me',
+            id: draftId,
+            format: 'metadata',
+            metadataHeaders: ['From', 'To', 'Subject', 'Date']
+          });
+          
+          if (response.result?.message) {
+            const message = response.result.message;
+            const headers = message.payload?.headers || [];
+            
+            // Convert to Email format
+            const getHeader = (name: string) => {
+              const header = headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase());
+              return header?.value || '';
+            };
+            
+            const draftEmail: Email = {
+              id: message.id,
+              threadId: message.threadId || message.id,
+              subject: getHeader('Subject') || '(No Subject)',
+              from: { name: getHeader('From'), email: getHeader('From') },
+              to: [{ name: getHeader('To'), email: getHeader('To') }],
+              cc: [],
+              date: new Date(parseInt(message.internalDate || '0')).toISOString(),
+              internalDate: message.internalDate || '0',
+              body: '',
+              preview: '',
+              isRead: false,
+              labelIds: message.labelIds || ['DRAFT'],
+              attachments: []
+            };
+            
+            // Add to repository and update UI
+            emailRepository.addEmail(draftEmail);
+            setAllTabEmails(prev => ({
+              ...prev,
+              drafts: [draftEmail, ...prev.drafts]
+            }));
+            
+            console.log('📨 Draft added to UI:', draftId);
+          }
+        } catch (error) {
+          console.error('❌ Failed to fetch draft:', error);
+          // Fallback: clear cache to trigger refresh
+          clearEmailCache();
+        }
+      }
     };
 
-    setSystemFolderFilterHandler(handler);
-  }, [setSystemFolderFilterHandler, setState]);
-
-  const visibleEmails = useMemo(() => {
-    const base = isLabelView ? viewState.labelEmails : getEmailsForTab(viewState.activeTab);
-    return getCurrentEmails(base, viewState.activeTab, viewState.searchQuery, viewState.inboxViewMode);
-  }, [isLabelView, repositoryVersion, viewState.activeTab, viewState.inboxViewMode, viewState.labelEmails, viewState.searchQuery]);
-
-  const selectionText = getSelectionDisplayText(viewState.selectedEmails.size, visibleEmails.length);
-  const showEmptyState = shouldShowEmptyState(visibleEmails, viewState.loading);
-
-  const handleManualRefresh = useCallback(async () => {
-    setState(prev => ({ ...prev, refreshing: true }));
-    try {
-      await refreshData(true);
-      toast.success('Inbox refreshed');
-    } catch {
-      toast.error('Failed to refresh inbox');
-    } finally {
-      setState(prev => ({ ...prev, refreshing: false }));
-    }
-  }, [refreshData, setState]);
-
-  const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const value = event.target.value;
-    setState(prev => ({ ...prev, searchQuery: value }));
-  };
-
-  const clearSelection = useCallback(() => {
-    setState(prev => ({ ...prev, selectedEmails: new Set() }));
-    clearInboxSelection();
-  }, [clearInboxSelection, setState]);
-
-  const toggleSelectEmail = useCallback((emailId: string) => {
-    setState(prev => {
-      const next = new Set(prev.selectedEmails);
-      if (next.has(emailId)) {
-        next.delete(emailId);
-      } else {
-        next.add(emailId);
+    const handleDraftUpdated = (event: CustomEvent) => {
+      const { oldDraftId, newDraftId } = event.detail;
+      console.log('📨 Draft updated event received:', oldDraftId, '->', newDraftId);
+      
+      // If Gmail changed the draft ID, we need to update our UI
+      if (oldDraftId !== newDraftId) {
+        // Remove old draft from repository
+        emailRepository.deleteEmail(oldDraftId);
+        // Remove from UI
+        setAllTabEmails(prev => ({
+          ...prev,
+          drafts: prev.drafts.filter(d => d.id !== oldDraftId)
+        }));
+        // The new draft will appear on next refresh/fetch
+        clearEmailCache();
       }
-      return { ...prev, selectedEmails: next };
+    };
+
+    window.addEventListener('draft-created', handleDraftCreated as any);
+    window.addEventListener('draft-updated', handleDraftUpdated as any);
+
+    return () => {
+      window.removeEventListener('draft-created', handleDraftCreated as any);
+      window.removeEventListener('draft-updated', handleDraftUpdated as any);
+    };
+  }, [activeTab, pageType]);
+
+  // Pagination settings & state for toolbar chevrons
+  const PAGE_SIZE = 25;
+  const [pageIndex, setPageIndex] = useState(0);
+
+  // Section expansion state for Show All mode
+  // const [sectionSelectedEmails, setSectionSelectedEmails] = useState<Set<string>>(new Set()); // NOW FROM useEmailSelection
+  
+  // Separate pagination for each expanded section (Show All)
+  const [unreadShowAllPage, setUnreadShowAllPage] = useState(0);
+  const [readShowAllPage, setReadShowAllPage] = useState(0);
+  const [isLoadingUnreadShowAll, setIsLoadingUnreadShowAll] = useState(false);
+  const [isLoadingReadShowAll, setIsLoadingReadShowAll] = useState(false);
+  const [isRefreshLoading, setIsRefreshLoading] = useState(false);
+  const SECTION_PAGE_SIZE = 25; // Show 25 emails per page
+  
+  // Old handleLoadMore removed; pagination now via toolbar chevrons fetching more when needed.
+
+  // const lastUnread24hRef = useRef<number>(-1); // NOW IN useEmailCounts
+
+  const supportsCategoryTabs = CATEGORIES_ENABLED && ['all', 'spam', 'trash'].includes(activeTab);
+  const folderContextForTab: 'all' | 'spam' | 'trash' = (() => {
+    switch (activeTab) {
+      case 'spam':
+        return 'spam';
+      case 'trash':
+        return 'trash';
+      default:
+        return 'all';
+    }
+  })();
+
+  // Get current emails based on active tab and category selection
+  const getCurrentEmails = (): Email[] => {
+    // For label pages, use the emails array
+    if (pageType !== 'inbox' || labelName) {
+      return emails;
+    }
+
+    const folderContext = folderContextForTab;
+
+  // For category-enabled tabs (all/inbox, archive, spam, trash), show category emails if available
+    
+    let currentEmails: Email[] = [];
+    if (supportsCategoryTabs && categoryEmails[folderContext][activeCategory]?.length > 0) {
+      // Show category emails if they exist
+      currentEmails = categoryEmails[folderContext][activeCategory];
+    } else {
+      // Fall back to folder emails
+      currentEmails = allTabEmails[activeTab];
+    }
+
+    // Defensive gating: ensure each tab only renders items matching its semantics
+    const hasLabel = (e: Email, label: string) => (e.labelIds || []).includes(label);
+    switch (activeTab) {
+      case 'all':
+        // Inbox All should never show Sent/Spam/Trash even if arrays mixed
+        currentEmails = currentEmails.filter(e => !hasLabel(e, 'SENT') && !hasLabel(e, 'SPAM') && !hasLabel(e, 'TRASH'));
+        break;
+      case 'important':
+        currentEmails = currentEmails.filter(e => e.isImportant || hasLabel(e, 'IMPORTANT'));
+        break;
+      case 'starred':
+        currentEmails = currentEmails.filter(e => e.isStarred || hasLabel(e, 'STARRED'));
+        break;
+      case 'sent':
+        currentEmails = currentEmails.filter(e => hasLabel(e, 'SENT'));
+        break;
+      case 'trash':
+        currentEmails = currentEmails.filter(e => hasLabel(e, 'TRASH'));
+        break;
+      case 'spam':
+        currentEmails = currentEmails.filter(e => hasLabel(e, 'SPAM'));
+        break;
+      case 'allmail':
+        // All Mail = exclude Spam/Trash
+        currentEmails = currentEmails.filter(e => !hasLabel(e, 'SPAM') && !hasLabel(e, 'TRASH'));
+        break;
+      default:
+        break;
+    }
+
+    // Apply focused/other partitioning if category tabs are supported
+  if (FOCUSED_TOGGLE_ENABLED && supportsCategoryTabs && currentEmails.length > 0) {
+      const { focused } = partitionEmailsByFocus(currentEmails);
+      return focused; // default to focused list when toggle is disabled
+    }
+
+    return currentEmails;
+  };
+
+  // Always use paginated emails now (split view disabled)
+  const filteredEmails = paginatedEmails.length > 0 ? paginatedEmails : getCurrentEmails();
+  
+  // For infinite scroll list view, use paginatedEmails directly
+  // ✅ Always use paginatedEmails for list view (layoutMode hardcoded to 'list')
+  const emailsToDisplay = paginatedEmails;
+  
+  // Apply Unread/Starred/Attachments chips as client-side filters
+  const applyChipFilters = (items: Email[]): Email[] => {
+    return items.filter(email => {
+      if (activeFilters.unread && email.isRead) return false;
+      if (activeFilters.starred && !(email.labelIds || []).includes('STARRED')) return false;
+      if (activeFilters.attachments && !(email.attachments && email.attachments.length > 0)) return false;
+      return true;
     });
-  }, [setState]);
-
-  const handleSelectAll = () => {
-    setState(prev => ({
-      ...prev,
-      selectedEmails: new Set(visibleEmails.map(email => email.id)),
-    }));
   };
 
-  const handleDeleteSelected = async () => {
-    if (viewState.selectedEmails.size === 0) return;
-    try {
-      await handleDeleteSelectedEmails(viewState.selectedEmails);
-      clearSelection();
-      refreshFromRepository();
-      toast.success('Deleted selected emails');
-    } catch (error) {
-      console.error('Failed to delete selected emails', error);
-      toast.error('Failed to delete selected emails');
+  const chipFilteredEmails = applyChipFilters(filteredEmails);
+  // Only apply chips in Inbox "all" tab; show raw lists for other tabs
+  // Also respect layoutMode preference
+  const isSplitInbox = pageType === 'inbox' && !labelName && activeTab === 'all' && layoutMode === 'split';
+  const baseVisible = isSplitInbox ? chipFilteredEmails : filteredEmails;
+
+  // Split source should only be used for Inbox > All; other tabs should not use inbox "all" data
+  const splitSourceRaw = isSplitInbox ? (allTabEmails.all || []) : baseVisible;
+  const splitSource = isSplitInbox
+    ? splitSourceRaw.filter(e => !(e.labelIds || []).some(id => id === 'SENT' || id === 'SPAM' || id === 'TRASH'))
+    : splitSourceRaw;
+
+  // Split inbox lists for split view (Unread vs Everything else)
+  const twentyFourHoursAgoMs = Date.now() - 24 * 60 * 60 * 1000;
+  const getEmailTimeMs = (email: Email): number => {
+    const internal = (email as any)?.internalDate;
+    if (internal != null) {
+      const numeric = typeof internal === 'string' ? Number.parseInt(internal, 10) : Number(internal);
+      if (!Number.isNaN(numeric)) return numeric;
     }
-  };
-
-  const handleMarkSelectedAsReadAction = async () => {
-    if (viewState.selectedEmails.size === 0) return;
-    try {
-      await handleMarkSelectedAsRead(viewState.selectedEmails);
-      clearSelection();
-      refreshFromRepository();
-      toast.success('Marked selected emails as read');
-    } catch (error) {
-      console.error('Failed to mark as read', error);
-      toast.error('Failed to mark as read');
+    if (email.date) {
+      const parsed = new Date(email.date).getTime();
+      if (!Number.isNaN(parsed)) return parsed;
     }
+    return 0;
   };
+  const isWithin24h = (email: Email): boolean => getEmailTimeMs(email) >= twentyFourHoursAgoMs;
 
-  const handleMarkSelectedAsUnreadAction = async () => {
-    if (viewState.selectedEmails.size === 0) return;
-    try {
-      await handleMarkSelectedAsUnread(viewState.selectedEmails);
-      clearSelection();
-      refreshFromRepository();
-      toast.success('Marked selected emails as unread');
-    } catch (error) {
-      console.error('Failed to mark as unread', error);
-      toast.error('Failed to mark as unread');
-    }
-  };
+  const splitUnread = useMemo(() => {
+    // Unread section: only unread emails from last 24h
+    return splitSource.filter(e => !e.isRead && isWithin24h(e));
+  }, [splitSource, twentyFourHoursAgoMs]);
 
-  const handleEmailOpen = useCallback((id: string) => {
-    if (pageType === 'drafts' || viewState.activeTab === 'drafts') {
+  const splitRead = useMemo(() => {
+    // Everything else: all read emails + old unread (older than 24h)
+    const result = splitSource.filter(e => e.isRead || (e.isRead === false && !isWithin24h(e)));
+    return result;
+  }, [splitSource, twentyFourHoursAgoMs]);
+
+  const totalLoadedEmails = baseVisible.length;
+  const maxPageIndex = Math.max(0, Math.floor(Math.max(0, totalLoadedEmails - 1) / PAGE_SIZE));
+  useEffect(() => {
+    if (pageIndex > maxPageIndex) setPageIndex(maxPageIndex);
+  }, [pageIndex, maxPageIndex]);
+
+  useEffect(() => {
+    setPageIndex(0);
+  }, [pageType, labelName, activeTab, activeFilters.unread, activeFilters.attachments, activeFilters.starred, searchQuery, activeCategory]);
+
+  const visibleEmails = baseVisible.slice(pageIndex * PAGE_SIZE, (pageIndex + 1) * PAGE_SIZE);
+  const allVisibleSelected = useMemo(() => (
+    visibleEmails.length > 0 && visibleEmails.every(email => selectedEmails.has(email.id))
+  ), [visibleEmails, selectedEmails]);
+  const anyVisibleSelected = useMemo(() => (
+    visibleEmails.some(email => selectedEmails.has(email.id))
+  ), [visibleEmails, selectedEmails]);
+
+  useEffect(() => {
+    if (!selectAllCheckboxRef.current) return;
+    selectAllCheckboxRef.current.indeterminate = anyVisibleSelected && !allVisibleSelected;
+  }, [anyVisibleSelected, allVisibleSelected]);
+
+  // Get current has more status - consider both folder and category pagination
+  // getCurrentHasMore temporarily removed with toolbar extraction
+
+  // const currentHasMore = getCurrentHasMore(); // no longer needed directly in render; used implicitly for next-page fetch
+
+  console.log('📧 Current state:', {
+    activeTab,
+    filteredEmailsLength: filteredEmails.length,
+    loading,
+    authLoading,
+    isGmailInitializing,
+    isGmailSignedIn,
+    hasEverLoaded,
+    isSearching,
+    unreadCount,
+    draftsCount,
+    trashCount
+  });
+
+  const handleEmailClick = (id: string) => {
+    // Drafts: open compose popup with draft content
+    if (pageType === 'drafts' || activeTab === 'drafts') {
+      // Open compose popup with the draft ID - it will load all the content
       openCompose(id);
       return;
-    }
-
-    if (labelName) {
-      const params = new URLSearchParams();
-      if (labelName) params.set('labelName', labelName);
-      if (labelQueryParam) params.set('labelQuery', labelQueryParam);
-      if (labelIdParam) params.set('labelId', labelIdParam);
+    } else if (labelName) {
+      // For label emails, navigate to inbox with label-specific parameters
+      const params = new URLSearchParams({ labelName });
+      if (labelQueryParam) {
+        params.set('labelQuery', labelQueryParam);
+      }
+      if (labelIdParam) {
+        params.set('labelId', labelIdParam);
+      }
       navigate(`/inbox/email/${id}?${params.toString()}`);
     } else {
       navigate(`/${pageType}/email/${id}`);
     }
     selectEmail(id);
-  }, [labelIdParam, labelName, labelQueryParam, navigate, openCompose, pageType, selectEmail, viewState.activeTab]);
+  };
 
-  const handleEmailDeleteLocal = useCallback(async (emailId: string) => {
-    try {
-      await handleDeleteEmail(emailId);
-      if (isLabelView) {
-        setState(prev => ({
+  const handleEmailUpdate = (updatedEmail: Email) => {
+    console.log(`🔄 EmailPageLayout: updating email ${updatedEmail.id} - isRead: ${updatedEmail.isRead}`);
+    
+    // Preserve scroll position before updating state
+    if (emailListRef.current) {
+      scrollPositionRef.current = emailListRef.current.scrollTop;
+    }
+
+    // UPDATE PAGINATED EMAILS (for list view)
+    setPaginatedEmails(prev => 
+      prev.map(e => e.id === updatedEmail.id ? updatedEmail : e)
+    );
+
+    if (pageType === 'inbox' && !labelName) {
+      // Update in all relevant tab arrays
+      setAllTabEmails(prev => {
+        const isReadNow = updatedEmail.isRead;
+        return {
           ...prev,
-          labelEmails: prev.labelEmails.filter(email => email.id !== emailId),
+          unread: isReadNow
+            ? prev.unread.filter(e => e.id !== updatedEmail.id)
+            : prev.unread.map(e => e.id === updatedEmail.id ? updatedEmail : e),
+          all: prev.all.map(e => e.id === updatedEmail.id ? updatedEmail : e),
+          sent: prev.sent.map(e => e.id === updatedEmail.id ? updatedEmail : e),
+          drafts: prev.drafts.map(e => e.id === updatedEmail.id ? updatedEmail : e),
+            trash: prev.trash.map(e => e.id === updatedEmail.id ? updatedEmail : e),
+          important: prev.important.map(e => e.id === updatedEmail.id ? updatedEmail : e),
+          starred: prev.starred.map(e => e.id === updatedEmail.id ? updatedEmail : e),
+          spam: prev.spam.map(e => e.id === updatedEmail.id ? updatedEmail : e),
+          allmail: prev.allmail.map(e => e.id === updatedEmail.id ? updatedEmail : e)
+        };
+      });
+      
+      // Also update category emails
+      setCategoryEmails((prev: any) => ({
+        all: {
+          primary: prev.all.primary.map((email: Email) => email.id === updatedEmail.id ? updatedEmail : email),
+          updates: prev.all.updates.map((email: Email) => email.id === updatedEmail.id ? updatedEmail : email),
+          promotions: prev.all.promotions.map((email: Email) => email.id === updatedEmail.id ? updatedEmail : email),
+          social: prev.all.social.map((email: Email) => email.id === updatedEmail.id ? updatedEmail : email)
+        },
+        spam: {
+          primary: prev.spam.primary.map((email: Email) => email.id === updatedEmail.id ? updatedEmail : email),
+          updates: prev.spam.updates.map((email: Email) => email.id === updatedEmail.id ? updatedEmail : email),
+          promotions: prev.spam.promotions.map((email: Email) => email.id === updatedEmail.id ? updatedEmail : email),
+          social: prev.spam.social.map((email: Email) => email.id === updatedEmail.id ? updatedEmail : email)
+        },
+        trash: {
+          primary: prev.trash.primary.map((email: Email) => email.id === updatedEmail.id ? updatedEmail : email),
+          updates: prev.trash.updates.map((email: Email) => email.id === updatedEmail.id ? updatedEmail : email),
+          promotions: prev.trash.promotions.map((email: Email) => email.id === updatedEmail.id ? updatedEmail : email),
+          social: prev.trash.social.map((email: Email) => email.id === updatedEmail.id ? updatedEmail : email)
+        }
+      }));
+      
+      // Update unread count if an email was marked as read/unread
+      const currentEmail = allTabEmails.unread.find(email => email.id === updatedEmail.id);
+      if (currentEmail && !currentEmail.isRead && updatedEmail.isRead) {
+        setEmailCounts(prev => ({
+          ...prev,
+          unread: Math.max(0, prev.unread - 1)
+        }));
+      } else if ((!currentEmail || currentEmail.isRead) && !updatedEmail.isRead) {
+        setEmailCounts(prev => ({
+          ...prev,
+          unread: prev.unread + 1
         }));
       }
-      refreshFromRepository();
-      setState(prev => ({
-        ...prev,
-        selectedEmails: new Set([...prev.selectedEmails].filter(id => id !== emailId)),
-      }));
-      toast.success('Email deleted');
-    } catch (error) {
-      console.error('Failed to delete email', error);
-      toast.error('Failed to delete email');
-    }
-  }, [isLabelView, refreshFromRepository, setState]);
-
-  const handleEmailUpdate = useCallback((updatedEmail: Email) => {
-    emailRepository.addEmails([updatedEmail]);
-    if (isLabelView) {
-      setState(prev => ({
-        ...prev,
-        labelEmails: prev.labelEmails.map(email => email.id === updatedEmail.id ? updatedEmail : email),
-      }));
-    }
-    refreshFromRepository();
-  }, [isLabelView, refreshFromRepository, setState]);
-
-  const handleLoadMoreLabel = async () => {
-    if (!isLabelView || !labelIdParam || !viewState.labelHasMoreEmails || viewState.loadingMore) {
-      return;
+    } else {
+      setEmails(prevEmails => 
+        prevEmails.map(email => 
+          email.id === updatedEmail.id ? updatedEmail : email
+        )
+      );
     }
 
-    setState(prev => ({ ...prev, loadingMore: true }));
+    // Restore scroll position after state update (only in single-list view)
+    setTimeout(() => {
+      if (inboxViewMode !== 'split' && emailListRef.current && scrollPositionRef.current > 0) {
+        emailListRef.current.scrollTop = scrollPositionRef.current;
+      }
+    }, 0);
+  };
+
+  const handleEmailDelete = async (emailId: string) => {
     try {
-      const result = await fetchLabelEmails(labelIdParam, viewState.labelPageToken, true);
-      setState(prev => ({
-        ...prev,
-        labelEmails: [...prev.labelEmails, ...result.emails],
-        labelPageToken: result.nextPageToken,
-        labelHasMoreEmails: Boolean(result.nextPageToken),
-        loadingMore: false,
-      }));
-      refreshFromRepository();
+      // Get the email details for the toast before deletion
+      let emailSubject = 'Email';
+      if (pageType === 'inbox' && !labelName) {
+        // Find the email in the current tab to get the subject
+        const currentEmails = allTabEmails[activeTab];
+        const emailToDelete = currentEmails.find(email => email.id === emailId);
+        if (emailToDelete) {
+          emailSubject = emailToDelete.subject || 'Email';
+        }
+      } else {
+        const emailToDelete = emails.find(email => email.id === emailId);
+        if (emailToDelete) {
+          emailSubject = emailToDelete.subject || 'Email';
+        }
+      }
+
+      // Delete the email via API
+      await deleteEmail(emailId);
+
+      // ✨ FIX: Also remove from repository (single source of truth)
+      emailRepository.deleteEmail(emailId);
+
+      // REMOVE FROM PAGINATED EMAILS (for list view)
+      setPaginatedEmails(prev => prev.filter(email => email.id !== emailId));
+
+      // Remove from local state
+      if (pageType === 'inbox' && !labelName) {
+        // Remove from all relevant tab arrays
+        setAllTabEmails(prev => ({
+          all: prev.all.filter(email => email.id !== emailId),
+          unread: prev.unread.filter(email => email.id !== emailId),
+          sent: prev.sent.filter(email => email.id !== emailId),
+          drafts: prev.drafts.filter(email => email.id !== emailId),
+          trash: prev.trash.filter(email => email.id !== emailId),
+          important: prev.important.filter(email => email.id !== emailId),
+          starred: prev.starred.filter(email => email.id !== emailId),
+          spam: prev.spam.filter(email => email.id !== emailId),
+          allmail: prev.allmail.filter(email => email.id !== emailId)
+        }));
+        
+        // Also remove from category emails
+        setCategoryEmails((prev: any) => ({
+          all: {
+            primary: prev.all.primary.filter((email: Email) => email.id !== emailId),
+            updates: prev.all.updates.filter((email: Email) => email.id !== emailId),
+            promotions: prev.all.promotions.filter((email: Email) => email.id !== emailId),
+            social: prev.all.social.filter((email: Email) => email.id !== emailId)
+          },
+          spam: {
+            primary: prev.spam.primary.filter((email: Email) => email.id !== emailId),
+            updates: prev.spam.updates.filter((email: Email) => email.id !== emailId),
+            promotions: prev.spam.promotions.filter((email: Email) => email.id !== emailId),
+            social: prev.spam.social.filter((email: Email) => email.id !== emailId)
+          },
+          trash: {
+            primary: prev.trash.primary.filter((email: Email) => email.id !== emailId),
+            updates: prev.trash.updates.filter((email: Email) => email.id !== emailId),
+            promotions: prev.trash.promotions.filter((email: Email) => email.id !== emailId),
+            social: prev.trash.social.filter((email: Email) => email.id !== emailId)
+          }
+        }));
+      } else {
+        setEmails(prevEmails => 
+          prevEmails.filter(email => email.id !== emailId)
+        );
+      }
+
+      // Show success toast
+      toast.success('Email deleted', {
+        description: `"${emailSubject.length > 50 ? emailSubject.substring(0, 50) + '...' : emailSubject}" was moved to trash`,
+        duration: 4000,
+        action: {
+          label: 'Undo',
+          onClick: () => {
+            // TODO: Implement undo functionality if needed
+            toast.info('Undo functionality coming soon');
+          }
+        }
+      });
+      
     } catch (error) {
-      console.error('Failed to load more label emails', error);
-      setState(prev => ({ ...prev, loadingMore: false }));
-      toast.error('Failed to load more emails');
+      console.error('Error deleting email:', error);
+      
+      // Show error toast
+      toast.error('Failed to delete email', {
+        description: 'Please try again or check your connection',
+        duration: 4000
+      });
     }
   };
 
-  const handleDragStart = useCallback((event: DragStartEvent) => {
-    const email = visibleEmails.find(item => item.id === event.active.id);
-    setActiveEmail(email ?? null);
-  }, [visibleEmails]);
+  // Handle create filter from context menu
+  const handleCreateFilter = (email: Email) => {
+    // Navigate to settings filters page
+    navigate('/settings', {
+      state: { 
+        createFilter: true,
+        emailData: {
+          from: email.from.email,
+          subject: email.subject,
+        }
+      }
+    });
+  };
 
-  const handleDragEnd = useCallback((_: DragEndEvent) => {
-    setActiveEmail(null);
-  }, []);
+  const handleDragStart = (event: any) => {
+    const { active } = event;
+    const currentEmails = (pageType === 'inbox' && !labelName) ? allTabEmails[activeTab] : emails;
+    const email = currentEmails.find(email => email.id === active.id);
+    setActiveEmail(email || null);
+  };
 
-  const handleDragCancel = useCallback(() => {
+  const handleDragEnd = (_event: DragEndEvent) => {
     setActiveEmail(null);
-  }, []);
+    // Handle drag end logic here
+  };
+
+  const handleDragCancel = () => {
+    setActiveEmail(null);
+  };
+
+  // If authentication is still loading or Gmail is initializing, show loading state
+  if (authLoading || isGmailInitializing) {
+    return (
+      <div className="fade-in">
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="text-1xl font-semibold text-gray-800">{title}</h1>
+        </div>
+        
+        <div className="bg-white rounded-lg shadow-sm p-8 text-center">
+          <div className="max-w-md mx-auto">
+            <div className="mb-4">
+              <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <RefreshCw className="w-8 h-8 text-blue-600 animate-spin" />
+              </div>
+              <h3 className="text-lg font-medium text-gray-900 mb-2">
+                {isGmailInitializing ? 'Connecting to Gmail' : 'Loading'}
+              </h3>
+              <p className="text-gray-600 mb-6">
+                {isGmailInitializing 
+                  ? 'Setting up your connection, please wait...'
+                  : 'Please wait while we load your data...'
+                }
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // If Gmail is not signed in, show connection prompt
+  if (!isGmailSignedIn) {
+    return (
+      <div className="fade-in">
+        <div className="flex items-center justify-between mb-28"></div>
+        <div className="bg-white rounded-lg shadow-lg mr-8 ml-8 p-4 text-center">
+          <div className="max-w-md mx-auto">
+            <div className="mb-4">
+              <div className="flex items-center justify-center mx-auto mb-4">
+                <MessageSquareWarning className="w-8 h-8 text-grey-600" />
+              </div>
+              <h3 className="text-lg font-medium text-gray-900 mb-2">Gmail Not Connected</h3>
+              <p className="text-gray-600 mb-6">
+                To view and manage your emails, please connect your Gmail account in the settings.
+              </p>
+              <button
+                onClick={() => navigate('/settings')}
+                className="btn btn-primary flex items-center mx-auto"
+              >
+                <Settings size={18} className="mr-2" />
+                Go to Settings
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <ThreeColumnLayout onEmailUpdate={handleEmailUpdate} onEmailDelete={handleEmailDeleteLocal}>
-      <div className="flex h-full flex-col">
-        <header className="flex flex-col gap-2 border-b border-gray-200 px-4 py-3">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <h1 className="text-lg font-semibold text-gray-900">{title}</h1>
-              {selectionText && (
-                <p className="text-sm text-gray-500">{selectionText}</p>
+    <ThreeColumnLayout onEmailUpdate={handleEmailUpdate} onEmailDelete={handleEmailDelete}>
+      <div className="h-full flex flex-col min-h-0">
+        {/* Search Bar - Always Visible */}
+        <div className="flex-shrink-0 bg-[#F9FAFB] border-b border-gray-200 p-2.5 space-y-3">
+          {/* Search Bar */}
+          <form onSubmit={handleSearchSubmit} className="relative">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={15} />
+            <input
+              type="text"
+              placeholder=""
+              value={searchQuery}
+              onChange={(e) => {
+                handleSearchInput(e.target.value);
+              }}
+              onFocus={() => {
+                if (searchQuery.trim() && searchSuggestions.length > 0) {
+                  setShowSuggestions(true);
+                }
+              }}
+              onBlur={() => {
+                // Delay hiding suggestions to allow clicking on them
+                setTimeout(() => setShowSuggestions(false), 200);
+              }}
+              disabled={isSearching}
+              className="w-full pl-10 pr-32 h-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-gray-50 disabled:cursor-not-allowed"
+            />
+            
+            {/* Filter Button */}
+            
+            {/* Search Suggestions Dropdown */}
+            {showSuggestions && searchSuggestions.length > 0 && (
+              <div className="absolute top-full left-0 right-0 bg-white border border-gray-200 rounded-lg shadow-lg z-[9999] mt-1">
+                <div className="py-2">
+                  {searchSuggestions.map((suggestion) => (
+                    <button
+                      key={suggestion.id}
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault(); // Prevent blur event
+                        handleSuggestionSelect(suggestion);
+                      }}
+                      className="w-full text-left px-4 py-3 hover:bg-gray-50 border-b border-gray-100 last:border-b-0"
+                    >
+                      <div className="flex items-start space-x-3">
+                        <Search size={14} className="text-gray-400 mt-1 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center space-x-2 mb-1">
+                            {suggestion.sender && (
+                              <span className="text-sm font-medium text-gray-900 truncate">
+                                {suggestion.sender}
+                              </span>
+                            )}
+                            {suggestion.timestamp && (
+                              <span className="text-xs text-gray-500">
+                                {new Date(suggestion.timestamp).toLocaleDateString()}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-sm text-gray-700 truncate font-medium mb-1">
+                            {suggestion.title}
+                          </div>
+                          {suggestion.snippet && (
+                            <div className="text-xs text-gray-500 truncate">
+                              {suggestion.snippet}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </form>
+
+          {/* Toolbar - Only show in split view, hide in Show All mode */}
+          {(!isSplitInbox || inboxViewMode === 'split') && (
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-1">
+                {/* Select All Checkbox */}
+                <label className="flex items-center mr-3">
+                <input
+                  ref={selectAllCheckboxRef}
+                  type="checkbox"
+                  checked={isSplitInbox ? 
+                    // Check if all VISIBLE emails in both sections are selected
+                    (splitUnread.slice(0, 25).length > 0 || splitRead.slice(0, 25).length > 0) &&
+                    splitUnread.slice(0, 25).every(e => selectedEmails.has(e.id)) && 
+                    splitRead.slice(0, 25).every(e => selectedEmails.has(e.id))
+                    : allVisibleSelected}
+                  onChange={() => {
+                    setSelectedEmails(prev => {
+                      const next = new Set(prev);
+                      
+                      if (isSplitInbox) {
+                        // ✅ Split view: only select/deselect VISIBLE emails (first 25 from each section)
+                        const visibleUnread = splitUnread.slice(0, 25);
+                        const visibleRead = splitRead.slice(0, 25);
+                        
+                        const allVisibleSelected = 
+                          (visibleUnread.length === 0 || visibleUnread.every(e => next.has(e.id))) &&
+                          (visibleRead.length === 0 || visibleRead.every(e => next.has(e.id)));
+                        
+                        if (allVisibleSelected) {
+                          // Deselect all visible
+                          visibleUnread.forEach(email => next.delete(email.id));
+                          visibleRead.forEach(email => next.delete(email.id));
+                        } else {
+                          // Select all visible
+                          visibleUnread.forEach(email => next.add(email.id));
+                          visibleRead.forEach(email => next.add(email.id));
+                        }
+                      } else {
+                        // Regular view, select/deselect visible page
+                        if (allVisibleSelected) {
+                          visibleEmails.forEach(email => next.delete(email.id));
+                        } else {
+                          visibleEmails.forEach(email => next.add(email.id));
+                        }
+                      }
+                      return next;
+                    });
+                  }}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="ml-1 text-xs text-gray-600">
+                  {selectedEmails.size > 0 ? `${selectedEmails.size} selected` : 'All'}
+                </span>
+              </label>
+              
+              <button
+                onClick={handleDeleteSelected}
+                disabled={selectedEmails.size === 0}
+                className="group flex items-center space-x-1 px-2 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors relative"
+              >
+                <Trash2 size={14} />
+                <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
+                  Delete selected emails
+                </div>
+              </button>
+              
+              <button
+                onClick={handleMarkReadSelected}
+                disabled={selectedEmails.size === 0}
+                className="group flex items-center space-x-1 px-2 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors relative"
+              >
+                <MailOpen size={14} />
+                <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
+                  Mark selected as read
+                </div>
+              </button>
+              
+              <button
+                onClick={handleMarkUnreadSelected}
+                disabled={selectedEmails.size === 0}
+                className="group flex items-center space-x-1 px-2 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors relative"
+              >
+                <Mail size={14} />
+                <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
+                  Mark selected as unread
+                </div>
+              </button>
+              
+              <button
+                onClick={handleRefreshCurrentTab}
+                disabled={refreshing || refreshCooldown}
+                className="group flex items-center px-2 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors relative"
+              >
+                <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
+                <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
+                  {refreshCooldown && !refreshing ? 'Please wait...' : 'Refresh emails'}
+                </div>
+              </button>
+            </div>
+            
+            <div className="flex items-center gap-3">
+              
+              {selectedEmails.size > 0 && (
+                <span className="text-xs text-gray-600">
+                  {selectedEmails.size} selected
+                </span>
               )}
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleManualRefresh}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50"
-                aria-label="Refresh"
-                disabled={viewState.refreshing || viewState.loading}
-              >
-                <RefreshCw className={`h-4 w-4 ${viewState.refreshing ? 'animate-spin' : ''}`} />
-              </button>
-              <button
-                type="button"
-                onClick={clearSelection}
-                className="inline-flex h-9 items-center justify-center rounded-md border border-gray-200 px-3 text-sm text-gray-600 hover:bg-gray-50"
-              >
-                Clear
-              </button>
-            </div>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="relative flex-1 min-w-[200px]">
-              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-              <input
-                type="search"
-                value={viewState.searchQuery}
-                onChange={handleSearchChange}
-                placeholder="Search mail"
-                className="w-full rounded-md border border-gray-200 bg-white py-2 pl-10 pr-3 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleSelectAll}
-                className="rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
-              >
-                Select all
-              </button>
-              <button
-                type="button"
-                onClick={handleDeleteSelected}
-                className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
-                disabled={viewState.selectedEmails.size === 0}
-              >
-                <Trash2 className="h-4 w-4" />
-                Delete
-              </button>
-              <button
-                type="button"
-                onClick={handleMarkSelectedAsReadAction}
-                className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
-                disabled={viewState.selectedEmails.size === 0}
-              >
-                <MailOpen className="h-4 w-4" />
-                Mark read
-              </button>
-              <button
-                type="button"
-                onClick={handleMarkSelectedAsUnreadAction}
-                className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
-                disabled={viewState.selectedEmails.size === 0}
-              >
-                <Mail className="h-4 w-4" />
-                Mark unread
-              </button>
-            </div>
-          </div>
-          <nav className="flex flex-wrap gap-2">
-            {TAB_KEYS.map(tab => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setState(prev => ({ ...prev, activeTab: tab, selectedEmails: new Set() }))}
-                className={`rounded-full border px-3 py-1 text-sm ${
-                  viewState.activeTab === tab
-                    ? 'border-blue-500 bg-blue-50 text-blue-700'
-                    : 'border-transparent text-gray-600 hover:bg-gray-100'
-                }`}
-              >
-                {getTabDisplayName(tab)}
-                <span className="ml-2 text-xs text-gray-500">
-                  {getTabBadgeCount(getEmailsForTab(tab), tab)}
-                </span>
-              </button>
-            ))}
-          </nav>
-        </header>
+          )}
+        </div>
 
-        <div className="flex-1 overflow-hidden">
-          {viewState.loading && !viewState.hasEverLoaded ? (
-            <div className="flex h-full items-center justify-center text-gray-500">
-              Loading inbox...
-            </div>
-          ) : showEmptyState ? (
-            <div className="flex h-full items-center justify-center text-gray-500">
-              {getEmptyStateMessage(viewState.activeTab)}
-            </div>
-          ) : (
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              onDragStart={handleDragStart}
-              onDragEnd={handleDragEnd}
-              onDragCancel={handleDragCancel}
-              modifiers={[restrictToVerticalAxis]}
-            >
-              <div className="h-full overflow-y-auto" data-testid="email-list">
-                <Table>
-                  <TableBody>
-                    {visibleEmails.map(email => (
-                      <EmailListItem
-                        key={email.id}
-                        email={email}
-                        onClick={handleEmailOpen}
-                        onEmailUpdate={handleEmailUpdate}
-                        onEmailDelete={handleEmailDeleteLocal}
-                        currentTab={viewState.activeTab}
-                        isSelected={viewState.selectedEmails.has(email.id)}
-                        onToggleSelect={toggleSelectEmail}
-                      />
-                    ))}
-                  </TableBody>
-                </Table>
-                {isLabelView && viewState.labelHasMoreEmails && (
-                  <div className="flex justify-center py-4">
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+            onDragCancel={handleDragCancel}
+            modifiers={[restrictToVerticalAxis]}
+          >
+          <div className="bg-white flex-1 flex flex-col min-w-[480px] max-w-full min-h-0 relative">
+            {/* Filter Chips (no categories, no Focused/Other) */}
+            {pageType === 'inbox' && !labelName && (
+              <div className="flex-shrink-0 px-0 py-0">
+              </div>
+            )}
+
+            {/* Header with refresh button for non-inbox pages or label pages */}
+            {(pageType !== 'inbox' || labelName || activeSearchQuery) && (
+              <div className="flex-shrink-0 border-b border-gray-200 px-4 py-3 flex justify-between items-center">
+                {labelName ? (
+                  <div className="flex items-center space-x-3">
+                    <h2 className="text-lg font-semibold text-gray-800">Folder: {labelName}</h2>
                     <button
-                      type="button"
-                      onClick={handleLoadMoreLabel}
-                      className="rounded-md border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
-                      disabled={viewState.loadingMore}
+                      onClick={() => {
+                        // Navigate back to inbox and clear label parameters
+                        navigate('/inbox');
+                      }}
+                      className="p-1 hover:bg-gray-100 rounded-md transition-colors flex items-center justify-center"
+                      title="Back to inbox"
                     >
-                      {viewState.loadingMore ? 'Loading…' : 'Load more'}
+                      <X size={16} className="text-gray-500 hover:text-gray-700" />
                     </button>
+                  </div>
+                ) : activeSearchQuery ? (
+                  <div className="flex items-center space-x-3">
+                    <h2 className="text-lg font-semibold text-gray-800">Search: {activeSearchQuery}</h2>
+                    <button
+                      onClick={async () => {
+                        // Clear search and reload inbox
+                        clearSearch();
+                        await handleRefresh();
+                      }}
+                      className="p-1 hover:bg-gray-100 rounded-md transition-colors flex items-center justify-center"
+                      title="Clear search"
+                    >
+                      <X size={16} className="text-gray-500 hover:text-gray-700" />
+                    </button>
+                  </div>
+                ) : (
+                  <div></div>
+                )}
+                <div className="flex items-center gap-3">
+                  {/* Empty Trash button - only in trash tab */}
+                  {pageType === 'trash' && filteredEmails.length > 0 && (
+                    <button
+                      onClick={async () => {
+                        if (window.confirm(`Are you sure you want to permanently delete all ${filteredEmails.length} email${filteredEmails.length > 1 ? 's' : ''} from trash? This action cannot be undone.`)) {
+                          const loadingToastId = toast.loading(`Emptying trash (${filteredEmails.length} emails)...`);
+                          try {
+                            // Delete all emails in trash
+                            await Promise.all(filteredEmails.map(email => deleteEmail(email.id)));
+                            
+                            toast.dismiss(loadingToastId);
+                            toast.success('Trash emptied successfully!');
+                            
+                            // Refresh the view
+                            await handleRefresh();
+                          } catch (error) {
+                            console.error('Error emptying trash:', error);
+                            toast.dismiss(loadingToastId);
+                            toast.error('Failed to empty trash. Please try again.');
+                          }
+                        }
+                      }}
+                      className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition-colors"
+                      title="Permanently delete all emails in trash"
+                    >
+                      <Trash2 size={16} />
+                      Empty Trash
+                    </button>
+                  )}
+                  
+                  {/* Refresh button */}
+                  <button 
+                    onClick={handleRefresh}
+                    className="p-2 hover:bg-gray-100 rounded-md transition-colors flex items-center justify-center"
+                    disabled={refreshing || refreshCooldown || isSearching}
+                    title={refreshCooldown && !refreshing ? 'Please wait...' : 'Refresh emails'}
+                  >
+                    <RefreshCw size={16} className={`text-gray-500 hover:text-gray-700 ${refreshing ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Email List Content - Scrollable Area */}
+            {(!hasEverLoaded || loading || authLoading || isGmailInitializing) && !refreshing ? (
+              <div className="flex-1 flex justify-center items-center min-h-0">
+                <div className="flex flex-col items-center space-y-3">
+                  <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary-500"></div>
+                  <p className="text-sm text-gray-500">
+                    {authLoading || isGmailInitializing ? 'Connecting to Gmail...' : 'Loading emails...'}
+                  </p>
+                </div>
+              </div>
+            ) : (isSplitInbox) ? (
+              // Split Inbox view: Unread vs Everything else with expand/collapse
+              <div className="flex-1 flex flex-col min-h-0">
+                {inboxViewMode === 'split' && (
+                  <div className="flex-1 min-h-0 flex flex-col divide-y divide-gray-200">
+                    {/* Unread section - flexible height based on content */}
+                    <div className={`flex flex-col min-h-0 ${splitUnread.length > 0 ? 'flex-shrink-0' : ''}`} style={{ 
+                      maxHeight: splitUnread.length > 0 ? `${Math.min(splitUnread.slice(0, 25).length * 60 + 50, 400)}px` : '120px'
+                    }}>
+                      <div className="flex items-center justify-between px-4 py-2 bg-gray-50 flex-shrink-0">
+                        <div className="text-sm font-medium text-gray-800">
+                          Unread ({Math.min(25, splitUnread.length)} of {splitUnread.length})
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            className="px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded"
+                            title="Show all unread emails"
+                            onClick={() => switchInboxViewMode('unread')}
+                          >
+                            Show All
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex-1 min-h-0 overflow-y-auto" ref={emailListRef}>
+                        {isRefreshLoading ? (
+                          <div className="p-6 text-center text-gray-500">
+                            <div className="text-sm font-medium">Loading unread emails...</div>
+                          </div>
+                        ) : (
+                          <Table>
+                            <TableBody>
+                              {splitUnread.slice(0, 25).map(email => (
+                                <EmailListItem
+                                  key={email.id}
+                                  email={email}
+                                  onClick={handleEmailClick}
+                                  onEmailUpdate={handleEmailUpdate}
+                                  onEmailDelete={handleEmailDelete}
+                                  onCreateFilter={handleCreateFilter}
+                                  isSelected={selectedEmails.has(email.id)}
+                                  onToggleSelect={handleToggleSelectEmail}
+                                  renderAsTableRow
+                                />
+                              ))}
+                            </TableBody>
+                          </Table>
+                        )}
+                        {!isRefreshLoading && splitUnread.length === 0 && (
+                          <div className="p-6 text-center text-gray-500 text-sm">All done for now 🎉</div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Everything else section - takes remaining space */}
+                    <div className="flex-1 min-h-0 flex flex-col">
+                      <div className="flex items-center justify-between px-4 py-2 bg-gray-50 flex-shrink-0">
+                        <div className="text-sm font-medium text-gray-800">
+                          Everything else ({Math.min(25, splitRead.length)} of many)
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            className="px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded"
+                            title="Show all read emails"
+                            onClick={() => switchInboxViewMode('read')}
+                          >
+                            Show All
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex-1 min-h-0 overflow-y-auto">
+                        {isRefreshLoading ? (
+                          <div className="p-6 text-center text-gray-500">
+                            <div className="text-sm font-medium">Loading emails...</div>
+                          </div>
+                        ) : (
+                          <Table>
+                            <TableBody>
+                              {splitRead.slice(0, 25).map(email => (
+                                <EmailListItem
+                                  key={email.id}
+                                  email={email}
+                                  onClick={handleEmailClick}
+                                  onEmailUpdate={handleEmailUpdate}
+                                  onEmailDelete={handleEmailDelete}
+                                  onCreateFilter={handleCreateFilter}
+                                  isSelected={selectedEmails.has(email.id)}
+                                  onToggleSelect={handleToggleSelectEmail}
+                                  renderAsTableRow
+                                />
+                              ))}
+                            </TableBody>
+                          </Table>
+                        )}
+                        {!isRefreshLoading && splitRead.length === 0 && (
+                          <div className="p-6 text-center text-gray-500 text-sm">No read emails</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {inboxViewMode === 'unread' && (
+                  <div className="flex-1 min-h-0 flex flex-col">
+                    {/* Unread section toolbar */}
+                    <div className="flex-shrink-0 bg-[#F9FAFB] border-b border-gray-200 p-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <button className="p-1 rounded hover:bg-gray-200" title="Back to split" onClick={() => switchInboxViewMode('split')}>
+                            <ArrowLeft size={14} className="text-gray-600" />
+                          </button>
+                          <div className="text-sm font-medium text-gray-800">Unread ({splitUnread.length})</div>
+                        </div>
+
+                        <div className="flex items-center gap-1">
+                          {/* Pagination */}
+                          <div className="flex items-center gap-1 px-2 py-1 text-xs text-gray-600 bg-white rounded border border-gray-300">
+                            <button 
+                              onClick={() => setUnreadShowAllPage(Math.max(0, unreadShowAllPage - 1))}
+                              disabled={unreadShowAllPage === 0}
+                              className="p-1 hover:bg-gray-100 disabled:opacity-50 rounded"
+                              title="Previous page"
+                            >
+                              <ChevronLeft size={14} />
+                            </button>
+                            <span className="text-xs">{unreadShowAllPage + 1} / {Math.ceil(splitUnread.length / SECTION_PAGE_SIZE)}</span>
+                            {isLoadingUnreadShowAll && <span className="text-xs text-blue-600 animate-pulse">Loading...</span>}
+                            <button 
+                              onClick={handleUnreadShowAllNextPage}
+                              disabled={
+                                isLoadingUnreadShowAll || 
+                                (unreadShowAllPage >= Math.ceil(splitUnread.length / SECTION_PAGE_SIZE) - 1 && !hasMoreForTabs.unread)
+                              }
+                              className="p-1 hover:bg-gray-100 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                              title="Next page"
+                            >
+                              <ChevronRight size={14} />
+                            </button>
+                          </div>
+
+                          {/* Select all */}
+                          <label className="flex items-center px-2 py-1 hover:bg-gray-100 rounded" title="Select all visible in this page">
+                            <input
+                              type="checkbox"
+                              checked={
+                                splitUnread
+                                  .slice(unreadShowAllPage * SECTION_PAGE_SIZE, (unreadShowAllPage + 1) * SECTION_PAGE_SIZE)
+                                  .length > 0 &&
+                                splitUnread
+                                  .slice(unreadShowAllPage * SECTION_PAGE_SIZE, (unreadShowAllPage + 1) * SECTION_PAGE_SIZE)
+                                  .every(e => sectionSelectedEmails.has(e.id))
+                              }
+                              onChange={(e) => {
+                                const visibleEmails = splitUnread.slice(
+                                  unreadShowAllPage * SECTION_PAGE_SIZE,
+                                  (unreadShowAllPage + 1) * SECTION_PAGE_SIZE
+                                );
+                                if (e.target.checked) {
+                                  setSectionSelectedEmails(new Set([...sectionSelectedEmails, ...visibleEmails.map(e => e.id)]));
+                                } else {
+                                  const newSet = new Set(sectionSelectedEmails);
+                                  visibleEmails.forEach(e => newSet.delete(e.id));
+                                  setSectionSelectedEmails(newSet);
+                                }
+                              }}
+                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <span className="ml-1 text-xs text-gray-600">
+                              {sectionSelectedEmails.size > 0 ? `${sectionSelectedEmails.size} selected` : 'All'}
+                            </span>
+                          </label>
+
+                          {/* Delete */}
+                          <button
+                            onClick={() => {
+                              sectionSelectedEmails.forEach(id => handleEmailDelete(id));
+                              setSectionSelectedEmails(new Set());
+                            }}
+                            disabled={sectionSelectedEmails.size === 0}
+                            className="p-1 hover:bg-gray-100 disabled:opacity-50 rounded"
+                            title="Delete selected"
+                          >
+                            <Trash2 size={14} className="text-gray-600" />
+                          </button>
+
+                          {/* Mark Unread */}
+                          <button
+                            onClick={() => {
+                              handleMarkUnreadSelected();
+                              setSectionSelectedEmails(new Set());
+                            }}
+                            disabled={sectionSelectedEmails.size === 0}
+                            className="p-1 hover:bg-gray-100 disabled:opacity-50 rounded"
+                            title="Mark as unread"
+                          >
+                            <Mail size={14} className="text-gray-600" />
+                          </button>
+
+                          {/* Mark Read */}
+                          <button
+                            onClick={() => {
+                              handleMarkReadSelected();
+                              setSectionSelectedEmails(new Set());
+                            }}
+                            disabled={sectionSelectedEmails.size === 0}
+                            className="p-1 hover:bg-gray-100 disabled:opacity-50 rounded"
+                            title="Mark as read"
+                          >
+                            <MailOpen size={14} className="text-gray-600" />
+                          </button>
+
+                          {/* Refresh */}
+                          <button
+                            onClick={handleRefreshCurrentTab}
+                            disabled={refreshing || refreshCooldown}
+                            className="p-1 hover:bg-gray-100 disabled:opacity-50 rounded"
+                            title={refreshCooldown && !refreshing ? 'Please wait...' : 'Refresh this section'}
+                          >
+                            <RefreshCw size={14} className={`text-gray-600 ${refreshing ? 'animate-spin' : ''}`} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Unread emails */}
+                    <div className="flex-1 min-h-0 overflow-y-auto" ref={emailListRef}>
+                      <Table>
+                        <TableBody>
+                          {splitUnread
+                            .slice(unreadShowAllPage * SECTION_PAGE_SIZE, (unreadShowAllPage + 1) * SECTION_PAGE_SIZE)
+                            .map(email => (
+                            <EmailListItem
+                              key={email.id}
+                              email={email}
+                              onClick={handleEmailClick}
+                              onEmailUpdate={handleEmailUpdate}
+                              onEmailDelete={handleEmailDelete}
+                              onCreateFilter={handleCreateFilter}
+                              isSelected={sectionSelectedEmails.has(email.id)}
+                              onToggleSelect={() => {
+                                const newSet = new Set(sectionSelectedEmails);
+                                if (newSet.has(email.id)) {
+                                  newSet.delete(email.id);
+                                } else {
+                                  newSet.add(email.id);
+                                }
+                                setSectionSelectedEmails(newSet);
+                              }}
+                              renderAsTableRow
+                            />
+                          ))}
+                        </TableBody>
+                      </Table>
+                      {splitUnread.length === 0 && (
+                        <div className="p-8 text-center text-gray-500 text-sm">No unread emails</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {inboxViewMode === 'read' && (
+                  <div className="flex-1 min-h-0 flex flex-col">
+                    {/* Everything else section toolbar */}
+                    <div className="flex-shrink-0 bg-[#F9FAFB] border-b border-gray-200 p-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <button className="p-1 rounded hover:bg-gray-200" title="Back to split" onClick={() => switchInboxViewMode('split')}>
+                            <ArrowLeft size={14} className="text-gray-600" />
+                          </button>
+                          <div className="text-sm font-medium text-gray-800">Everything else ({splitRead.length})</div>
+                        </div>
+
+                        <div className="flex items-center gap-1">
+                          {/* Pagination */}
+                          <div className="flex items-center gap-1 px-2 py-1 text-xs text-gray-600 bg-white rounded border border-gray-300">
+                            <button 
+                              onClick={() => setReadShowAllPage(Math.max(0, readShowAllPage - 1))}
+                              disabled={readShowAllPage === 0}
+                              className="p-1 hover:bg-gray-100 disabled:opacity-50 rounded"
+                              title="Previous page"
+                            >
+                              <ChevronLeft size={14} />
+                            </button>
+                            <span className="text-xs">{readShowAllPage + 1} / {Math.ceil(splitRead.length / SECTION_PAGE_SIZE)}</span>
+                            {isLoadingReadShowAll && <span className="text-xs text-blue-600 animate-pulse">Loading...</span>}
+                            <button 
+                              onClick={handleReadShowAllNextPage}
+                              disabled={isLoadingReadShowAll}
+                              className="p-1 hover:bg-gray-100 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                              title="Next page"
+                            >
+                              <ChevronRight size={14} />
+                            </button>
+                          </div>
+
+                          {/* Select all */}
+                          <label className="flex items-center px-2 py-1 hover:bg-gray-100 rounded" title="Select all visible in this page">
+                            <input
+                              type="checkbox"
+                              checked={
+                                splitRead
+                                  .slice(readShowAllPage * SECTION_PAGE_SIZE, (readShowAllPage + 1) * SECTION_PAGE_SIZE)
+                                  .length > 0 &&
+                                splitRead
+                                  .slice(readShowAllPage * SECTION_PAGE_SIZE, (readShowAllPage + 1) * SECTION_PAGE_SIZE)
+                                  .every(e => sectionSelectedEmails.has(e.id))
+                              }
+                              onChange={(e) => {
+                                const visibleEmails = splitRead.slice(
+                                  readShowAllPage * SECTION_PAGE_SIZE,
+                                  (readShowAllPage + 1) * SECTION_PAGE_SIZE
+                                );
+                                if (e.target.checked) {
+                                  setSectionSelectedEmails(new Set([...sectionSelectedEmails, ...visibleEmails.map(e => e.id)]));
+                                } else {
+                                  const newSet = new Set(sectionSelectedEmails);
+                                  visibleEmails.forEach(e => newSet.delete(e.id));
+                                  setSectionSelectedEmails(newSet);
+                                }
+                              }}
+                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <span className="ml-1 text-xs text-gray-600">
+                              {sectionSelectedEmails.size > 0 ? `${sectionSelectedEmails.size} selected` : 'All'}
+                            </span>
+                          </label>
+
+                          {/* Delete */}
+                          <button
+                            onClick={() => {
+                              sectionSelectedEmails.forEach(id => handleEmailDelete(id));
+                              setSectionSelectedEmails(new Set());
+                            }}
+                            disabled={sectionSelectedEmails.size === 0}
+                            className="p-1 hover:bg-gray-100 disabled:opacity-50 rounded"
+                            title="Delete selected"
+                          >
+                            <Trash2 size={14} className="text-gray-600" />
+                          </button>
+
+                          {/* Mark Unread */}
+                          <button
+                            onClick={() => {
+                              handleMarkUnreadSelected();
+                              setSectionSelectedEmails(new Set());
+                            }}
+                            disabled={sectionSelectedEmails.size === 0}
+                            className="p-1 hover:bg-gray-100 disabled:opacity-50 rounded"
+                            title="Mark as unread"
+                          >
+                            <Mail size={14} className="text-gray-600" />
+                          </button>
+
+                          {/* Mark Read */}
+                          <button
+                            onClick={() => {
+                              handleMarkReadSelected();
+                              setSectionSelectedEmails(new Set());
+                            }}
+                            disabled={sectionSelectedEmails.size === 0}
+                            className="p-1 hover:bg-gray-100 disabled:opacity-50 rounded"
+                            title="Mark as read"
+                          >
+                            <MailOpen size={14} className="text-gray-600" />
+                          </button>
+
+                          {/* Refresh */}
+                          <button
+                            onClick={handleRefreshCurrentTab}
+                            disabled={refreshing || refreshCooldown}
+                            className="p-1 hover:bg-gray-100 disabled:opacity-50 rounded"
+                            title={refreshCooldown && !refreshing ? 'Please wait...' : 'Refresh this section'}
+                          >
+                            <RefreshCw size={14} className={`text-gray-600 ${refreshing ? 'animate-spin' : ''}`} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Everything else emails */}
+                    <div className="flex-1 min-h-0 overflow-y-auto">
+                      <Table>
+                        <TableBody>
+                          {splitRead
+                            .slice(readShowAllPage * SECTION_PAGE_SIZE, (readShowAllPage + 1) * SECTION_PAGE_SIZE)
+                            .map(email => (
+                            <EmailListItem
+                              key={email.id}
+                              email={email}
+                              onClick={handleEmailClick}
+                              onEmailUpdate={handleEmailUpdate}
+                              onEmailDelete={handleEmailDelete}
+                              onCreateFilter={handleCreateFilter}
+                              isSelected={sectionSelectedEmails.has(email.id)}
+                              onToggleSelect={() => {
+                                const newSet = new Set(sectionSelectedEmails);
+                                if (newSet.has(email.id)) {
+                                  newSet.delete(email.id);
+                                } else {
+                                  newSet.add(email.id);
+                                }
+                                setSectionSelectedEmails(newSet);
+                              }}
+                              renderAsTableRow
+                            />
+                          ))}
+                        </TableBody>
+                      </Table>
+                      {splitRead.length === 0 && (
+                        <div className="p-8 text-center text-gray-500 text-sm">No read emails</div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
-              {createPortal(
-                <DragOverlay>
-                  {activeEmail ? (
-                    <EmailListItem
-                      email={activeEmail}
-                      onClick={handleEmailOpen}
-                      onEmailUpdate={handleEmailUpdate}
-                      onEmailDelete={handleEmailDeleteLocal}
-                      currentTab={viewState.activeTab}
-                      isSelected={viewState.selectedEmails.has(activeEmail.id)}
-                      onToggleSelect={toggleSelectEmail}
-                      renderAsTableRow={false}
-                    />
-                  ) : null}
-                </DragOverlay>,
-                document.body
-              )}
-            </DndContext>
+            ) : loading || isSearching || emailsToDisplay.length > 0 ? (
+              <div className="flex-1 flex flex-col min-h-0 relative">
+                <div ref={emailListRef} className="flex-1 overflow-y-auto max-w-full min-h-0" style={{ height: '0' }}>
+                  {(loading || isSearching) && emailsToDisplay.length === 0 ? (
+                    <div className="flex items-center justify-center h-full">
+                      <div className="flex flex-col items-center space-y-3">
+                        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary-500"></div>
+                        <p className="text-sm text-gray-500">{isSearching ? 'Searching emails...' : 'Loading emails...'}</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <Table>
+                        <TableBody>
+                          {emailsToDisplay.map((email) => (
+                            <EmailListItem 
+                              key={email.id} 
+                              email={email} 
+                              onClick={handleEmailClick}
+                              onEmailUpdate={handleEmailUpdate}
+                              onEmailDelete={handleEmailDelete}
+                              onCreateFilter={handleCreateFilter}
+                              isSelected={selectedEmails.has(email.id)}
+                              onToggleSelect={handleToggleSelectEmail}
+                              renderAsTableRow
+                            />
+                          ))}
+                        </TableBody>
+                      </Table>
+                      
+                      {/* Loading more indicator - shown inside scroll area */}
+                      {isLoadingMore && (
+                        <div className="py-8 flex items-center justify-center">
+                          <div className="flex items-center gap-3 text-sm text-gray-600 bg-white px-4 py-3 rounded-lg shadow-sm border border-gray-200">
+                            <RefreshCw className="w-5 h-5 animate-spin text-primary-500" />
+                            <span className="font-medium">Loading more emails...</span>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Load More button - shown when there are more emails to load */}
+                      {nextPageToken && !isLoadingMore && !loading && paginatedEmails.length > 0 && (
+                        <div className="py-6 flex items-center justify-center">
+                          <button
+                            onClick={() => handleLoadMore()}
+                            className="px-6 py-2.5 bg-primary-500 hover:bg-primary-600 text-white rounded-lg font-medium text-sm transition-colors shadow-sm hover:shadow-md"
+                          >
+                            Load More Emails
+                          </button>
+                        </div>
+                      )}
+                      
+                      {/* End of list indicator */}
+                      {!nextPageToken && !isLoadingMore && !loading && paginatedEmails.length > 0 && (
+                        <div className="py-6 flex items-center justify-center">
+                          <div className="text-xs text-gray-400 bg-gray-50 px-4 py-2 rounded-full">
+                            All emails loaded • {paginatedEmails.length} total
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="p-8 text-center">
+                <p className="text-gray-500">
+                  {pageType === 'drafts' ? 'No drafts' :
+                   pageType === 'sent' ? 'No sent emails' : 
+                   pageType === 'trash' ? 'Trash is empty' : 
+                   pageType === 'unread' ? 'No unread emails' : 
+                   labelName ? `No emails found for folder "${labelName}"` :
+                   activeTab === 'drafts' ? 'No drafts' :
+                   activeTab === 'unread' ? 'No unread emails' :
+                   activeTab === 'important' ? 'No important emails' :
+                   'No emails'}
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Drag Overlay */}
+          {createPortal(
+            <DragOverlay>
+              {activeEmail ? (
+                <div className="opacity-60 bg-white rounded-lg shadow-lg border-2 border-blue-300">
+                  <EmailListItem 
+                    key={`drag-${activeEmail.id}`}
+                    email={activeEmail} 
+                    onClick={() => {}}
+                    isDraggable={false}
+                    renderAsTableRow={false}
+                    onEmailUpdate={() => {}}
+                    onEmailDelete={() => {}}
+                    onCreateFilter={() => {}}
+                    isSelected={false}
+                  />
+                </div>
+              ) : null}
+            </DragOverlay>,
+            document.body
           )}
+          </DndContext>
         </div>
       </div>
     </ThreeColumnLayout>
