@@ -67,31 +67,8 @@ export function useEmailCounts(options: UseEmailCountsOptions): UseEmailCountsRe
     return NaN;
   }, []);
 
-  /**
-   * Emit inbox unread count event for FoldersColumn
-   */
-  const inboxUnreadCount = useMemo(() => {
-    if (pageType !== 'inbox' || labelName) return 0;
-
-    const repoInbox = emailRepository.getInboxEmails();
-    if (repoInbox.length > 0) {
-      return repoInbox.filter(email => !email.isRead).length;
-    }
-
-    // Fallback: when repository not yet hydrated (e.g. first load), rely on currently rendered inbox list
-    // But ignore if search is active (paginatedEmails would be search results)
-    return paginatedEmails.filter(email => !email.isRead).length;
-  }, [pageType, labelName, paginatedEmails]);
-
-  useEffect(() => {
-    if (pageType !== 'inbox' || labelName) return;
-
-    window.dispatchEvent(new CustomEvent('inbox-unread-count', {
-      detail: { count: inboxUnreadCount }
-    }));
-
-    console.log('📊 Emitting inbox unread count (hybrid source):', inboxUnreadCount);
-  }, [pageType, labelName, inboxUnreadCount]);
+  // Inbox counter now uses Gmail API labels directly (via LabelContext)
+  // No need to emit events - FoldersColumn reads from systemCounts
 
   /**
    * Calculate and emit 24-hour unread count

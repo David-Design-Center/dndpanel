@@ -16,6 +16,7 @@ import {
 } from '../parsing/body';
 import { decodeHtmlEntities } from '../parsing/charset';
 import type { EmailPart } from '../types';
+import { parseEmailBody } from '../parsing/bodyParserSimple';
 
 /**
  * Extract real attachments (files that are NOT inline images)
@@ -366,11 +367,22 @@ export const fetchGmailMessageById = async (id: string): Promise<Email | undefin
     let preview = msg.result.snippet ? decodeHtmlEntities(msg.result.snippet) : '';
     let body = '';
 
-    console.log('Finding body part...');
-    const bodyPart = gmailFindBodyPart(payload);
-    if (bodyPart) {
-      console.log(`Body part found, type: ${bodyPart.mimeType}`);
-      body = gmailExtractTextFromPart(bodyPart);
+    // Use simplified parser for reliable UTF-8 handling
+    console.log('📧 Using simplified body parser...');
+    body = parseEmailBody(msg.result);
+    console.log(`✅ Body parsed: ${body.length} characters`);
+    
+    // Fallback to old parser if new one returns empty
+    if (!body) {
+      console.warn('⚠️ Simplified parser returned empty, falling back to old parser');
+      const bodyPart = gmailFindBodyPart(payload);
+      if (bodyPart) {
+        console.log(`Body part found, type: ${bodyPart.mimeType}`);
+        body = gmailExtractTextFromPart(bodyPart);
+      }
+    }
+    
+    if (body) {
       
       // Extract inline attachments metadata (DON'T fetch data yet for performance)
       console.log('🔍 Searching for inline attachments...');
@@ -414,9 +426,12 @@ export const fetchGmailMessageById = async (id: string): Promise<Email | undefin
         // Store inline attachment metadata for lazy loading
         inlineAttachments: inlineAttachments.length > 0 ? inlineAttachments : undefined
       } as Email;
-    } else {
-      console.warn(`No suitable body part found for message ID (detail view): ${id}. Snippet: "${preview}"`);
-      if (!body && preview) body = preview.replace(/\n/g, '<br>');
+    }
+    
+    // Final fallback to snippet if still no body
+    if (!body && preview) {
+      console.warn(`No body found for message ${id}, using snippet`);
+      body = preview.replace(/\n/g, '<br>');
     }
 
     // Fallback: no body part found

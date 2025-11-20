@@ -1,9 +1,7 @@
 import { useEffect, lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useSecurity } from './contexts/SecurityContext';
-import { ContactsProvider } from './contexts/ContactsContext';
-import { EmailPreloaderProvider } from './contexts/EmailPreloaderContext';
-import { FilterCreationProvider } from './contexts/FilterCreationContext';
+import { FeatureProviders } from './providers';
 import Loading from './components/common/Loading';
 import { initSecurityMeasures } from './utils/security';
 import { SECURITY_CONFIG } from './config/security';
@@ -183,13 +181,9 @@ function App() {
           path="/"
           element={
             <ProtectedRoute>
-              <EmailPreloaderProvider>
-                <ContactsProvider>
-                  <FilterCreationProvider>
-                    <Layout />
-                  </FilterCreationProvider>
-                </ContactsProvider>
-              </EmailPreloaderProvider>
+              <FeatureProviders>
+                <Layout />
+              </FeatureProviders>
             </ProtectedRoute>
           }
         >

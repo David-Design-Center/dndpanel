@@ -58,24 +58,22 @@ export function isSystemLabel(labelId: string): boolean {
  * @returns true if thread belongs in inbox, false if it should be excluded
  */
 export function threadBelongsInInbox(messages: any[]): boolean {
-  if (!messages || messages.length === 0) return false;
-  
-  // Check every message in the thread
-  for (const message of messages) {
-    const labelIds: string[] = message.labelIds || [];
-    
-    // Check if this message has any user-created labels
-    for (const labelId of labelIds) {
-      if (!isSystemLabel(labelId)) {
-        // Found a user label - thread does NOT belong in inbox
-        console.log(`🚫 Thread excluded: message ${message.id} has user label: ${labelId}`);
-        return false;
-      }
-    }
-  }
-  
-  // All messages only have system labels - thread belongs in inbox
+  // DISABLED: Now showing ALL inbox emails including those with user labels
+  // This ensures counter matches displayed emails
   return true;
+  
+  // OLD LOGIC (commented out):
+  // if (!messages || messages.length === 0) return false;
+  // for (const message of messages) {
+  //   const labelIds: string[] = message.labelIds || [];
+  //   for (const labelId of labelIds) {
+  //     if (!isSystemLabel(labelId)) {
+  //       console.log(`🚫 Thread excluded: message ${message.id} has user label: ${labelId}`);
+  //       return false;
+  //     }
+  //   }
+  // }
+  // return true;
 }
 
 /**

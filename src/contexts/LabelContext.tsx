@@ -638,8 +638,24 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       setAddLabelError(null);
       console.log(`Adding Gmail label: ${name} for profile: ${currentProfile.name}`);
       
-      await createGmailLabel(name);
-      await refreshLabels(); // Refresh the labels list
+      const result = await createGmailLabel(name);
+      
+      // Optimistically add to local state immediately for instant UI update
+      if (result?.result?.id) {
+        setLabels(prev => [...prev, {
+          id: result.result.id,
+          name: result.result.name || name,
+          type: result.result.type || 'user',
+          messagesTotal: 0,
+          messagesUnread: 0,
+          threadsTotal: 0,
+          threadsUnread: 0
+        }]);
+        console.log('✅ Label added to UI immediately');
+      }
+      
+      // Refresh for accurate counts
+      await refreshLabels();
       
       console.log(`Successfully added label: ${name} for profile: ${currentProfile.name}`);
     } catch (err) {
@@ -684,13 +700,21 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       setDeleteLabelError(null);
       console.log(`Deleting Gmail label: ${id} for profile: ${currentProfile.name}`);
       
+      // Optimistically remove from local state immediately for instant UI update
+      setLabels(prev => prev.filter(label => label.id !== id));
+      console.log('✅ Label removed from UI immediately');
+      
       await deleteGmailLabel(id);
-      await refreshLabels(); // Refresh the labels list
+      
+      // Refresh to ensure sync (in case of nested labels or other changes)
+      await refreshLabels();
       
       console.log(`Successfully deleted label: ${id} for profile: ${currentProfile.name}`);
     } catch (err) {
       console.error('Error deleting Gmail label:', err);
       setDeleteLabelError(err instanceof Error ? err.message : 'Failed to delete label');
+      // Revert optimistic update on error
+      await refreshLabels();
       throw err;
     } finally {
       setIsDeletingLabel(false);

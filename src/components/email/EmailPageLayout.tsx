@@ -24,8 +24,7 @@ import {
 } from '../../services/emailService';
 import { emailRepository } from '../../services/emailRepository';
 import { useAuth } from '../../contexts/AuthContext';
-import { useInboxLayout } from '../../contexts/InboxLayoutContext';
-import { useFoldersColumn } from '../../contexts/FoldersColumnContext';
+import { useLayoutState } from '../../contexts/LayoutStateContext';
 import { toast } from 'sonner';
 // Import custom hooks
 import { usePagination, useEmailFetch, useEmailSelection, useEmailFilters, useEmailCounts, useTabManagement } from './EmailPageLayout/hooks';
@@ -55,8 +54,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { isGmailSignedIn, loading: authLoading, isGmailInitializing } = useAuth();
-  const { selectEmail } = useInboxLayout();
-  const { setSystemFolderFilterHandler } = useFoldersColumn();
+  const { selectEmail, setSystemFolderFilterHandler } = useLayoutState();
   const { openCompose } = useCompose();
 
   // Ref to preserve scroll position during state updates
@@ -608,6 +606,50 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     };
   }, [activeTab, pageType]);
 
+  // Separate effect for email deletion to ensure fresh state access
+  useEffect(() => {
+    const handleDraftDeleted = (event: CustomEvent<{ emailId: string }>) => {
+      const { emailId } = event.detail;
+      console.log('🗑️ Draft deleted event received:', emailId);
+      
+      // Remove from all tabs
+      setAllTabEmails(prev => {
+        const filterEmail = (emails: Email[]) => emails.filter(e => e.id !== emailId);
+        return {
+          all: filterEmail(prev.all),
+          unread: filterEmail(prev.unread),
+          trash: filterEmail(prev.trash),
+          drafts: filterEmail(prev.drafts),
+          sent: filterEmail(prev.sent || []),
+          important: filterEmail(prev.important || []),
+          starred: filterEmail(prev.starred || []),
+          spam: filterEmail(prev.spam || []),
+          allmail: filterEmail(prev.allmail || [])
+        };
+      });
+      
+      // Remove from paginated emails (immediate UI update)
+      setPaginatedEmails(prev => {
+        console.log('🔍 Removing email ID:', emailId);
+        console.log('🔍 Current emails:', prev.map(e => e.id));
+        const filtered = prev.filter(e => e.id !== emailId);
+        console.log('🔍 Filtered:', filtered.length, 'emails (removed:', prev.length - filtered.length, ')');
+        return filtered;
+      });
+      
+      // Clear cache
+      clearEmailCache();
+      
+      console.log('✅ Draft removed from UI');
+    };
+
+    window.addEventListener('email-deleted', handleDraftDeleted as any);
+
+    return () => {
+      window.removeEventListener('email-deleted', handleDraftDeleted as any);
+    };
+  }, []); // No dependencies - always has fresh state via functional updates
+
   // Pagination settings & state for toolbar chevrons
   const PAGE_SIZE = 25;
   const [pageIndex, setPageIndex] = useState(0);
@@ -795,6 +837,9 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     draftsCount,
     trashCount
   });
+
+  // Draft counter now uses Gmail API labels directly (via LabelContext)
+  // No need to emit events - FoldersColumn reads from label.messagesTotal
 
   const handleEmailClick = (id: string) => {
     // Drafts: open compose popup with draft content

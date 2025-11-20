@@ -1,8 +1,7 @@
 import { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
-import { useInboxLayout } from '../../contexts/InboxLayoutContext';
-import { usePanelSizes } from '../../contexts/PanelSizesContext';
+import { useLayoutState } from '../../contexts/LayoutStateContext';
+import { ResizableLayout } from './ResizableLayout';
 import EmbeddedViewEmail from '@/components/email/EmbeddedViewEmailClean';
 import { Email } from '../../types';
 
@@ -14,8 +13,7 @@ interface ThreeColumnLayoutProps {
 
 function ThreeColumnLayout({ children, onEmailUpdate, onEmailDelete }: ThreeColumnLayoutProps) {
   const { id: emailId } = useParams<{ id: string }>();
-  const { selectedEmailId, selectEmail, clearSelection } = useInboxLayout();
-  const { panelSizes, updatePanelSizes } = usePanelSizes();
+  const { selectedEmailId, selectEmail, clearSelection, panelSizes, updatePanelSizes } = useLayoutState();
 
   // Handle URL parameter changes
   useEffect(() => {
@@ -40,48 +38,28 @@ function ThreeColumnLayout({ children, onEmailUpdate, onEmailDelete }: ThreeColu
   };
 
   return (
-    <div className="flex h-full">
-      <PanelGroup 
-        direction="horizontal" 
-        className="flex h-full panel-group"
-        onLayout={handlePanelResize}
-      >
-        {/* Email List Column */}
-        <Panel 
-          id="emailList"
-          defaultSize={50} 
-          minSize={40} 
-          maxSize={75}
-          className="flex relative border-r-2 border-gray-200 min-w-[480px]"
-        >
-          <div className="w-full flex flex-col min-w-[480px]">
-            {children}
+    <ResizableLayout
+      leftPanel={children}
+      rightPanel={
+        selectedEmailId ? (
+          <EmbeddedViewEmail 
+            emailId={selectedEmailId} 
+            onEmailUpdate={onEmailUpdate}
+            onEmailDelete={onEmailDelete}
+          />
+        ) : (
+          <div className="flex items-center justify-center h-full text-gray-500">
+            {/* Empty state */}
           </div>
-        </Panel>
-        
-        {/* Email View Column */}
-        <PanelResizeHandle className="resize-handle cursor-col-resize" />
-        <Panel 
-          id="emailView"
-          defaultSize={50} 
-          minSize={25} 
-          maxSize={70}
-        >
-          <div className="w-full bg-white mr-4">
-            {selectedEmailId ? (
-              <EmbeddedViewEmail 
-                emailId={selectedEmailId} 
-                onEmailUpdate={onEmailUpdate}
-                onEmailDelete={onEmailDelete}
-              />
-            ) : (
-              <div className="flex items-center justify-center h-full text-gray-500">
-              </div>
-            )}
-          </div>
-        </Panel>
-      </PanelGroup>
-    </div>
+        )
+      }
+      showRightPanel={true}
+      leftPanelDefaultSize={50}
+      leftPanelMinSize={40}
+      leftPanelMaxSize={75}
+      leftPanelMinWidth={480}
+      onResize={handlePanelResize}
+    />
   );
 }
 

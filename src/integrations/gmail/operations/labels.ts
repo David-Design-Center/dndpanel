@@ -40,43 +40,51 @@ export const fetchGmailLabels = async (): Promise<GmailLabel[]> => {
     console.log(' Raw Gmail API response from list:', response.result);
     console.log(`Found ${response.result.labels.length} labels, now fetching details with counters...`);
 
-    const keySystemLabels = response.result.labels.filter((label: any) => {
-      const keyLabels = ['INBOX', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'IMPORTANT', 'STARRED'];
-      return keyLabels.includes(label.id);
+    // Fetch details for user labels (not system/category labels which don't need detailed fetch)
+    const labelsToFetchDetails = response.result.labels.filter((label: any) => {
+      return label.type === 'user' || ['INBOX', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'IMPORTANT', 'STARRED'].includes(label.id);
     });
 
-    console.log(` Fetching detailed info for ${keySystemLabels.length} key system labels only`);
+    console.log(` Fetching detailed info for ${labelsToFetchDetails.length} labels (system + user) in parallel`);
 
     const labelDetails = [...response.result.labels];
     
-    for (let i = 0; i < keySystemLabels.length; i++) {
-      const label = keySystemLabels[i];
-      try {
-        if (i > 0) {
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
-        
-        const detailResponse = await window.gapi.client.gmail.users.labels.get({
-          userId: 'me',
-          id: label.id
-        });
-        
-        const labelIndex = labelDetails.findIndex(l => l.id === label.id);
-        if (labelIndex !== -1) {
-          labelDetails[labelIndex] = detailResponse.result;
-        }
-        
-        console.log(` Fetched details for ${label.name}`);
-      } catch (error: any) {
-        if (error?.status === 429) {
-          console.warn(` Rate limited for ${label.name}, using basic info`);
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        } else {
-          console.warn(` Failed to fetch details for ${label.name}:`, error?.message || error);
-        }
-      }
-    }
+    // Batch fetch all label details in parallel (much faster!)
+    const detailPromises = labelsToFetchDetails.map(label => 
+      window.gapi.client.gmail.users.labels.get({
+        userId: 'me',
+        id: label.id
+      })
+      .then(detailResponse => ({
+        success: true,
+        labelId: label.id,
+        labelName: label.name,
+        result: detailResponse.result
+      }))
+      .catch((error: any) => ({
+        success: false,
+        labelId: label.id,
+        labelName: label.name,
+        error: error?.message || error
+      }))
+    );
 
+    const detailResults = await Promise.all(detailPromises);
+    
+    // Update labelDetails with fetched data
+    detailResults.forEach(result => {
+      if (result.success) {
+        const labelIndex = labelDetails.findIndex(l => l.id === result.labelId);
+        if (labelIndex !== -1) {
+          labelDetails[labelIndex] = result.result;
+        }
+        console.log(` ✓ Fetched details for ${result.labelName}`);
+      } else {
+        console.warn(` ✗ Failed to fetch ${result.labelName}:`, result.error);
+      }
+    });
+
+    console.log(` ✓ Batch fetched ${detailResults.filter(r => r.success).length}/${labelsToFetchDetails.length} labels in parallel`);
     console.log(' Raw label details with counters:', labelDetails);
 
     const labels: GmailLabel[] = labelDetails.map((label: any) => ({

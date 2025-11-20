@@ -92,15 +92,14 @@ export function usePagination(options: UsePaginationOptions): UsePaginationRetur
       // Build query based on active tab/page context
       let query = '';
       
-      // For inbox views, use query with SERVER-SIDE filtering to exclude user-labeled emails
-      // -has:userlabels ensures we only get emails without custom labels
+      // For inbox views, show ALL emails including those with user labels
       if (pageType === 'inbox' && !labelName) {
         switch (activeTab) {
           case 'all':
-            query = 'in:inbox -has:userlabels';
+            query = 'in:inbox';
             break;
           case 'unread':
-            query = 'in:inbox -has:userlabels is:unread';
+            query = 'in:inbox is:unread';
             break;
           case 'sent':
             query = 'label:SENT';
@@ -125,7 +124,7 @@ export function usePagination(options: UsePaginationOptions): UsePaginationRetur
             query = '-label:SPAM -label:TRASH';
             break;
           default:
-            query = 'in:inbox -has:userlabels';
+            query = 'in:inbox';
         }
       } else if (labelName) {
         // Viewing a specific custom label

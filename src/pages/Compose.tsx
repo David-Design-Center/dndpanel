@@ -1666,13 +1666,18 @@ function Compose() {
                         try {
                           await deleteDraft(currentDraftId);
                           
-                          // Remove from email repository immediately for good UX
-                          emailRepository.deleteEmail(currentDraftId);
+                          // Use contextDraftId (email list ID) for UI removal, not currentDraftId (Gmail draft ID)
+                          const emailIdToRemove = contextDraftId || currentDraftId;
                           
-                          // Emit event to refresh drafts list
+                          // Remove from email repository
+                          emailRepository.deleteEmail(emailIdToRemove);
+                          
+                          // Emit event with the email list ID so UI can remove it
                           window.dispatchEvent(new CustomEvent('email-deleted', { 
-                            detail: { emailId: currentDraftId } 
+                            detail: { emailId: emailIdToRemove } 
                           }));
+                          
+                          console.log('🗑️ Emitted email-deleted event with ID:', emailIdToRemove);
                           
                           closeCompose();
                         } catch (error) {

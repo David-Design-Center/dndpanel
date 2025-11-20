@@ -1,10 +1,10 @@
-import { Inbox, ChevronRight, Clipboard, FileText, Settings, BarChart3, Package, Calendar, Users, GraduationCap, Sofa, Store } from 'lucide-react';
+import { Inbox, ChevronRight, FileText, Settings, BarChart3, Package, Calendar, Users, GraduationCap, Store } from 'lucide-react';
 import { useLocation, Link } from 'react-router-dom';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useProfile } from '../../contexts/ProfileContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useOutOfOffice } from '../../contexts/OutOfOfficeContext';
-import { useInboxLayout } from '../../contexts/InboxLayoutContext';
+import { useLayoutState } from '../../contexts/LayoutStateContext';
 import { useEmailPreloader } from '../../contexts/EmailPreloaderContext';
 import { Toggle } from '../ui/liquid-toggle';
 import ProfileSelector from '../profile/ProfileSelector';
@@ -17,7 +17,7 @@ function Sidebar({ }: SidebarProps) {
   const { currentProfile } = useProfile();
   const { isAdmin } = useAuth();
   const { isOutOfOffice, setOutOfOffice } = useOutOfOffice();
-  const { isSidebarCollapsed, toggleSidebar } = useInboxLayout();
+  const { isSidebarCollapsed, toggleSidebar } = useLayoutState();
   const { isPreloading } = useEmailPreloader();
   
   // Main item

@@ -1,68 +1,59 @@
-EmailPageLayout.tsx:784 📧 Current state: {activeTab: 'all', filteredEmailsLength: 25, loading: false, authLoading: false, isGmailInitializing: false, …}
-optimizedEmailService.ts:105 🚀 OptimizedEmailService: Fetching thread 19a88693cd405a9c
-optimizedEmailService.ts:110 ⚠️ Edge function disabled - falling back to direct Gmail API
-usePagination.ts:353 ⏸️ Pagination: Viewing email detail, skipping reset {basePath: '/inbox', prevBasePath: '/inbox', isViewingEmail: true, wasViewingEmail: false, isTransitioningToDetail: true, …}
-gmailVacationService.ts:97 Getting Gmail vacation responder settings...
-labels.ts:29 Fetching Gmail labels...
-emailService.ts:907 Using cached email for ID: 19a88693cd405a9c
-optimizedEmailService.ts:105 🚀 OptimizedEmailService: Fetching thread 19a88693cd405a9c
-optimizedEmailService.ts:110 ⚠️ Edge function disabled - falling back to direct Gmail API
-emailService.ts:987 Fetching all emails in thread: 19a88693cd405a9c
-EmailPageLayout.tsx:784 📧 Current state: {activeTab: 'all', filteredEmailsLength: 0, loading: true, authLoading: false, isGmailInitializing: false, …}
-optimizedEmailService.ts:105 🚀 OptimizedEmailService: Fetching thread 19a88693cd405a9c
-optimizedEmailService.ts:110 ⚠️ Edge function disabled - falling back to direct Gmail API
-usePagination.ts:353 ⏸️ Pagination: Viewing email detail, skipping reset {basePath: '/inbox', prevBasePath: undefined, isViewingEmail: true, wasViewingEmail: false, isTransitioningToDetail: true, …}
+EmailPreloaderContext.tsx:222 ⏸️ EmailPreloader: Not on email page, skipping preload
+OutOfOfficeContext.tsx:104 ⏸️ OutOfOfficeContext: Not on email/settings page, skipping status check
+GoTrueClient.ts:245 Multiple GoTrueClient instances detected in the same browser context. It is not an error, but this should be avoided as it may produce undefined behavior when used concurrently under the same storage key.
+_GoTrueClient @ GoTrueClient.ts:245
+SupabaseAuthClient @ SupabaseAuthClient.ts:6
+_initSupabaseAuthClient @ SupabaseClient.ts:329
+SupabaseClient @ SupabaseClient.ts:128
+createClient @ index.ts:46
+(anonymous) @ InvoicePreviewModal.tsx:13
+GoTrueClient.ts:245 Multiple GoTrueClient instances detected in the same browser context. It is not an error, but this should be avoided as it may produce undefined behavior when used concurrently under the same storage key.
+_GoTrueClient @ GoTrueClient.ts:245
+SupabaseAuthClient @ SupabaseAuthClient.ts:6
+_initSupabaseAuthClient @ SupabaseClient.ts:329
+SupabaseClient @ SupabaseClient.ts:128
+createClient @ index.ts:46
+(anonymous) @ InvoiceCards.tsx:13
+GoTrueClient.ts:245 Multiple GoTrueClient instances detected in the same browser context. It is not an error, but this should be avoided as it may produce undefined behavior when used concurrently under the same storage key.
+_GoTrueClient @ GoTrueClient.ts:245
+SupabaseAuthClient @ SupabaseAuthClient.ts:6
+_initSupabaseAuthClient @ SupabaseClient.ts:329
+SupabaseClient @ SupabaseClient.ts:128
+createClient @ index.ts:46
+(anonymous) @ searchUtils.ts:6
+EmailPageLayout.tsx:783 📧 Current state: {activeTab: 'all', filteredEmailsLength: 0, loading: true, authLoading: false, isGmailInitializing: false, …}
+usePagination.ts:314 📋 Pagination useEffect triggered: {activeTab: 'all', labelName: null, isGmailSignedIn: true, isGmailInitializing: false, tabChanged: true, …}
+usePagination.ts:346 📋 Loading first page of emails... (initial load)
+usePagination.ts:73 🔍 loadPaginatedEmails called: {pageToken: 'none', append: false, currentEmailsCount: 0}
+emailService.ts:429 Fetching fresh email list (inbox - no cache) with query: in:inbox -has:userlabels
+emailService.ts:451 📧 Queueing Gmail API request for emails...
+requestQueue.ts:70 🔄 Executing queued request: fetch-emails-in:inbox--has:userlabels-1763637143793-5onhcnlb8
 useEmailFetch.ts:674 📧 EmailPageLayout useEffect triggered: {isGmailSignedIn: true, pageType: 'inbox', labelName: null, labelQueryParam: null, labelIdParam: null, …}
 useEmailFetch.ts:698 📧 Initial load delegated to usePagination
-emailService.ts:907 Using cached email for ID: 19a88693cd405a9c
-optimizedEmailService.ts:105 🚀 OptimizedEmailService: Fetching thread 19a88693cd405a9c
-optimizedEmailService.ts:110 ⚠️ Edge function disabled - falling back to direct Gmail API
-emailService.ts:987 Fetching all emails in thread: 19a88693cd405a9c
-EmailPageLayout.tsx:784 📧 Current state: {activeTab: 'all', filteredEmailsLength: 0, loading: true, authLoading: false, isGmailInitializing: false, …}
-gmailVacationService.ts:119 Gmail vacation settings retrieved: {enableAutoReply: false, responseSubject: 'Out of Office', responseBodyPlainText: '', responseBodyHtml: '<div style="font-family:Arial,sans-serif;line-heig…erstanding.</p>\n        <p>Marti</p>\n      </div>', restrictToContacts: false, …}
-labels.ts:40  Raw Gmail API response from list: {labels: Array(23)}
-labels.ts:41 Found 23 labels, now fetching details with counters...
+useEmailCounts.ts:76 🔍 useEmailCounts effect running - allTabEmails.all.length: 0
+useEmailCounts.ts:99 📊 Emitting inbox unread count: 0 unread from 0 inbox emails (total emails: 0 )
+gmailVacationService.ts:97 Getting Gmail vacation responder settings...
+labels.ts:29 Fetching Gmail labels...
+EmailPageLayout.tsx:783 📧 Current state: {activeTab: 'all', filteredEmailsLength: 0, loading: true, authLoading: false, isGmailInitializing: false, …}
+EmailPageLayout.tsx:783 📧 Current state: {activeTab: 'all', filteredEmailsLength: 0, loading: true, authLoading: false, isGmailInitializing: false, …}
+labels.ts:40  Raw Gmail API response from list: {labels: Array(25)}
+labels.ts:41 Found 25 labels, now fetching details with counters...
 labels.ts:48  Fetching detailed info for 7 key system labels only
+gmailVacationService.ts:119 Gmail vacation settings retrieved: {enableAutoReply: false, responseSubject: 'Out of Office', responseBodyPlainText: '', responseBodyHtml: '<div style="font-family:Arial,sans-serif;line-heig…erstanding.</p>\n        <p>Marti</p>\n      </div>', restrictToContacts: false, …}
 labels.ts:69  Fetched details for SENT
-messages.ts:349 Email fetch successful, processing payload
-messages.ts:369 Finding body part...
-messages.ts:372 Body part found, type: text/html
-body.ts:22 📧 Decoding email part: mimeType=text/html, charset=utf-8
-body.ts:26 📦 Decoded 61496 bytes from base64url
-body.ts:32 🔐 Content-Transfer-Encoding: quoted-printable
-body.ts:36 🔄 Decoding quoted-printable...
-body.ts:38 📦 After QP decode: 61490 bytes
-body.ts:43 📝 Decoded to 61470 characters
-body.ts:46 📄 First 200 chars: <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
-<html data-editor-version="2" class="sg-campaigns" xmlns="http://www.w3.org/1999/xhtml">
-messages.ts:376 🔍 Searching for inline attachments...
-messages.ts:94 📎 Total inline attachments found: 0
-messages.ts:383 ℹ️ No inline attachments found
-messages.ts:387 🔍 Searching for real attachments...
-messages.ts:59 📎 Total attachments found: 0
-messages.ts:349 Email fetch successful, processing payload
-messages.ts:369 Finding body part...
-messages.ts:372 Body part found, type: text/html
-body.ts:22 📧 Decoding email part: mimeType=text/html, charset=utf-8
-body.ts:26 📦 Decoded 61496 bytes from base64url
-body.ts:32 🔐 Content-Transfer-Encoding: quoted-printable
-body.ts:36 🔄 Decoding quoted-printable...
-body.ts:38 📦 After QP decode: 61490 bytes
-body.ts:43 📝 Decoded to 61470 characters
-body.ts:46 📄 First 200 chars: <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
-<html data-editor-version="2" class="sg-campaigns" xmlns="http://www.w3.org/1999/xhtml">
-messages.ts:376 🔍 Searching for inline attachments...
-messages.ts:94 📎 Total inline attachments found: 0
-messages.ts:383 ℹ️ No inline attachments found
-messages.ts:387 🔍 Searching for real attachments...
-messages.ts:59 📎 Total attachments found: 0
 labels.ts:69  Fetched details for INBOX
 labels.ts:69  Fetched details for IMPORTANT
 labels.ts:69  Fetched details for TRASH
 labels.ts:69  Fetched details for DRAFT
 labels.ts:69  Fetched details for SPAM
+requestQueue.ts:73 ✅ Completed queued request: fetch-emails-in:inbox--has:userlabels-1763637143793-5onhcnlb8
+usePagination.ts:172 ✅ Fetched 25 emails using query in 0ms
+usePagination.ts:200 📄 Pagination state: {emailsCount: 25, nextPageToken: '10704935507263733909', isInboxQuery: true, hasActualMore: true, forceMore: true, …}
+EmailPageLayout.tsx:783 📧 Current state: {activeTab: 'all', filteredEmailsLength: 25, loading: false, authLoading: false, isGmailInitializing: false, …}
+usePagination.ts:314 📋 Pagination useEffect triggered: {activeTab: 'all', labelName: null, isGmailSignedIn: true, isGmailInitializing: false, tabChanged: false, …}
+usePagination.ts:334 📋 Skipping reset - no actual change (just re-render)
 labels.ts:69  Fetched details for STARRED
-labels.ts:80  Raw label details with counters: (23) [{…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}]
-labels.ts:98 Found 5 labels with message counts
+labels.ts:80  Raw label details with counters: (25) [{…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}]
+labels.ts:98 Found 6 labels with message counts
 labels.ts:101 KEY SYSTEM LABELS: (3) [{…}, {…}, {…}]
-labels.ts:107 Successfully fetched 23 Gmail labels
+labels.ts:107 Successfully fetched 25 Gmail labels

@@ -49,7 +49,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useToast } from '@/components/ui/use-toast';
 import { TreeView, TreeNode } from '@/components/ui/tree-view';
 import { useLabel } from '../../contexts/LabelContext';
-import { useFoldersColumn } from '../../contexts/FoldersColumnContext';
+import { useLayoutState } from '../../contexts/LayoutStateContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { GmailLabel } from '../../types';
 // Remove unused import
@@ -89,7 +89,7 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
   const { labels, loadingLabels, deleteLabel, addLabel, isAddingLabel, systemCounts, recentCounts, refreshLabels } = useLabel();
   // recentCounts.inboxUnreadToday -> unread INBOX messages received since today's New York midnight
   // recentCounts.draftTotal -> total number of drafts (exact)
-  const { onSystemFolderFilter } = useFoldersColumn();
+  const { onSystemFolderFilter } = useLayoutState();
   const { isGmailSignedIn } = useAuth();
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
@@ -102,9 +102,6 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
   // Highlight selected system folder (visual state only)
   // Default to 'inbox' so the Inbox button starts in an active/disabled state
   const [selectedSystemFolder, setSelectedSystemFolder] = useState<string | null>('inbox');
-  
-  // Listen for actual inbox unread count from the email list
-  const [inboxUnreadFromList, setInboxUnreadFromList] = useState<number | null>(null);
   
   const navigate = useNavigate();
 
@@ -208,7 +205,15 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
       // At the leaf: assign the actual label data
       if (node && node !== root) {
         node.labelObj = label;
-        node.messagesUnread = systemCounts[label.id] || label.messagesUnread || 0; // Use system counts from labels
+        const systemCount = systemCounts[label.id];
+        const labelCount = label.messagesUnread;
+        node.messagesUnread = systemCount || labelCount || 0; // Use system counts from labels
+        
+        // Debug logging for labels with unread
+        if ((systemCount || labelCount) && label.name && !label.name.startsWith('CATEGORY_')) {
+          console.log('📊 Label unread count:', label.name, '- systemCount:', systemCount, 'labelCount:', labelCount, 'final:', node.messagesUnread);
+        }
+        
         node.id = label.id;
         node.gmailName = label.name;
       }
@@ -316,54 +321,40 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
       
       const systemLabelId = systemLabelIdMap[folder.name];
       if (systemLabelId) {
-        // Special case for Inbox: use count from email list (single source of truth)
-        if (folder.name === 'Inbox' && inboxUnreadFromList !== null) {
-          unreadCount = inboxUnreadFromList;
-          overLimit = inboxUnreadFromList > 99;
-        } else if (folder.name === 'Inbox') {
-          // Fallback to recentCounts if list count not available yet
-          unreadCount = recentCounts.inboxUnreadToday ?? 0;
-          overLimit = recentCounts.inboxUnreadOverLimit;
-        } else {
-          // Use system counts directly from Gmail labels for other folders
-          const systemCount = systemCounts[systemLabelId];
-          const fallbackCount = matchingLabel?.messagesUnread ?? 0;
-          unreadCount = systemCount ?? fallbackCount;
-          overLimit = unreadCount > 99;
-        }
+        // Use Gmail API label data as single source of truth
+        const systemCount = systemCounts[systemLabelId];
+        const fallbackCount = matchingLabel?.messagesUnread ?? 0;
+        unreadCount = systemCount ?? fallbackCount;
+        overLimit = unreadCount > 99;
       }
 
       // Debug logging
       if (folder.name === 'Inbox') {
-        console.log('Inbox unread count:', unreadCount, 'from email list:', inboxUnreadFromList, 'fallback:', recentCounts.inboxUnreadToday);
+        console.log('📊 Inbox counter breakdown:', {
+          systemCount: systemCounts[systemLabelId],
+          labelMessagesUnread: matchingLabel?.messagesUnread,
+          finalUnreadCount: unreadCount,
+          matchingLabel: matchingLabel ? {
+            id: matchingLabel.id,
+            name: matchingLabel.name,
+            messagesTotal: matchingLabel.messagesTotal,
+            messagesUnread: matchingLabel.messagesUnread
+          } : null
+        });
       }
 
       return {
         ...folder,
         unreadCount,
         overLimit,
-        totalCount: folder.name === 'Drafts'
-          ? ((recentCounts.draftTotal ?? matchingLabel?.messagesTotal) || 0)
-          : (matchingLabel?.messagesTotal || 0),
+        totalCount: matchingLabel?.messagesTotal || 0,
         color: selectedSystemFolder === folder.folderType ? '#272727ff' : '#4d4d4dff'
       };
     });
-  }, [labels, systemCounts, selectedSystemFolder, recentCounts, inboxUnreadFromList]);
+  }, [labels, systemCounts, selectedSystemFolder, recentCounts]);
 
-  // Listen for actual inbox unread count from email list (single source of truth)
-  useEffect(() => {
-    const handleInboxUnreadCount = (event: Event) => {
-      const customEvent = event as CustomEvent<{ count: number }>;
-      setInboxUnreadFromList(customEvent.detail.count);
-      console.log('📊 FoldersColumn received inbox unread count from list:', customEvent.detail.count);
-    };
-
-    window.addEventListener('inbox-unread-count', handleInboxUnreadCount as EventListener);
-    
-    return () => {
-      window.removeEventListener('inbox-unread-count', handleInboxUnreadCount as EventListener);
-    };
-  }, []);
+  // Counters now use Gmail API labels directly (via systemCounts)
+  // No need for event listeners - labels are the single source of truth
 
   // (Removed explicit refresh effect to avoid duplicate rapid refresh loops; context handles initial load)
 

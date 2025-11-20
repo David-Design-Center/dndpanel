@@ -27,7 +27,7 @@ import {
 import { optimizedEmailService } from '../../services/optimizedEmailService';
 import { replaceCidReferences } from '../../integrations/gmail/fetch/messages';
 import { Email } from '../../types';
-import { useInboxLayout } from '../../contexts/InboxLayoutContext';
+import { useLayoutState } from '../../contexts/LayoutStateContext';
 import { useLabel } from '../../contexts/LabelContext';
 import { cleanEmailAddress } from '../../utils/emailFormatting';
 import { toast as sonnerToast } from 'sonner';
@@ -172,7 +172,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   // const [addLabelQuery, setAddLabelQuery] = useState('');
   // const addLabelModalRef = useRef<HTMLDivElement>(null);
 
-  const { clearSelection } = useInboxLayout();
+  const { clearSelection } = useLayoutState();
   const { labels, addLabel } = useLabel(); // Get labels from context
   const navigate = useNavigate();
   const { toast } = useToast();

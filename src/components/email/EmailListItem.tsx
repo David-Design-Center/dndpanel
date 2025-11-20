@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Email } from '@/types';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { useInboxLayout } from '@/contexts/InboxLayoutContext';
+import { useLayoutState } from '@/contexts/LayoutStateContext';
 import { TableRow, TableCell } from '@/components/ui/table';
 import { formatEmailDate, calculateContextMenuPosition, getEmailRowClassName } from './utils/emailItemFormatting';
 import { useEmailItemActions } from './hooks/useEmailItemActions';
@@ -40,7 +40,7 @@ function EmailListItem({
   onToggleSelect, 
   renderAsTableRow = true 
 }: EmailListItemProps) {
-  const { selectedEmailId } = useInboxLayout();
+  const { selectedEmailId } = useLayoutState();
   
   // Email actions hook
   const {
