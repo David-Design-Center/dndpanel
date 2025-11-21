@@ -137,6 +137,11 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const lastSaveTimeRef = useRef<number>(0);
   const isDirtyRef = useRef(false); // Add ref to avoid stale closures
   
+  // Refs to store current values (avoid stale closure in timers)
+  const replyContentRef = useRef(replyContent);
+  const forwardToRef = useRef(forwardTo);
+  const replyModeRef = useRef(replyMode);
+  
   // Attachment preview modal state
   const [previewAttachment, setPreviewAttachment] = useState<{ url: string; name: string; type: string } | null>(null);
   
@@ -964,24 +969,29 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   // Draft saving utilities
   const hashDraftState = useCallback(() => {
     const state = {
-      to: forwardTo,
-      body: replyContent,
-      mode: replyMode
+      to: forwardToRef.current,
+      body: replyContentRef.current,
+      mode: replyModeRef.current
     };
     return btoa(JSON.stringify(state));
-  }, [forwardTo, replyContent, replyMode]);
+  }, []); // No dependencies - uses refs
 
   const isEmpty = useCallback(() => {
     // For forward mode, check if both to and body are empty
-    if (replyMode === 'forward') {
-      return !forwardTo.trim() && !replyContent.trim();
+    if (replyModeRef.current === 'forward') {
+      return !forwardToRef.current.trim() && !replyContentRef.current.trim();
     }
     // For reply/replyAll mode, only check body
-    return !replyContent.trim();
-  }, [forwardTo, replyContent, replyMode]);
+    return !replyContentRef.current.trim();
+  }, []); // No dependencies - uses refs
 
   const saveDraft = useCallback(async () => {
-    console.log('🔍 saveDraft called, isDirty:', isDirty, 'isDirtyRef:', isDirtyRef.current);
+    console.log('🔍 saveDraft called');
+    console.log('  - isDirty:', isDirty);
+    console.log('  - isDirtyRef.current:', isDirtyRef.current);
+    console.log('  - replyContent:', replyContent.substring(0, 50));
+    console.log('  - forwardTo:', forwardTo);
+    console.log('  - replyMode:', replyMode);
     
     if (!isDirtyRef.current) {
       console.log('❌ Not dirty (ref check), skipping save');
@@ -993,6 +1003,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     console.log('🔍 isEmpty check:', emptyCheck);
     
     if (emptyCheck) {
+      console.log('❌ Content is empty, skipping save');
       if (draftId) {
         try {
           // Delete empty draft
@@ -1011,7 +1022,10 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
     // Check if content actually changed
     const currentHash = hashDraftState();
-    console.log('🔍 Current hash:', currentHash, 'Last hash:', lastHash);
+    console.log('🔍 Hash comparison:');
+    console.log('  - Current hash:', currentHash);
+    console.log('  - Last hash:', lastHash);
+    console.log('  - Are equal?:', currentHash === lastHash);
     
     if (currentHash === lastHash) {
       console.log('❌ Hash unchanged, skipping save');
@@ -1033,18 +1047,23 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     lastSaveTimeRef.current = now;
 
     try {
-      // Determine recipient based on reply mode
-      let recipientEmail = forwardTo; // For forward mode
+      // Use refs to get current values (avoid stale closures)
+      const currentReplyContent = replyContentRef.current;
+      const currentForwardTo = forwardToRef.current;
+      const currentReplyMode = replyModeRef.current;
       
-      if (replyMode === 'reply' || replyMode === 'replyAll') {
+      // Determine recipient based on reply mode
+      let recipientEmail = currentForwardTo; // For forward mode
+      
+      if (currentReplyMode === 'reply' || currentReplyMode === 'replyAll') {
         // For reply modes, use the original sender's email
         recipientEmail = email?.from?.email || '';
       }
 
       const payload = {
         to: recipientEmail,
-        body: replyContent,
-        mode: replyMode,
+        body: currentReplyContent,
+        mode: currentReplyMode,
         threadId: email?.threadId,
         inReplyTo: email?.id
       };
@@ -1058,6 +1077,12 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         console.log('📝 Created draft:', response);
         setDraftId(response.id);
         setDraftVersion(response.version);
+        
+        // Emit event to increment draft counter
+        window.dispatchEvent(new CustomEvent('draft-created', { 
+          detail: { draftId: response.id } 
+        }));
+        console.log('📤 Emitted draft-created event for:', response.id);
       } else {
         // Update existing draft
         response = await updateReplyDraft(draftId, payload, draftVersion);
@@ -1088,7 +1113,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     } finally {
       setIsSaving(false);
     }
-  }, [isDirty, isEmpty, draftId, draftVersion, lastHash, hashDraftState, forwardTo, replyContent, replyMode, email]);
+  }, [isDirty, isEmpty, draftId, draftVersion, lastHash, hashDraftState, email]); // Removed replyContent, forwardTo, replyMode (using refs)
 
   const scheduleDebouncedSave = useCallback(() => {
     console.log('⏰ scheduleDebouncedSave called');
@@ -2201,6 +2226,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                   value={forwardTo}
                   onChange={(e) => {
                     setForwardTo(e.target.value);
+                    forwardToRef.current = e.target.value; // Update ref
                     handleDraftChange();
                   }}
                   placeholder="To:"
@@ -2214,6 +2240,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                 value={replyContent}
                 onChange={(content) => {
                   setReplyContent(content);
+                  replyContentRef.current = content; // Update ref
                   handleDraftChange();
                 }}
                 placeholder="Type your message..."
@@ -2250,15 +2277,28 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                   onClick={async () => {
                     if (window.confirm('Are you sure you want to discard this draft?')) {
                       try {
-                        await deleteReplyDraft(draftId);
+                        const draftIdToDelete = draftId;
+                        
+                        // Delete the draft
+                        await deleteReplyDraft(draftIdToDelete);
+                        
+                        // Emit event to decrement draft counter
+                        window.dispatchEvent(new CustomEvent('email-deleted', { 
+                          detail: { emailId: draftIdToDelete } 
+                        }));
+                        console.log('📤 Emitted email-deleted event for discarded draft:', draftIdToDelete);
+                        
                         sonnerToast.success('Draft discarded');
-                        // Close composer but stay in thread view
+                        
+                        // Close composer and reset state
                         setShowReplyComposer(false);
                         setReplyContent('');
                         setForwardTo('');
                         setDraftId(null);
                         setIsDirty(false);
                         isDirtyRef.current = false;
+                        replyContentRef.current = '';
+                        forwardToRef.current = '';
                         // Don't navigate away - stay in thread view
                       } catch (error) {
                         console.error('Failed to discard draft:', error);

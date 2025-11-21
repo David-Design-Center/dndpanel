@@ -343,11 +343,17 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
         });
       }
 
+      // Use recentCounts.draftTotal for Drafts folder (real-time updates)
+      let totalCount = matchingLabel?.messagesTotal || 0;
+      if (folder.name === 'Drafts') {
+        totalCount = recentCounts.draftTotal;
+      }
+      
       return {
         ...folder,
         unreadCount,
         overLimit,
-        totalCount: matchingLabel?.messagesTotal || 0,
+        totalCount,
         color: selectedSystemFolder === folder.folderType ? '#272727ff' : '#4d4d4dff'
       };
     });

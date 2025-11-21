@@ -569,6 +569,12 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
               drafts: [draftEmail, ...prev.drafts]
             }));
             
+            // Also add to paginated emails if we're on drafts page
+            if (activeTab === 'drafts') {
+              setPaginatedEmails(prev => [draftEmail, ...prev]);
+              console.log('📨 Draft added to paginated list');
+            }
+            
             console.log('📨 Draft added to UI:', draftId);
           }
         } catch (error) {
@@ -1860,6 +1866,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                               onCreateFilter={handleCreateFilter}
                               isSelected={selectedEmails.has(email.id)}
                               onToggleSelect={handleToggleSelectEmail}
+                              isDraft={activeTab === 'drafts'}
                               renderAsTableRow
                             />
                           ))}

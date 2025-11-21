@@ -130,23 +130,46 @@ export function useEmailItemActions({
   const handleDelete = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
     
-    // Optimistic UI update
-    onEmailDelete?.(email.id);
-    
-    toast.success('Draft discarded successfully!');
-    
-    // Emit event to update draft counter
-    window.dispatchEvent(new CustomEvent('email-deleted', { 
-      detail: { emailId: email.id } 
-    }));
-    
-    // Run API call in background
     try {
-      await deleteDraft(email.id);
-      console.log(`✅ Successfully discarded draft ${email.id}`);
+      // First, find the draft ID by listing drafts and matching message ID
+      const draftsResponse = await window.gapi.client.gmail.users.drafts.list({
+        userId: 'me'
+      });
+      
+      const drafts = draftsResponse.result.drafts || [];
+      const matchingDraft = drafts.find((d: any) => d.message?.id === email.id);
+      
+      if (!matchingDraft) {
+        console.warn('No draft found for message ID:', email.id);
+        toast.error('Draft not found. It may have already been deleted.');
+        return;
+      }
+      
+      const draftId = matchingDraft.id;
+      console.log('🗑️ Discarding draft:', draftId, 'for message:', email.id);
+      
+      // Optimistic UI update
+      onEmailDelete?.(email.id);
+      
+      // Emit event to update draft counter BEFORE API call
+      window.dispatchEvent(new CustomEvent('email-deleted', { 
+        detail: { emailId: email.id } 
+      }));
+      
+      // Permanently delete the draft (not trash)
+      await window.gapi.client.gmail.users.drafts.delete({
+        userId: 'me',
+        id: draftId
+      });
+      
+      console.log(`✅ Successfully discarded draft ${draftId}`);
+      toast.success('Draft discarded successfully!');
+      
     } catch (error) {
       console.error('Error discarding draft:', error);
       toast.error('Failed to discard draft. Please try again.');
+      // Revert UI if error
+      // Note: In real implementation, you'd want to refetch
     }
   };
 

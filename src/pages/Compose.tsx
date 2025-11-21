@@ -79,6 +79,7 @@ function Compose() {
   
   // Draft auto-save states
   const [currentDraftId, setCurrentDraftId] = useState<string | undefined>(undefined);
+  const [messageIdForUI, setMessageIdForUI] = useState<string | undefined>(undefined); // Track message ID for UI removal
   const [isDraftDirty, setIsDraftDirty] = useState(false);
   const [isAutoSaving, setIsAutoSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
@@ -220,6 +221,9 @@ function Compose() {
   const loadDraftFromGmail = async (messageId: string) => {
     try {
       console.log('📧 Looking for draft with message ID:', messageId);
+      
+      // Store the message ID for UI removal later
+      setMessageIdForUI(messageId);
       
       // First, list all drafts to find the one with this message ID
       const draftsListResponse = await window.gapi.client.gmail.users.drafts.list({
@@ -581,11 +585,18 @@ function Compose() {
       if (result.success) {
         const wasNewDraft = !currentDraftId;
         const oldDraftId = currentDraftId;
+        const draftIdChanged = oldDraftId && oldDraftId !== result.draftId;
         
         setCurrentDraftId(result.draftId);
         setIsDraftDirty(false);
         setLastSavedAt(new Date());
-        console.log('✅ Draft auto-saved successfully');
+        
+        console.log('✅ Draft saved:', {
+          wasNew: wasNewDraft,
+          idChanged: draftIdChanged,
+          oldId: oldDraftId,
+          newId: result.draftId
+        });
         
         // Update UI and counters
         if (wasNewDraft) {
@@ -594,17 +605,24 @@ function Compose() {
             detail: { draftId: result.draftId } 
           }));
           console.log('📤 Emitted draft-created event for:', result.draftId);
-        } else if (oldDraftId !== result.draftId) {
-          // Gmail changed the draft ID - update the UI
-          window.dispatchEvent(new CustomEvent('draft-updated', { 
-            detail: { 
-              oldDraftId: oldDraftId,
-              newDraftId: result.draftId 
-            } 
+        } else if (draftIdChanged) {
+          // Gmail changed the draft ID during update - delete old, show new
+          console.log('⚠️ Gmail changed draft ID during update - cleaning up old draft');
+          
+          // Delete the old draft ID from UI
+          emailRepository.deleteEmail(oldDraftId);
+          window.dispatchEvent(new CustomEvent('email-deleted', { 
+            detail: { emailId: contextDraftId || oldDraftId } 
           }));
-          console.log('📤 Emitted draft-updated event:', oldDraftId, '->', result.draftId);
+          
+          // Add the new draft ID
+          window.dispatchEvent(new CustomEvent('draft-created', { 
+            detail: { draftId: result.draftId } 
+          }));
+        } else {
+          // Same draft ID - just an update, no UI change needed
+          console.log('✅ Draft updated in place (same ID)');
         }
-        // else: same draft ID, just content updated - no UI change needed
       }
     } catch (error) {
       console.error('❌ Error auto-saving draft:', error);
@@ -773,6 +791,17 @@ function Compose() {
         try {
           await deleteDraft(currentDraftId);
           console.log('✅ Draft deleted after sending email');
+          
+          // Emit event to remove from UI and update counter
+          // Use messageIdForUI (the message ID from the email list)
+          const emailIdToRemove = messageIdForUI || contextDraftId || currentDraftId;
+          console.log('🗑️ Removing draft from UI - draftId:', currentDraftId, 'messageId:', emailIdToRemove);
+          
+          emailRepository.deleteEmail(emailIdToRemove);
+          window.dispatchEvent(new CustomEvent('email-deleted', { 
+            detail: { emailId: emailIdToRemove } 
+          }));
+          console.log('📤 Emitted email-deleted event after sending with message ID:', emailIdToRemove);
         } catch (draftError) {
           console.error('❌ Error deleting draft after sending:', draftError);
           // Continue anyway since the email was sent successfully
@@ -792,13 +821,21 @@ function Compose() {
       // Reset sending state
       setIsSending(false);
       
-      // Determine navigation destination - ALWAYS stay in thread if we have a threadId
+      // Determine navigation destination
       const isThreadReply = !!currentThreadId;
-      const navigationDestination = isThreadReply ? `/email/${currentThreadId}` : '/inbox';
+      const isDraftEmail = !!contextDraftId; // Sent from a draft
       
-      // For thread replies, navigate immediately with refresh state
-      // For new emails, still show success message for 2 seconds
-      if (isThreadReply) {
+      // If sent from draft, always go to inbox (the draft thread might be stale)
+      // Otherwise, stay in thread if replying
+      const navigationDestination = isDraftEmail 
+        ? '/inbox' 
+        : (isThreadReply ? `/email/${currentThreadId}` : '/inbox');
+      
+      console.log('📍 Navigation:', { isDraftEmail, isThreadReply, destination: navigationDestination });
+      
+      // For thread replies (not from drafts), navigate immediately with refresh state
+      // For new emails or drafts, show success message for 2 seconds
+      if (isThreadReply && !isDraftEmail) {
         // Navigate immediately to thread with refresh state
         setTimeout(() => {
           setShowSuccessMessage(false);
@@ -807,7 +844,7 @@ function Compose() {
           });
         }, 500); // Shorter delay for thread replies
       } else {
-        // For new emails, wait 2 seconds
+        // For new emails or draft sends, wait 2 seconds
         setTimeout(() => {
           setShowSuccessMessage(false);
           navigate(navigationDestination);
@@ -1666,18 +1703,21 @@ function Compose() {
                         try {
                           await deleteDraft(currentDraftId);
                           
-                          // Use contextDraftId (email list ID) for UI removal, not currentDraftId (Gmail draft ID)
-                          const emailIdToRemove = contextDraftId || currentDraftId;
+                          // Use messageIdForUI (the email's message ID) for UI removal
+                          // This is what the email list knows about, not the draft ID
+                          const emailIdToRemove = messageIdForUI || contextDraftId || currentDraftId;
+                          
+                          console.log('🗑️ Discarding draft - draftId:', currentDraftId, 'messageId:', emailIdToRemove);
                           
                           // Remove from email repository
                           emailRepository.deleteEmail(emailIdToRemove);
                           
-                          // Emit event with the email list ID so UI can remove it
+                          // Emit event with the message ID so UI can remove it
                           window.dispatchEvent(new CustomEvent('email-deleted', { 
                             detail: { emailId: emailIdToRemove } 
                           }));
                           
-                          console.log('🗑️ Emitted email-deleted event with ID:', emailIdToRemove);
+                          console.log('📤 Emitted email-deleted event with message ID:', emailIdToRemove);
                           
                           closeCompose();
                         } catch (error) {
