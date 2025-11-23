@@ -103,6 +103,7 @@ export function useEmailFetch(options: UseEmailFetchOptions): UseEmailFetchRetur
   } = options;
 
   const effectiveLabelQuery = labelQueryParam || labelName || undefined;
+  const hasLabelTarget = Boolean(labelIdParam || effectiveLabelQuery);
 
   // Track if initial load has completed
   const hasInitiallyLoadedRef = useRef(false);
@@ -642,21 +643,22 @@ export function useEmailFetch(options: UseEmailFetchOptions): UseEmailFetchRetur
    * Fetch label emails (separate logic for labels)
    */
   const fetchLabelEmails = useCallback(async (forceRefresh = false, loadMore = false) => {
-    if (!isGmailSignedIn || !effectiveLabelQuery) return;
+    if (!isGmailSignedIn || !hasLabelTarget) return;
 
     try {
-      const logName = labelName || effectiveLabelQuery;
+      const logName = labelName || effectiveLabelQuery || labelIdParam || 'label';
+      const identifier = { labelId: labelIdParam || undefined, labelName: effectiveLabelQuery };
       console.log(`📧 Fetching emails for label: ${logName}${loadMore ? ' (loading more)' : ''}`);
       
       if (loadMore) {
         setLoadingMore(true);
-        const response = await getLabelEmails(effectiveLabelQuery, false, 10, currentPageToken);
+        const response = await getLabelEmails(identifier, false, 10, currentPageToken);
         setEmails(prevEmails => [...prevEmails, ...(response.emails || [])]);
         setCurrentPageToken(response.nextPageToken);
         setLoadingMore(false);
       } else {
         setLoading(true);
-        const response = await getLabelEmails(effectiveLabelQuery, forceRefresh, 10, undefined);
+        const response = await getLabelEmails(identifier, forceRefresh, 10, undefined);
         setEmails(response.emails);
         setCurrentPageToken(response.nextPageToken);
         setHasEverLoaded(true);
@@ -667,7 +669,7 @@ export function useEmailFetch(options: UseEmailFetchOptions): UseEmailFetchRetur
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [isGmailSignedIn, effectiveLabelQuery, labelName, currentPageToken, setLoading, setHasEverLoaded]);
+  }, [isGmailSignedIn, hasLabelTarget, labelName, effectiveLabelQuery, labelIdParam, currentPageToken, setLoading, setHasEverLoaded]);
 
   // Initial load effect
   useEffect(() => {

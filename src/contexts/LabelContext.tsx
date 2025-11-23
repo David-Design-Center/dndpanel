@@ -38,6 +38,7 @@ interface LabelContextType {
   // Simplified: no approximate fallback needed; value is direct Gmail estimate for unread since date boundary
   refreshRecentCounts: (opts?: { force?: boolean }) => Promise<void>;
   labelsLastUpdated: number | null; // Timestamp of when labels were last fetched
+  isLabelHydrated: (labelId?: string | null) => boolean;
 }
 
 const LabelContext = createContext<LabelContextType | undefined>(undefined);
@@ -135,7 +136,7 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
   const [labelsLastUpdated, setLabelsLastUpdated] = useState<number | null>(null);
   
   // Cache to prevent duplicate API calls when switching tabs/pages
-  const labelsCache = useRef<{[profileId: string]: { labels: GmailLabel[], timestamp: number }}>({});
+  const labelsCache = useRef<{[profileId: string]: { labels: GmailLabel[]; timestamp: number; hydrated: boolean }}>({});
   const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes cache
   
   // Request coalescing to prevent duplicate label fetches
@@ -143,6 +144,41 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
   const lastLoadedAt = useRef<number>(0);
   const userLabelDetailsInFlight = useRef<{ cacheKey: string | null; promise: Promise<void> | null }>({ cacheKey: null, promise: null });
   const hydratedLabelIdsRef = useRef<Set<string>>(new Set());
+  const inboxReadyRef = useRef<boolean>(false);
+  const [hydratedLabelsVersion, setHydratedLabelsVersion] = useState(0);
+
+  const markLabelsHydrated = useCallback((labelIds: Array<string | undefined | null>) => {
+    let changed = false;
+    for (const rawId of labelIds) {
+      if (!rawId) continue;
+      if (!hydratedLabelIdsRef.current.has(rawId)) {
+        hydratedLabelIdsRef.current.add(rawId);
+        changed = true;
+      }
+    }
+    if (changed) {
+      setHydratedLabelsVersion(version => version + 1);
+    }
+  }, []);
+
+  const resetHydratedLabels = useCallback(() => {
+    if (hydratedLabelIdsRef.current.size === 0) {
+      return;
+    }
+    hydratedLabelIdsRef.current = new Set();
+    setHydratedLabelsVersion(version => version + 1);
+  }, []);
+
+  const isSystemLabel = useCallback((label?: GmailLabel | null) => {
+    if (!label?.id) return false;
+    const idUpper = label.id.toUpperCase();
+    return label.type === 'system' || SYSTEM_LABEL_IDS.has(idUpper);
+  }, []);
+
+  const isLabelHydrated = useCallback((labelId?: string | null) => {
+    if (!labelId) return false;
+    return hydratedLabelIdsRef.current.has(labelId);
+  }, [hydratedLabelsVersion]);
   
   const [isAddingLabel, setIsAddingLabel] = useState(false);
   const [addLabelError, setAddLabelError] = useState<string | null>(null);
@@ -417,7 +453,6 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
           const detail = response?.result;
           const original = batch[idx];
           if (!detail?.id || !original) return;
-          hydratedLabelIdsRef.current.add(detail.id);
           updates[detail.id] = {
             messagesUnread: detail.messagesUnread ?? 0,
             messagesTotal: detail.messagesTotal ?? 0,
@@ -454,9 +489,12 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
           if (nextSnapshot && labelsCache.current[cacheKey]) {
             labelsCache.current[cacheKey] = {
               labels: nextSnapshot,
-              timestamp: Date.now()
+              timestamp: Date.now(),
+              hydrated: true
             };
           }
+
+          markLabelsHydrated(Object.keys(updates));
         }
 
         if (start + USER_LABEL_BATCH_SIZE < labelsNeedingDetails.length) {
@@ -472,7 +510,7 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
         userLabelDetailsInFlight.current = { cacheKey: null, promise: null };
       }
     });
-  }, [isGmailSignedIn, isGmailApiReady, setLabels]);
+  }, [isGmailSignedIn, isGmailApiReady, setLabels, markLabelsHydrated]);
 
   useEffect(() => {
     if (!isGmailSignedIn) return;
@@ -550,7 +588,15 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       startProgress();
       setLabels(cached.labels);
       setLabelsLastUpdated(cached.timestamp);
-      hydrateUserLabelCounts(cached.labels, cacheKey);
+      if (cached.hydrated) {
+        markLabelsHydrated(cached.labels.map(label => label.id));
+      } else {
+        const systemIds = cached.labels
+          .filter(label => isSystemLabel(label))
+          .map(label => label.id);
+        markLabelsHydrated(systemIds);
+        hydrateUserLabelCounts(cached.labels, cacheKey);
+      }
       finishProgress('success');
       return;
     }
@@ -577,6 +623,10 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       
       console.log('🔄 Fetching fresh Gmail labels for profile:', currentProfile.name, 'email:', currentProfile.userEmail);
       const gmailLabels = await loadLabelsOnce();
+      const instantHydratedIds = gmailLabels
+        .filter(label => isSystemLabel(label))
+        .map(label => label.id);
+      markLabelsHydrated(instantHydratedIds);
       
       // Debug: Log labels with counts (only those with counts to reduce noise)
       const labelsWithCounts = gmailLabels.filter(label => 
@@ -592,15 +642,23 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       
       // Cache the result with the same key format
       const now = Date.now();
+      const hasCustomLabels = gmailLabels.some(label => !isSystemLabel(label));
+      const hasDetailedCounters = !hasCustomLabels;
+
       labelsCache.current[cacheKey] = {
         labels: gmailLabels,
-        timestamp: now
+        timestamp: now,
+        hydrated: hasDetailedCounters
       };
-      
+
       // Update last updated timestamp
       setLabelsLastUpdated(now);
 
-      hydrateUserLabelCounts(gmailLabels, cacheKey);
+      if (!hasDetailedCounters) {
+        hydrateUserLabelCounts(gmailLabels, cacheKey);
+      } else {
+        markLabelsHydrated(gmailLabels.map(label => label.id));
+      }
       finishProgress('success');
       
     } catch (err) {
@@ -621,13 +679,15 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     currentProfile?.userEmail,
     isDataLoadingAllowed,
     authFlowCompleted,
-    hydrateUserLabelCounts
+    hydrateUserLabelCounts,
+    markLabelsHydrated,
+    isSystemLabel
   ]); // Removed location.pathname to prevent unnecessary refreshes on navigation
 
   const clearLabelsCache = () => {
     console.log('🗑️ Clearing labels cache');
     labelsCache.current = {};
-    hydratedLabelIdsRef.current.clear();
+    resetHydratedLabels();
     userLabelDetailsInFlight.current = { cacheKey: null, promise: null };
     setLabels([]);
     setError(null);
@@ -647,19 +707,20 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       setAddLabelError(null);
       console.log(`Adding Gmail label: ${name} for profile: ${currentProfile.name}`);
       
-      const result = await createGmailLabel(name);
+      const createdLabel = await createGmailLabel(name);
       
       // Optimistically add to local state immediately for instant UI update
-      if (result?.result?.id) {
+      if (createdLabel?.id) {
         setLabels(prev => [...prev, {
-          id: result.result.id,
-          name: result.result.name || name,
-          type: result.result.type || 'user',
+          id: createdLabel.id,
+          name: createdLabel.name || name,
+          type: createdLabel.type || 'user',
           messagesTotal: 0,
           messagesUnread: 0,
           threadsTotal: 0,
           threadsUnread: 0
         }]);
+        markLabelsHydrated([createdLabel.id]);
         console.log('✅ Label added to UI immediately');
       }
       
@@ -749,6 +810,11 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    if (!inboxReadyRef.current) {
+      console.log('⏸️ LabelContext: Waiting for inbox threads before refreshing labels');
+      return;
+    }
+
     const refreshKey = `${currentProfile?.id || 'no-profile'}|${Number(isGmailSignedIn)}|${Number(isGmailApiReady)}|${Number(isDataLoadingAllowed)}`;
     const alreadyRefreshedForKey = lastRefreshKeyRef.current === refreshKey;
     const stayedOnEmailPage = wasOnEmailPageRef.current && alreadyRefreshedForKey;
@@ -765,6 +831,24 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     refreshLabels();
   }, [isGmailSignedIn, isGmailApiReady, currentProfile?.id, isDataLoadingAllowed, location.pathname, refreshLabels]);
 
+  useEffect(() => {
+    const handleInboxReady = () => {
+      if (inboxReadyRef.current) return;
+      inboxReadyRef.current = true;
+      console.log('📬 LabelContext: Inbox threads ready, triggering label refresh');
+      refreshLabels();
+    };
+
+    if (typeof window !== 'undefined' && (window as any).__dndInboxReadyTs) {
+      handleInboxReady();
+    }
+
+    window.addEventListener('inbox-first-page-loaded', handleInboxReady as EventListener);
+    return () => {
+      window.removeEventListener('inbox-first-page-loaded', handleInboxReady as EventListener);
+    };
+  }, [refreshLabels]);
+
   // Listen for profile switches and clear cache
   useEffect(() => {
     const handleClearCache = () => {
@@ -773,15 +857,17 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       
       // Force immediate refresh after a short delay to allow profile switch to complete
       setTimeout(() => {
-        if (currentProfile && isGmailSignedIn && isGmailApiReady) {
+        if (currentProfile && isGmailSignedIn && isGmailApiReady && inboxReadyRef.current) {
           console.log('🔄 LabelContext: Force refreshing labels after profile switch');
           refreshLabels();
+        } else {
+          console.log('⏸️ LabelContext: Inbox not ready yet, skipping post-switch refresh');
         }
       }, 500);
     };
 
     const handleForceRefresh = () => {
-      console.log('🔄 LabelContext: Force refresh data event received');
+      console.log('� LabelContext: Force refresh data event received');
       
       // ✅ OPTIMIZATION: Coalesce force refresh to prevent duplicate label fetches
       const timeSinceLastLoad = Date.now() - lastLoadedAt.current;
@@ -798,9 +884,11 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       
-      if (currentProfile && isGmailSignedIn && isGmailApiReady) {
+      if (currentProfile && isGmailSignedIn && isGmailApiReady && inboxReadyRef.current) {
         console.log('🔄 LabelContext: Force refreshing labels now');
         refreshLabels();
+      } else {
+        console.log('⏸️ LabelContext: Skipping force refresh until inbox threads are ready');
       }
     };
 
@@ -854,7 +942,8 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     systemCounts, // ✅ Export system counts for badges
     recentCounts, // ✅ Export recent dynamic counts
     refreshRecentCounts, // ✅ Method to refresh recent counts
-    labelsLastUpdated // ✅ Timestamp of when labels were last fetched
+    labelsLastUpdated, // ✅ Timestamp of when labels were last fetched
+    isLabelHydrated
   };
 
   return <LabelContext.Provider value={value}>{children}</LabelContext.Provider>;

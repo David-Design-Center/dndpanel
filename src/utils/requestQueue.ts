@@ -120,6 +120,8 @@ class RequestQueue {
 // Global request queue instance
 export const gmailRequestQueue = new RequestQueue();
 
+export const getGmailQueueStatus = () => gmailRequestQueue.getStatus();
+
 /**
  * Wrapper function to queue Gmail API requests
  */

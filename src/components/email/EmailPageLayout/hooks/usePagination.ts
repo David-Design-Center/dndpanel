@@ -10,7 +10,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Email } from '@/types';
-import { getEmails } from '@/services/emailService';
+import { getEmails, getLabelEmails, PaginatedEmailServiceResponse } from '@/services/emailService';
 
 export interface UsePaginationOptions {
   isGmailSignedIn: boolean;
@@ -18,6 +18,7 @@ export interface UsePaginationOptions {
   activeTab: 'all' | 'unread' | 'sent' | 'drafts' | 'trash' | 'important' | 'starred' | 'spam' | 'allmail';
   labelName: string | null;
   labelQueryParam?: string | null;
+  labelIdParam?: string | null;
   pageType: 'inbox' | 'unread' | 'sent' | 'drafts' | 'trash' | 'spam' | 'important' | 'starred' | 'allmail';
   setLoading: (loading: boolean) => void;
   emailListRef: React.RefObject<HTMLDivElement>;
@@ -41,6 +42,7 @@ export function usePagination(options: UsePaginationOptions): UsePaginationRetur
     activeTab,
     labelName,
     labelQueryParam,
+    labelIdParam,
     pageType,
     setLoading,
     emailListRef
@@ -57,6 +59,7 @@ export function usePagination(options: UsePaginationOptions): UsePaginationRetur
   // Track previous values to detect actual changes
   const prevTabRef = useRef<string>();
   const prevLabelRef = useRef<string | null>();
+  const prevLabelIdRef = useRef<string | null>();
   const prevBasePathRef = useRef<string>();
   const prevIsViewingEmailRef = useRef<boolean>(false);
   
@@ -91,6 +94,8 @@ export function usePagination(options: UsePaginationOptions): UsePaginationRetur
     try {
       // Build query based on active tab/page context
       let query = '';
+      let fetchDescription = '';
+      let fetchResult: PaginatedEmailServiceResponse | null = null;
       
       // For inbox views, show ALL emails including those with user labels
       if (pageType === 'inbox' && !labelName) {
@@ -126,12 +131,20 @@ export function usePagination(options: UsePaginationOptions): UsePaginationRetur
           default:
             query = 'in:inbox';
         }
+        fetchResult = await getEmails(false, query || undefined, 25, pageToken);
+        fetchDescription = query || 'default inbox';
       } else if (labelName) {
-        // Viewing a specific custom label
-        // ⚠️ Use name-based query so we fetch full message details (threads.list returns only snippets)
         const labelQuery = labelQueryParam || labelName;
-        query = `label:"${labelQuery}"`;
-        console.log('📧 Using label query for filtering:', labelQuery, 'Query:', query);
+        if (labelIdParam) {
+          fetchDescription = `labelId:${labelIdParam}`;
+          console.log('📧 Using labelId for filtering:', { labelIdParam, fallbackLabel: labelQuery });
+          fetchResult = await getLabelEmails({ labelId: labelIdParam, labelName: labelQuery }, false, 25, pageToken);
+        } else {
+          query = `label:"${labelQuery}"`;
+          fetchDescription = query;
+          console.log('📧 Using label query for filtering:', labelQuery, 'Query:', query);
+          fetchResult = await getEmails(false, query, 25, pageToken);
+        }
       } else {
         // Other page types (sent, drafts, trash, unread, etc.)
         switch (pageType) {
@@ -159,16 +172,25 @@ export function usePagination(options: UsePaginationOptions): UsePaginationRetur
           default:
             query = '';
         }
+        fetchResult = await getEmails(false, query || undefined, 25, pageToken);
+        fetchDescription = query || 'default';
       }
       
-      // Use query-based fetch to always retrieve full message details
-      const response = await getEmails(false, query || undefined, 25, pageToken);
+      if (!fetchResult) {
+        fetchResult = {
+          emails: [],
+          nextPageToken: undefined,
+          resultSizeEstimate: 0
+        };
+      }
+      
+      const response = fetchResult;
       
       const startTime = Date.now();
       const fetchedEmails = response.emails || [];
       const duration = Date.now() - startTime;
       
-      console.log(`✅ Fetched ${fetchedEmails.length} emails using ${query ? 'query' : 'labelIds'} in ${duration}ms`);
+      console.log(`✅ Fetched ${fetchedEmails.length} emails using ${fetchDescription || 'labelIds'} in ${duration}ms`);
       
       if (append) {
         // Deduplicate: merge new emails with existing, removing duplicates by ID
@@ -219,7 +241,8 @@ export function usePagination(options: UsePaginationOptions): UsePaginationRetur
     pageType,
     setLoading,
     isLoadingMore,
-    paginatedEmails.length
+    paginatedEmails.length,
+    labelIdParam
   ]);
 
   /**
@@ -306,7 +329,7 @@ export function usePagination(options: UsePaginationOptions): UsePaginationRetur
     prevIsViewingEmailRef.current = isViewingEmail;
 
     const tabChanged = prevTabRef.current !== activeTab;
-    const labelChanged = prevLabelRef.current !== labelName;
+    const labelChanged = prevLabelRef.current !== labelName || prevLabelIdRef.current !== (labelIdParam || null);
     const basePathChanged = prevBasePathRef.current !== basePath;
     const isInitialLoad = prevTabRef.current === undefined && prevLabelRef.current === undefined;
 
@@ -336,6 +359,7 @@ export function usePagination(options: UsePaginationOptions): UsePaginationRetur
 
     prevTabRef.current = activeTab;
     prevLabelRef.current = labelName;
+    prevLabelIdRef.current = labelIdParam || null;
     prevBasePathRef.current = basePath;
 
     resetPagination();
@@ -345,7 +369,7 @@ export function usePagination(options: UsePaginationOptions): UsePaginationRetur
       console.log('📋 Loading first page of emails...', isInitialLoad ? '(initial load)' : '(tab/label changed)');
       loadPaginatedEmails(undefined, false);
     }
-  }, [activeTab, labelName, isGmailSignedIn, isGmailInitializing, location.pathname, resetPagination, loadPaginatedEmails, setLoading]);
+  }, [activeTab, labelName, labelIdParam, isGmailSignedIn, isGmailInitializing, location.pathname, resetPagination, loadPaginatedEmails, setLoading]);
 
   return {
     paginatedEmails,

@@ -129,6 +129,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     activeTab,
     labelName,
     labelQueryParam,
+    labelIdParam,
     pageType,
     setLoading,
     emailListRef
@@ -408,7 +409,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     setPaginatedEmails([]);
     setNextPageToken(undefined);
     
-    if (labelName && effectiveLabelQuery) {
+    if (labelName && (labelIdParam || effectiveLabelQuery)) {
       // For labels, refresh label emails
       await fetchLabelEmails(true);
     } else {
@@ -439,7 +440,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       setPaginatedEmails([]);
       setNextPageToken(undefined);
       
-      if (labelName && effectiveLabelQuery) {
+      if (labelName && (labelIdParam || effectiveLabelQuery)) {
         // For label pages, refresh only the current label
         console.log(`🔄 Refreshing label: ${labelName}`);
         await fetchLabelEmails(true);

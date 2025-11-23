@@ -208,7 +208,7 @@ export async function fetchLabelEmails(
   forceRefresh: boolean = false
 ): Promise<{ emails: Email[]; nextPageToken?: string }> {
   try {
-    const result = await getLabelEmails(labelId, forceRefresh, 50, pageToken);
+    const result = await getLabelEmails({ labelId }, forceRefresh, 50, pageToken);
     emailRepository.addEmails(result.emails);
     return {
       emails: result.emails,

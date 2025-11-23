@@ -5,6 +5,7 @@ import {
   getAttachmentDownloadUrl as getGmailAttachmentDownloadUrl
 } from '../lib/gmail';
 import { gapiCallWithRecovery } from '../utils/gapiCallWrapper';
+import { queueGmailRequest } from '../utils/requestQueue';
 import { 
   fetchGmailMessages, 
   sendGmailMessage, 
@@ -25,7 +26,6 @@ import {
   emptyGmailTrash,
   isGmailSignedIn
 } from '../integrations/gapiService';
-import { queueGmailRequest } from '../utils/requestQueue';
 
 export const INBOX_FETCH_BATCH_SIZE = 50;
 
@@ -248,6 +248,7 @@ export const clearAutoReplyCache = (): void => {
 // Cache for emails to reduce API calls - now with localStorage persistence
 const CACHE_KEY_PREFIX = 'dnd_email_cache_';
 const CACHE_VALIDITY_MS = 30 * 60 * 1000; // Increased to 30 minutes for localStorage
+const INBOX_CACHE_MAX_AGE_MS = 2 * 60 * 1000; // Reuse first page for quick tab switches (2 minutes)
 
 // Enhanced cache interface
 interface EmailCacheData {
@@ -353,11 +354,11 @@ export const clearEmailCacheForProfileSwitch = (newProfileId: string): void => {
 /**
  * Get cached email list with localStorage fallback
  */
-const getCachedEmailList = (query: string): EmailCacheData | null => {
+const getCachedEmailList = (query: string, maxAgeMs?: number): EmailCacheData | null => {
   // First check in-memory cache
   if (emailCache.list && 
       emailCache.list.query === query && 
-      isCacheValidForProfile(emailCache.list.timestamp, emailCache.list.profileId)) {
+      isCacheValidForProfile(emailCache.list.timestamp, emailCache.list.profileId, maxAgeMs)) {
     return emailCache.list;
   }
   
@@ -365,7 +366,7 @@ const getCachedEmailList = (query: string): EmailCacheData | null => {
   const cacheKey = `${CACHE_KEY_PREFIX}list_${query}_${currentCacheProfileId}`;
   const cachedData = getFromLocalStorage(cacheKey);
   
-  if (cachedData && isCacheValidForProfile(cachedData.timestamp, cachedData.profileId)) {
+  if (cachedData && isCacheValidForProfile(cachedData.timestamp, cachedData.profileId, maxAgeMs)) {
     // Restore to in-memory cache for faster access
     emailCache.list = cachedData;
     return cachedData;
@@ -397,8 +398,9 @@ const setCachedEmailList = (emails: Email[], query: string, nextPageToken?: stri
 /**
  * Check if cache is valid for current profile
  */
-const isCacheValidForProfile = (timestamp: number, cachedProfileId?: string): boolean => {
-  const isTimeValid = Date.now() - timestamp < CACHE_VALIDITY_MS;
+const isCacheValidForProfile = (timestamp: number, cachedProfileId?: string, maxAgeMs?: number): boolean => {
+  const ttl = maxAgeMs ?? CACHE_VALIDITY_MS;
+  const isTimeValid = Date.now() - timestamp < ttl;
   const isProfileValid = !currentCacheProfileId || cachedProfileId === currentCacheProfileId;
   return isTimeValid && isProfileValid;
 };
@@ -423,17 +425,12 @@ export const getEmails = async (
 
   // If pageToken is provided, always fetch new data (don't use cache for pagination)
   // If force refresh is requested OR it's an inbox query, fetch new data (don't use cache for inbox)
-  const isInboxQuery = query?.includes('inbox') || query?.includes('INBOX');
+  const isInboxQuery = (query?.toLowerCase() ?? '').includes('inbox');
+  const shouldBypassCache = pageToken || forceRefresh;
   
-  if (pageToken || forceRefresh || isInboxQuery) {
-    console.log('Fetching fresh email list' + 
-      (forceRefresh ? ' (forced refresh)' : '') + 
-      (pageToken ? ' (pagination)' : '') + 
-      (isInboxQuery ? ' (inbox - no cache)' : '') +
-      ` with query: ${query}`);
-  } else {
-    // Try to get from cache first (with localStorage fallback)
-    const cachedData = getCachedEmailList(query);
+  if (!shouldBypassCache) {
+    const cacheTtl = isInboxQuery ? INBOX_CACHE_MAX_AGE_MS : undefined;
+    const cachedData = getCachedEmailList(query, cacheTtl);
     if (cachedData) {
       console.log(`📦 Using cached email list for query: ${query} (${cachedData.emails.length} emails)`);
       return {
@@ -442,9 +439,13 @@ export const getEmails = async (
         resultSizeEstimate: cachedData.emails.length
       };
     }
-    
-    console.log('No valid cache found, fetching fresh email list with query:', query);
   }
+
+  console.log('Fetching fresh email list' + 
+    (forceRefresh ? ' (forced refresh)' : '') + 
+    (pageToken ? ' (pagination)' : '') + 
+    (isInboxQuery && !shouldBypassCache ? ' (inbox - cache expired)' : '') +
+    ` with query: ${query}`);
   
   try {
     // Queue the Gmail API request to prevent concurrent calls
@@ -582,9 +583,11 @@ export const getDraftEmails = async (_forceRefresh = false): Promise<Email[]> =>
       throw new Error('Not signed in to Gmail');
     }
 
-    const response = await gapiCallWithRecovery(
-      () => window.gapi.client.gmail.users.drafts.list({ userId: 'me' }),
-      'drafts.list'
+    const response = await queueGmailRequest('drafts-list', () =>
+      gapiCallWithRecovery(
+        () => window.gapi.client.gmail.users.drafts.list({ userId: 'me' }),
+        'drafts.list'
+      )
     );
 
     if (!response.result.drafts || response.result.drafts.length === 0) {
@@ -598,12 +601,14 @@ export const getDraftEmails = async (_forceRefresh = false): Promise<Email[]> =>
       if (!draft.id) continue;
 
       try {
-        const draftMsg = await gapiCallWithRecovery(
-          () => window.gapi.client.gmail.users.drafts.get({
-            userId: 'me',
-            id: draft.id
-          }),
-          `draft.get for ${draft.id}`
+        const draftMsg = await queueGmailRequest(`draft-get-${draft.id}`, () =>
+          gapiCallWithRecovery(
+            () => window.gapi.client.gmail.users.drafts.get({
+              userId: 'me',
+              id: draft.id
+            }),
+            `draft.get for ${draft.id}`
+          )
         );
 
         if (!draftMsg.result || !draftMsg.result.message) continue;
@@ -719,7 +724,7 @@ export const getAllMailEmails = async (
 
 // Helper function to fetch emails by labelIds (more efficient than search queries)
 // FIXED: Added pagination loop, centralized filtering, and retry logic
-const getEmailsByLabelIds = async (
+export const getEmailsByLabelIds = async (
   labelIds: string[], 
   _forceRefresh = false, 
   maxResults = 100, 
@@ -889,13 +894,32 @@ const getEmailsByLabelIds = async (
   }
 };
 
+type LabelIdentifier = string | { labelId?: string | null; labelName?: string | null };
+
 export const getLabelEmails = async (
-  labelName: string, 
+  identifier: LabelIdentifier, 
   forceRefresh = false, 
   maxResults = 10, 
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
-  // Use the label name to construct a Gmail query
+  const resolved = typeof identifier === 'string'
+    ? { labelName: identifier }
+    : (identifier || {});
+
+  const { labelId, labelName } = resolved;
+
+  if (labelId) {
+    return getEmailsByLabelIds([labelId], forceRefresh, maxResults, pageToken);
+  }
+
+  if (!labelName) {
+    return {
+      emails: [],
+      nextPageToken: undefined,
+      resultSizeEstimate: 0
+    };
+  }
+
   const query = `label:"${labelName}"`;
   return await getEmails(forceRefresh, query, maxResults, pageToken);
 };

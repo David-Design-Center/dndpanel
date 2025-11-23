@@ -5,6 +5,26 @@
 import { GmailLabel } from '../../../types';
 import type { PaginatedEmailResponse } from '../fetch/messages';
 import { fetchGmailMessages } from '../fetch/messages';
+import { queueGmailRequest, getGmailQueueStatus } from '../../../utils/requestQueue';
+
+const LABEL_DETAIL_BATCH_SIZE = 50;
+const LABEL_DETAIL_MIN_BATCH_SIZE = 15;
+const LABEL_DETAIL_DELAY_MS = 200;
+const LABEL_DETAIL_MAX_RETRIES = 3;
+const LABEL_DETAIL_BACKOFF_MS = 350;
+const LABEL_PROGRESS_LOG_INTERVAL_MS = 750;
+
+const SYSTEM_LABELS_WITH_COUNTS = new Set([
+  'INBOX',
+  'SENT',
+  'DRAFT',
+  'TRASH',
+  'SPAM',
+  'STARRED',
+  'IMPORTANT'
+]);
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
  * Check if Gmail is signed in
@@ -40,51 +60,106 @@ export const fetchGmailLabels = async (): Promise<GmailLabel[]> => {
     console.log(' Raw Gmail API response from list:', response.result);
     console.log(`Found ${response.result.labels.length} labels, now fetching details with counters...`);
 
-    // Fetch details for user labels (not system/category labels which don't need detailed fetch)
+    // Fetch details for SYSTEM labels only (custom labels hydrate later in background)
     const labelsToFetchDetails = response.result.labels.filter((label: any) => {
-      return label.type === 'user' || ['INBOX', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'IMPORTANT', 'STARRED'].includes(label.id);
+      return SYSTEM_LABELS_WITH_COUNTS.has(label.id);
     });
 
-    console.log(` Fetching detailed info for ${labelsToFetchDetails.length} labels (system + user) in parallel`);
+    console.log(` Fetching detailed info for ${labelsToFetchDetails.length} system labels (custom labels stay cached until manual refresh)`);
 
     const labelDetails = [...response.result.labels];
-    
-    // Batch fetch all label details in parallel (much faster!)
-    const detailPromises = labelsToFetchDetails.map(label => 
-      window.gapi.client.gmail.users.labels.get({
-        userId: 'me',
-        id: label.id
-      })
-      .then(detailResponse => ({
-        success: true,
-        labelId: label.id,
-        labelName: label.name,
-        result: detailResponse.result
-      }))
-      .catch((error: any) => ({
-        success: false,
-        labelId: label.id,
-        labelName: label.name,
-        error: error?.message || error
-      }))
-    );
+    const failedLabels: { labelName: string; labelId: string; error: unknown }[] = [];
+    let completed = 0;
+    let failed = 0;
+    let nextProgressLogAt = 0;
 
-    const detailResults = await Promise.all(detailPromises);
-    
-    // Update labelDetails with fetched data
-    detailResults.forEach(result => {
-      if (result.success) {
-        const labelIndex = labelDetails.findIndex(l => l.id === result.labelId);
-        if (labelIndex !== -1) {
-          labelDetails[labelIndex] = result.result;
-        }
-        console.log(` ✓ Fetched details for ${result.labelName}`);
-      } else {
-        console.warn(` ✗ Failed to fetch ${result.labelName}:`, result.error);
+    const logProgress = (force = false) => {
+      const now = Date.now();
+      if (!force && now < nextProgressLogAt) {
+        return;
       }
-    });
+      nextProgressLogAt = now + LABEL_PROGRESS_LOG_INTERVAL_MS;
+      console.log(
+        `📦 Label detail progress: ${completed}/${labelsToFetchDetails.length} succeeded (${failed} failed)`
+      );
+    };
 
-    console.log(` ✓ Batch fetched ${detailResults.filter(r => r.success).length}/${labelsToFetchDetails.length} labels in parallel`);
+    const fetchDetailWithRetry = async (label: any, attempt = 0): Promise<any | null> => {
+      try {
+        const detailResponse = await queueGmailRequest(
+          `label-detail-${label.id}`,
+          () => window.gapi.client.gmail.users.labels.get({
+            userId: 'me',
+            id: label.id
+          })
+        );
+        return detailResponse.result;
+      } catch (error: any) {
+        const status = error?.status || error?.result?.error?.code;
+        if (status === 429 && attempt < LABEL_DETAIL_MAX_RETRIES) {
+          const backoff = LABEL_DETAIL_BACKOFF_MS * Math.pow(2, attempt);
+          console.warn(`⚠️ Rate limited fetching ${label.name}. Retrying in ${backoff}ms (attempt ${attempt + 1})`);
+          await sleep(backoff);
+          return fetchDetailWithRetry(label, attempt + 1);
+        }
+        failedLabels.push({ labelName: label.name, labelId: label.id, error });
+        failed += 1;
+        logProgress(true);
+        return null;
+      }
+    };
+
+    const processLabelGroup = async (group: any[], labelGroupName: string) => {
+      if (!group.length) {
+        return;
+      }
+
+      console.log(`📂 Hydrating ${group.length} ${labelGroupName} labels...`);
+      for (let start = 0; start < group.length; ) {
+        const queueStatus = getGmailQueueStatus();
+        const adaptiveBatchSize = Math.max(
+          LABEL_DETAIL_MIN_BATCH_SIZE,
+          queueStatus.activeRequests > 2 ? Math.floor(LABEL_DETAIL_BATCH_SIZE / 2) : LABEL_DETAIL_BATCH_SIZE
+        );
+
+        const batch = group.slice(start, start + adaptiveBatchSize);
+        const batchResults = await Promise.all(batch.map(label => fetchDetailWithRetry(label)));
+
+        batchResults.forEach((detail, index) => {
+          const original = batch[index];
+          if (!detail || !original?.id) {
+            return;
+          }
+          const labelIndex = labelDetails.findIndex(l => l.id === original.id);
+          if (labelIndex !== -1) {
+            labelDetails[labelIndex] = detail;
+          }
+          completed += 1;
+        });
+
+        start += adaptiveBatchSize;
+        logProgress(true);
+
+        if (start < group.length) {
+          await sleep(LABEL_DETAIL_DELAY_MS);
+        }
+      }
+    };
+
+    const systemLabelDetails = labelsToFetchDetails.filter(label => SYSTEM_LABELS_WITH_COUNTS.has(label.id));
+
+    await processLabelGroup(systemLabelDetails, 'system');
+
+    logProgress(true);
+    console.log(
+      ` ✓ Completed label detail fetch: ${completed}/${labelsToFetchDetails.length} succeeded (${failed} failed)`
+    );
+    if (failedLabels.length) {
+      console.warn('⚠️ Labels missing counters due to rate limits (showing up to 10):',
+        failedLabels.slice(0, 10).map(f => f.labelName)
+      );
+    }
+
     console.log(' Raw label details with counters:', labelDetails);
 
     const labels: GmailLabel[] = labelDetails.map((label: any) => ({

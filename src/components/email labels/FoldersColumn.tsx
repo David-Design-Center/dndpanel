@@ -20,7 +20,8 @@ import {
   Flag,
   Star,
   RefreshCw,
-  Pen
+  Pen,
+  Loader2
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -86,7 +87,7 @@ interface FoldersColumnProps {
 }
 
 function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) {
-  const { labels, loadingLabels, deleteLabel, addLabel, isAddingLabel, systemCounts, recentCounts, refreshLabels, labelsLastUpdated } = useLabel();
+  const { labels, loadingLabels, deleteLabel, addLabel, isAddingLabel, systemCounts, recentCounts, refreshLabels, labelsLastUpdated, isLabelHydrated } = useLabel();
   // recentCounts.inboxUnreadToday -> unread INBOX messages received since today's New York midnight
   // recentCounts.draftTotal -> total number of drafts (exact)
   const { onSystemFolderFilter } = useLayoutState();
@@ -453,9 +454,15 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
     // For parent folders, we'll show all messages in that folder and its subfolders
     const displayName = label.fullPath || label.name;
     const canonicalName = label.gmailName || label.name;
-    const baseUrl = `/inbox?labelName=${encodeURIComponent(displayName)}&labelQuery=${encodeURIComponent(canonicalName)}`;
-    const labelIdParam = label.id && !label.id.startsWith('temp-') ? `&labelId=${encodeURIComponent(label.id)}` : '';
-    navigate(`${baseUrl}${labelIdParam}`);
+    const params = new URLSearchParams();
+    params.set('labelName', displayName);
+    if (canonicalName) {
+      params.set('labelQuery', canonicalName);
+    }
+    if (label.id && !label.id.startsWith('temp-')) {
+      params.set('labelId', label.id);
+    }
+    navigate(`/inbox?${params.toString()}`);
   };
 
   const handleOpenFilters = (label: NestedLabel) => {
@@ -513,6 +520,8 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
         const unreadCount = node.messagesUnread ?? 0;
         const showUnread = unreadCount > 0;
         const unreadBadgeText = unreadCount > 99 ? '99+' : unreadCount.toString();
+        const hasRealLabelId = node.id && !node.id.startsWith('temp-');
+        const showSpinner = Boolean(node.labelObj && hasRealLabelId && !isLabelHydrated(node.id));
 
         return (
           <div className="flex items-center justify-between w-full min-w-0 group">
@@ -525,6 +534,9 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
             </span>
             
             <div className="flex items-center space-x-1 ml-2">
+              {showSpinner && !showUnread && (
+                <Loader2 className="h-3 w-3 text-gray-400 animate-spin" />
+              )}
               {/* Unread count badge - render number only when greater than one */}
               {showUnread && (
                 <span className="text-xs font-medium text-gray-600 flex-shrink-0 min-w-[18px] text-right">

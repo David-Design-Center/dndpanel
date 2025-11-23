@@ -114,27 +114,34 @@ export function EmailPreloaderProvider({ children }: { children: React.ReactNode
     
     setIsPreloading(true);
     
-    // Load pages in parallel for maximum speed
     const pageTypes: EmailPageType[] = ['inbox', 'sent', 'drafts', 'trash', 'unread'];
+    const [primaryPage, ...secondaryPages] = pageTypes;
     
     try {
-      const startTime = Date.now();
-      
-      // Use Promise.all for parallel loading (faster than Promise.allSettled)
-      const loadPromises = pageTypes.map(async (pageType) => {
+      console.log('📧 EmailPreloader: Loading inbox threads first');
+      try {
+        await loadPage(primaryPage);
+      } catch (inboxError) {
+        console.error('Error preloading inbox threads:', inboxError);
+      } finally {
+        if (typeof window !== 'undefined') {
+          (window as any).__dndInboxReadyTs = Date.now();
+          window.dispatchEvent(
+            new CustomEvent('inbox-first-page-loaded', {
+              detail: { timestamp: (window as any).__dndInboxReadyTs }
+            })
+          );
+        }
+      }
+
+      for (const pageType of secondaryPages) {
         try {
           await loadPage(pageType);
         } catch (error) {
           console.error(`Error loading ${pageType}:`, error);
-          // Continue loading other pages even if one fails
         }
-      });
-      
-      await Promise.all(loadPromises);
-      
-      const endTime = Date.now();
-      
-      // Log detailed cache status
+      }
+
       setTimeout(() => {
         setCache(currentCache => {
           setIsGhostPreloadComplete(true);
@@ -146,7 +153,7 @@ export function EmailPreloaderProvider({ children }: { children: React.ReactNode
     } finally {
       setIsPreloading(false);
     }
-  }, [isGmailSignedIn, loadPage]);
+  }, [isGmailSignedIn, isPreloading, loadPage]);
 
   const refreshPage = useCallback(async (pageType: EmailPageType) => {
     await loadPage(pageType);
