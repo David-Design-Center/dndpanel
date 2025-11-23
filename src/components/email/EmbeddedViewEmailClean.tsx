@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Reply, ReplyAll, Forward, Trash, MoreVertical, Star, Paperclip, Download, ChevronLeft, Mail, MailOpen, Flag, MailWarning, Filter, Tag, Search, ChevronRight, Settings, Plus } from 'lucide-react';
 import { parseISO, format, formatDistanceToNow } from 'date-fns';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { 
   getEmailById, 
@@ -115,32 +115,80 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const [threadMessages, setThreadMessages] = useState<Email[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showReplyComposer, setShowReplyComposer] = useState(false);
-  const [replyMode, setReplyMode] = useState<'reply' | 'replyAll' | 'forward'>('reply');
-  const [replyContent, setReplyContent] = useState('');
-  const [forwardTo, setForwardTo] = useState('');
   const [sending, setSending] = useState(false);
   const [expandedMessages, setExpandedMessages] = useState<Set<string>>(new Set());
   const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set()); // Track which messages have images loaded
   const [forwardingMessage, setForwardingMessage] = useState<Email | null>(null); // Track which message is being forwarded
   const [forwardType, setForwardType] = useState<'single' | 'all'>('single'); // Track forward type
   
-  // Draft saving state
-  const [draftId, setDraftId] = useState<string | null>(null);
-  const [draftVersion, setDraftVersion] = useState<number>(0);
-  const [isDirty, setIsDirty] = useState(false);
-  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
-  const [lastHash, setLastHash] = useState<string>('');
-  const [isSaving, setIsSaving] = useState(false);
+  // 🎯 CONSOLIDATED DRAFT STATE - Single source of truth prevents race conditions
+  const [draftState, setDraftState] = useState({
+    status: 'idle' as 'idle' | 'loading' | 'ready' | 'saving' | 'sending' | 'error',
+    showComposer: false,
+    mode: 'reply' as 'reply' | 'replyAll' | 'forward',
+    content: '',
+    forwardTo: '',
+    draftId: null as string | null,
+    messageId: null as string | null, // Track message ID separately for UI operations
+    version: 0,
+    isDirty: false,
+    isSaving: false,
+    lastSavedAt: null as Date | null,
+    lastHash: '',
+    error: null as string | null
+  });
+  
+  // Helper to update draft state atomically
+  const updateDraftState = (updates: Partial<typeof draftState>) => {
+    setDraftState(prev => ({ ...prev, ...updates }));
+  };
+  
+  // Backward compatibility - individual setters (use updateDraftState internally)
+  const setShowReplyComposer = (show: boolean) => updateDraftState({ showComposer: show });
+  const setReplyMode = (mode: typeof draftState.mode) => updateDraftState({ mode });
+  const setReplyContent = (content: string) => updateDraftState({ content });
+  const setForwardTo = (to: string) => updateDraftState({ forwardTo: to });
+  const setDraftId = (id: string | null) => updateDraftState({ draftId: id });
+  const setDraftVersion = (version: number) => updateDraftState({ version });
+  const setIsDirty = (dirty: boolean) => updateDraftState({ isDirty: dirty });
+  const setIsSaving = (saving: boolean) => updateDraftState({ isSaving: saving });
+  const setLastSavedAt = (date: Date | null) => updateDraftState({ lastSavedAt: date });
+  const setLastHash = (hash: string) => updateDraftState({ lastHash: hash });
+  
+  // Backward compatibility - individual getters
+  const showReplyComposer = draftState.showComposer;
+  const replyMode = draftState.mode;
+  const replyContent = draftState.content;
+  const forwardTo = draftState.forwardTo;
+  const draftId = draftState.draftId;
+  const draftVersion = draftState.version;
+  const isDirty = draftState.isDirty;
+  const isSaving = draftState.isSaving;
+  const lastSavedAt = draftState.lastSavedAt;
+  const lastHash = draftState.lastHash;
+  
+  // Refs to store current values (avoid stale closure in timers)
+  const draftStateRef = useRef(draftState);
+  const replyContentRef = useRef(draftState.content);
+  const forwardToRef = useRef(draftState.forwardTo);
+  const replyModeRef = useRef(draftState.mode);
+  const isDirtyRef = useRef(draftState.isDirty);
+  
   const debounceSaveTimerRef = useRef<number | null>(null);
   const failsafeSaveTimerRef = useRef<number | null>(null);
   const lastSaveTimeRef = useRef<number>(0);
-  const isDirtyRef = useRef(false); // Add ref to avoid stale closures
   
-  // Refs to store current values (avoid stale closure in timers)
-  const replyContentRef = useRef(replyContent);
-  const forwardToRef = useRef(forwardTo);
-  const replyModeRef = useRef(replyMode);
+  // Image cache for inline attachments (cid: references)
+  const imageCache = useRef<Map<string, string>>(new Map());
+  
+  // Update refs whenever draft state changes
+  useEffect(() => {
+    draftStateRef.current = draftState;
+    replyContentRef.current = draftState.content;
+    forwardToRef.current = draftState.forwardTo;
+    replyModeRef.current = draftState.mode;
+    isDirtyRef.current = draftState.isDirty;
+  }, [draftState]);
   
   // Attachment preview modal state
   const [previewAttachment, setPreviewAttachment] = useState<{ url: string; name: string; type: string } | null>(null);
@@ -181,19 +229,188 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const { labels, addLabel } = useLabel(); // Get labels from context
   const navigate = useNavigate();
   const { toast } = useToast();
+  const [searchParams] = useSearchParams();
+  const draftIdParam = searchParams.get('draft'); // Check for draft query param
 
-  // Reset reply state when email changes
-  useEffect(() => {
-    if (emailId) {
-      // Close any open reply composer and reset all reply-related state
-      setShowReplyComposer(false);
-      setReplyContent('');
-      setForwardTo('');
-      setReplyMode('reply');
+  // 🎯 CONSOLIDATED DRAFT LOAD FUNCTION - Single async action prevents race conditions
+  const loadDraftCompletely = async (messageId: string): Promise<boolean> => {
+    console.log('🔄 START loadDraftCompletely:', messageId);
+    
+    try {
+      // Step 1: Set loading state (hides composer until ready)
+      updateDraftState({ 
+        status: 'loading',
+        messageId,
+        showComposer: false 
+      });
       
+      // Step 2: Fetch draft list to find draft ID from message ID
+      const draftResponse = await window.gapi.client.gmail.users.drafts.list({
+        userId: 'me',
+        maxResults: 100
+      });
+
+      const drafts = draftResponse.result.drafts || [];
+      const matchingDraft = drafts.find((d: any) => d.message?.id === messageId);
+      
+      if (!matchingDraft) {
+        throw new Error('Draft not found in list');
+      }
+      
+      // Step 3: Fetch full draft details
+      const draftDetails = await window.gapi.client.gmail.users.drafts.get({
+        userId: 'me',
+        id: matchingDraft.id,
+        format: 'full'
+      });
+
+      if (!draftDetails.result?.message) {
+        throw new Error('Draft message not found');
+      }
+
+      const payload = draftDetails.result.message.payload;
+      
+      // Step 4: Extract body content
+      let bodyHtml = '';
+      const findBody = (parts: any[]): { html: string; text: string } => {
+        let html = '';
+        let text = '';
+        for (const part of parts) {
+          if (part.mimeType === 'text/html' && part.body?.data) {
+            html = atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+          } else if (part.mimeType === 'text/plain' && part.body?.data && !html) {
+            text = atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+          } else if (part.parts) {
+            const found = findBody(part.parts);
+            if (found.html) html = found.html;
+            if (found.text && !html) text = found.text;
+          }
+        }
+        return { html, text };
+      };
+
+      if (payload?.parts) {
+        const { html, text } = findBody(payload.parts);
+        bodyHtml = html || text;
+      } else if (payload?.body?.data) {
+        bodyHtml = atob(payload.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+      }
+      
+      // Step 5: Find and replace inline images (cid: references)
+      console.log('🖼️ Checking for inline images in draft...');
+      const cidMatches = bodyHtml.match(/cid:([^"'\s>]+)/g);
+      
+      if (cidMatches && cidMatches.length > 0) {
+        console.log(`🖼️ Found ${cidMatches.length} cid: references, fetching inline images...`);
+        
+        // Find all inline attachments
+        const findInlineAttachments = (parts: any[]): any[] => {
+          let attachments: any[] = [];
+          for (const part of parts) {
+            if (part.body?.attachmentId && part.headers) {
+              const contentId = part.headers.find((h: any) => h.name.toLowerCase() === 'content-id')?.value;
+              if (contentId) {
+                attachments.push({
+                  cid: contentId.replace(/[<>]/g, ''),
+                  attachmentId: part.body.attachmentId,
+                  mimeType: part.mimeType
+                });
+              }
+            }
+            if (part.parts) {
+              attachments = attachments.concat(findInlineAttachments(part.parts));
+            }
+          }
+          return attachments;
+        };
+        
+        const inlineAttachments = payload?.parts ? findInlineAttachments(payload.parts) : [];
+        console.log(`📎 Found ${inlineAttachments.length} inline attachments`);
+        
+        // Fetch and replace each inline image
+        for (const attachment of inlineAttachments) {
+          try {
+            // Check cache first
+            const cacheKey = `${messageId}:${attachment.attachmentId}`;
+            let dataUrl = imageCache.current.get(cacheKey);
+            
+            if (!dataUrl) {
+              const response = await window.gapi.client.gmail.users.messages.attachments.get({
+                userId: 'me',
+                messageId: messageId,
+                id: attachment.attachmentId
+              });
+              
+              if (response.result?.data) {
+                const base64Data = response.result.data.replace(/-/g, '+').replace(/_/g, '/');
+                dataUrl = `data:${attachment.mimeType};base64,${base64Data}`;
+                
+                // Cache the data URL
+                imageCache.current.set(cacheKey, dataUrl);
+                console.log(`✅ Fetched and cached inline image: ${attachment.cid}`);
+              }
+            } else {
+              console.log(`💾 Using cached inline image: ${attachment.cid}`);
+            }
+            
+            if (dataUrl) {
+              // Replace cid: reference with data URL
+              const cidPattern = new RegExp(`cid:${attachment.cid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g');
+              bodyHtml = bodyHtml.replace(cidPattern, dataUrl);
+              console.log(`✅ Replaced cid:${attachment.cid} with data URL`);
+            }
+          } catch (error) {
+            console.error(`❌ Failed to fetch inline image ${attachment.cid}:`, error);
+          }
+        }
+      }
+      
+      // Step 6: Set ALL state atomically
+      updateDraftState({
+        status: 'ready',
+        showComposer: true,
+        mode: 'reply',
+        content: bodyHtml,
+        draftId: matchingDraft.id,
+        messageId,
+        isDirty: false,
+        error: null
+      });
+      
+      console.log('✅ COMPLETE loadDraftCompletely - content length:', bodyHtml.length);
+      return true;
+      
+    } catch (error: any) {
+      console.error('❌ FAILED loadDraftCompletely:', error);
+      
+      // Handle 404 - draft no longer exists
+      if (error.status === 404) {
+        const isDraftEmail = email?.labelIds?.includes('DRAFT');
+        
+        if (isDraftEmail && email) {
+          sonnerToast.error('Draft no longer exists');
+          clearSelection();
+          navigate('/inbox');
+          onEmailDelete?.(email.id);
+        }
+      }
+      
+      updateDraftState({ 
+        status: 'error',
+        error: error.message || 'Failed to load draft'
+      });
+      return false;
+    }
+  };
+
+  // Fetch email and thread when emailId changes or draft param changes
+  // Don't reset composer state here - let fetchEmailAndThread() decide based on drafts
+  useEffect(() => {
+    console.log('🔄 Component effect triggered - emailId:', emailId, 'draftIdParam:', draftIdParam, 'showReplyComposer:', showReplyComposer);
+    if (emailId) {
       fetchEmailAndThread();
     }
-  }, [emailId]);
+  }, [emailId, draftIdParam]);
 
   const fetchEmailAndThread = async () => {
     try {
@@ -201,11 +418,14 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       setError(null);
 
       // Fetch the main email
+      // If draftIdParam exists, fetch the draft first (coming from Drafts folder)
       let fetchedEmail: Email | undefined;
+      const actualEmailId = draftIdParam || emailId;
+      
       try {
-        fetchedEmail = await optimizedEmailService.fetchEmailThread(emailId).then(thread => thread[0]);
+        fetchedEmail = await optimizedEmailService.fetchEmailThread(actualEmailId).then(thread => thread[0]);
       } catch {
-        fetchedEmail = await getEmailById(emailId);
+        fetchedEmail = await getEmailById(actualEmailId);
       }
 
       if (!fetchedEmail) {
@@ -215,93 +435,12 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
       setEmail(fetchedEmail);
 
-      // Check if this is a draft
+      // Check if this is a new email draft (no thread) - redirect to compose page
       const isDraft = fetchedEmail.labelIds?.includes('DRAFT');
-      if (isDraft) {
-        console.log('📝 Draft detected:', fetchedEmail.id);
-        
-        // Check if this is a reply draft (has threadId and is in a conversation)
-        if (fetchedEmail.threadId) {
-          console.log('📝 Reply draft detected, opening inline composer in thread view');
-          
-          // Fetch the draft to get its content
-          try {
-            const draftResponse = await window.gapi.client.gmail.users.drafts.list({
-              userId: 'me',
-              maxResults: 100
-            });
-
-            const drafts = draftResponse.result.drafts || [];
-            const matchingDraft = drafts.find((d: any) => d.message?.id === fetchedEmail.id);
-            
-            if (matchingDraft) {
-              const draftDetails = await window.gapi.client.gmail.users.drafts.get({
-                userId: 'me',
-                id: matchingDraft.id,
-                format: 'full'
-              });
-
-              if (draftDetails.result?.message) {
-                const draftMessage = draftDetails.result.message;
-                const payload = draftMessage.payload;
-                const headers = payload?.headers || [];
-
-                const getHeader = (name: string) => {
-                  const header = headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase());
-                  return header?.value || '';
-                };
-
-                const toHeader = getHeader('To');
-
-                // Extract body content
-                let bodyHtml = '';
-                const findBody = (parts: any[]): { html: string; text: string } => {
-                  let html = '';
-                  let text = '';
-                  for (const part of parts) {
-                    if (part.mimeType === 'text/html' && part.body?.data) {
-                      html = atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
-                    } else if (part.mimeType === 'text/plain' && part.body?.data && !html) {
-                      text = atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
-                    } else if (part.parts) {
-                      const found = findBody(part.parts);
-                      if (found.html) html = found.html;
-                      if (found.text && !html) text = found.text;
-                    }
-                  }
-                  return { html, text };
-                };
-
-                if (payload?.parts) {
-                  const { html, text } = findBody(payload.parts);
-                  bodyHtml = html || text;
-                } else if (payload?.body?.data) {
-                  bodyHtml = atob(payload.body.data.replace(/-/g, '+').replace(/_/g, '/'));
-                }
-
-                // Open inline reply composer with draft content
-                setShowReplyComposer(true);
-                setReplyMode('reply');
-                setReplyContent(bodyHtml);
-                setDraftId(matchingDraft.id);
-                setForwardTo(toHeader);
-                setIsDirty(false);
-                isDirtyRef.current = false;
-
-                console.log('✅ Loaded reply draft into inline composer');
-              }
-            }
-          } catch (error) {
-            console.error('❌ Failed to load draft content:', error);
-          }
-          
-          // Continue to load the thread
-        } else {
-          // New email draft (no thread) - navigate to compose page
-          console.log('📝 New email draft detected, redirecting to compose page');
-          navigate(`/compose?draftId=${fetchedEmail.id}`);
-          return; // Exit early
-        }
+      if (isDraft && !fetchedEmail.threadId) {
+        console.log('📝 New email draft detected, redirecting to compose page');
+        navigate(`/compose?draftId=${fetchedEmail.id}`);
+        return; // Exit early
       }
 
       // Fetch thread if exists
@@ -313,23 +452,116 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
             const sorted = thread.sort((a, b) => 
               new Date(a.date).getTime() - new Date(b.date).getTime()
             );
-            setThreadMessages(sorted);
+            
+            // If we loaded a draft initially but it's not in the thread, add it
+            if (isDraft && !sorted.find(msg => msg.id === fetchedEmail.id)) {
+              console.log('📝 Adding draft to thread (not returned by Gmail API)');
+              sorted.push(fetchedEmail);
+              sorted.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+            }
+            
+            console.log('📧 Thread messages count:', sorted.length);
+            console.log('📧 Is draft?', isDraft);
+            
+            // Check for drafts in the thread
+            // Priority: URL draft param > any draft in thread
+            let draftMessage = draftIdParam 
+              ? sorted.find(msg => msg.id === draftIdParam)
+              : sorted.find(msg => msg.labelIds?.includes('DRAFT'));
+            
+            console.log('📧 Draft message found?', !!draftMessage, draftMessage?.id);
+            
+            // Fetch draft separately if not in thread
+            if (draftIdParam && !draftMessage) {
+              const separateDraft = await getEmailById(draftIdParam);
+              if (separateDraft) {
+                draftMessage = separateDraft;
+              }
+            }
+            
+            if (draftMessage) {
+              console.log('📧 Processing draft message in thread');
+              // Filter out draft from thread display
+              const nonDraftMessages = sorted.filter(msg => !msg.labelIds?.includes('DRAFT'));
+              console.log('📧 Non-draft messages count:', nonDraftMessages.length);
+              if (nonDraftMessages.length === 0) {
+                // Show at least the original email
+                setThreadMessages(sorted.filter(msg => !msg.labelIds?.includes('DRAFT')));
+              } else {
+                setThreadMessages(nonDraftMessages);
+              }
+              
+              // 🎯 Use consolidated load function
+              await loadDraftCompletely(draftMessage.id);
+              
+              // Expand the latest non-draft message
+              if (nonDraftMessages.length > 0) {
+                setExpandedMessages(new Set([nonDraftMessages[nonDraftMessages.length - 1].id]));
+              }
+            } else {
+              console.log('⚠️ No draft message found in thread!');
+              console.log('⚠️ But composer state - showReplyComposer:', showReplyComposer, 'replyContent length:', replyContent.length);
+              setThreadMessages(sorted);
+              // Auto-expand the latest message
+              setExpandedMessages(new Set([sorted[sorted.length - 1].id]));
+            }
+            
             setLoadedImages(new Set());
-            // Auto-expand the latest message
-            setExpandedMessages(new Set([sorted[sorted.length - 1].id]));
           } else {
+            console.log('⚠️ Empty thread response from API');
             setThreadMessages([fetchedEmail]);
             setLoadedImages(new Set());
-            setExpandedMessages(new Set([fetchedEmail.id]));
           }
         } catch {
           const thread = await getThreadEmails(fetchedEmail.threadId);
           const sorted = (thread || [fetchedEmail]).sort((a, b) => 
             new Date(a.date).getTime() - new Date(b.date).getTime()
           );
-          setThreadMessages(sorted);
+          
+          // If we loaded a draft initially but it's not in the thread, add it
+          if (isDraft && !sorted.find(msg => msg.id === fetchedEmail.id)) {
+            console.log('📝 Adding draft to thread (not returned by Gmail API)');
+            sorted.push(fetchedEmail);
+            sorted.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+          }
+          
+          // Check for drafts in the thread
+          // Priority: URL draft param > any draft in thread
+          let draftMessage = draftIdParam 
+            ? sorted.find(msg => msg.id === draftIdParam)
+            : sorted.find(msg => msg.labelIds?.includes('DRAFT'));
+          
+          // Fetch draft separately if not in thread
+          if (draftIdParam && !draftMessage) {
+            const separateDraft = await getEmailById(draftIdParam);
+            if (separateDraft) {
+              draftMessage = separateDraft;
+            }
+          }
+          
+          if (draftMessage) {
+            // Filter out draft from thread display
+            const nonDraftMessages = sorted.filter(msg => !msg.labelIds?.includes('DRAFT'));
+            if (nonDraftMessages.length === 0) {
+              // Show at least the original email
+              setThreadMessages(sorted.filter(msg => !msg.labelIds?.includes('DRAFT')));
+            } else {
+              setThreadMessages(nonDraftMessages);
+            }
+            
+            // 🎯 Use consolidated load function
+            await loadDraftCompletely(draftMessage.id);
+            
+            // Expand the latest non-draft message
+            if (nonDraftMessages.length > 0) {
+              setExpandedMessages(new Set([nonDraftMessages[nonDraftMessages.length - 1].id]));
+            }
+          } else {
+            setThreadMessages(sorted);
+            setExpandedMessages(new Set([sorted[sorted.length - 1].id]));
+          }
+          
           setLoadedImages(new Set());
-          setExpandedMessages(new Set([sorted[sorted.length - 1].id]));
         }
       } else {
         setThreadMessages([fetchedEmail]);
@@ -340,7 +572,10 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       console.error('Error fetching email:', err);
       setError('Failed to load email');
     } finally {
+      console.log('🏁 fetchEmailAndThread complete - setting loading to false');
+      console.log('🏁 Current composer state before setLoading:', { showReplyComposer, replyContentLength: replyContent.length, draftId });
       setLoading(false);
+      console.log('🏁 setLoading(false) called');
     }
   };
 
@@ -373,6 +608,11 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         try {
           await deleteReplyDraft(draftId);
           console.log('🗑️ Draft deleted after send');
+          
+          // Emit event to decrement draft counter
+          window.dispatchEvent(new CustomEvent('email-deleted', { 
+            detail: { emailId: draftId } 
+          }));
         } catch (err) {
           console.error('Failed to delete draft after send:', err);
           // Non-critical error, don't show to user
@@ -388,7 +628,13 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       isDirtyRef.current = false;
       setDraftVersion(0);
       
+      // Refresh thread to show sent message
       await fetchEmailAndThread();
+      
+      // Update parent to remove "Draft" badge if this was a draft in thread
+      if (email && onEmailUpdate) {
+        onEmailUpdate({ ...email, hasDraftInThread: false } as Email);
+      }
     } catch (err) {
       console.error('Error sending reply:', err);
       toast({ 
@@ -961,9 +1207,9 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       }
       
       setReplyContent(forwardedContent);
-    } else if (replyMode !== 'forward') {
-      setReplyContent('');
     }
+    // 🎯 REMOVED: Auto-clear logic that caused race conditions
+    // Content should only be cleared explicitly by user actions (close, discard, send)
   }, [replyMode, forwardingMessage, forwardType, showReplyComposer, threadMessages]);
 
   // Draft saving utilities
@@ -1493,6 +1739,16 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
   const latestMessage = threadMessages[threadMessages.length - 1] || email;
   const { time, relative } = formatEmailTime(latestMessage.date);
+
+  // Debug: Log render state
+  console.log('🎨 RENDER STATE:', {
+    showReplyComposer,
+    replyContentLength: replyContent.length,
+    draftId,
+    isDirty,
+    emailId: email?.id,
+    threadMessagesCount: threadMessages.length
+  });
 
   return (
     <div className="flex flex-col h-full bg-white">
@@ -2184,6 +2440,12 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                   {replyMode === 'replyAll' && 'Reply all'}
                   {replyMode === 'forward' && 'Forward'}
                 </h3>
+                {/* Draft continuation indicator */}
+                {draftId && !isDirty && (
+                  <span className="flex items-center gap-1.5 text-xs font-medium text-amber-700 bg-amber-50 px-2 py-1 rounded border border-amber-200">
+                    Continuing draft
+                  </span>
+                )}
                 {/* Draft status indicator - More visible */}
                 {isSaving && (
                   <span className="flex items-center gap-1.5 text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded">
@@ -2203,20 +2465,6 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                   </span>
                 )}
               </div>
-              <button
-                onClick={() => {
-                  setShowReplyComposer(false);
-                  setReplyContent('');
-                  setForwardTo('');
-                  setDraftId(null);
-                  setIsDirty(false);
-                  isDirtyRef.current = false;
-                }}
-                className="p-1 hover:bg-gray-100 rounded transition-colors"
-                title="Close"
-              >
-                <X size={16} />
-              </button>
             </div>
 
             {replyMode === 'forward' && (
@@ -2278,9 +2526,11 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                     if (window.confirm('Are you sure you want to discard this draft?')) {
                       try {
                         const draftIdToDelete = draftId;
+                        const isDraftEmail = email?.labelIds?.includes('DRAFT');
                         
                         // Delete the draft
                         await deleteReplyDraft(draftIdToDelete);
+                        console.log('🗑️ Draft deleted:', draftIdToDelete);
                         
                         // Emit event to decrement draft counter
                         window.dispatchEvent(new CustomEvent('email-deleted', { 
@@ -2299,7 +2549,26 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                         isDirtyRef.current = false;
                         replyContentRef.current = '';
                         forwardToRef.current = '';
-                        // Don't navigate away - stay in thread view
+                        
+                        // CRITICAL UX: Context-aware navigation
+                        if (isDraftEmail) {
+                          // Case: Viewing draft from Drafts folder
+                          // Draft already deleted from Gmail - just navigate away
+                          console.log('🔄 Discarded draft from Drafts folder, navigating to /inbox');
+                          clearSelection();
+                          navigate('/inbox');
+                          // DON'T call onEmailDelete - draft already deleted, would cause 404
+                          // List removal happens via 'email-deleted' event listener
+                        } else {
+                          // Case: Draft in a thread (inbox view)
+                          // The thread still exists, just refresh to show without draft
+                          console.log('🔄 Discarded draft from thread, refreshing view');
+                          await fetchEmailAndThread();
+                          // Update parent to remove orange "Draft" badge
+                          if (email && onEmailUpdate) {
+                            onEmailUpdate({ ...email, hasDraftInThread: false } as Email);
+                          }
+                        }
                       } catch (error) {
                         console.error('Failed to discard draft:', error);
                         sonnerToast.error('Failed to discard draft');
@@ -2311,20 +2580,6 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                   Discard Draft
                 </button>
               )}
-              
-              <button
-                onClick={() => {
-                  setShowReplyComposer(false);
-                  setReplyContent('');
-                  setForwardTo('');
-                  setDraftId(null);
-                  setIsDirty(false);
-                  isDirtyRef.current = false;
-                }}
-                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded transition-colors"
-              >
-                Cancel
-              </button>
             </div>
           </div>
         )}

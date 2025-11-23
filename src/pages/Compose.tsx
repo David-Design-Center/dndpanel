@@ -288,6 +288,39 @@ function Compose() {
           references: referencesHeader,
           threadId: draftMessage.threadId
         });
+        
+        // Check if this is a reply draft (has threadId different from message id)
+        // AND check if thread has other messages
+        const hasRealThread = draftMessage.threadId && draftMessage.threadId !== draftMessage.id;
+        
+        if (hasRealThread) {
+          // Verify the thread actually has other messages besides this draft
+          try {
+            const threadResponse = await window.gapi.client.gmail.users.threads.get({
+              userId: 'me',
+              id: draftMessage.threadId,
+              format: 'metadata'
+            });
+            
+            const messages = threadResponse.result?.messages || [];
+            const nonDraftMessages = messages.filter((msg: any) => 
+              !msg.labelIds?.includes('DRAFT')
+            );
+            
+            if (nonDraftMessages.length > 0) {
+              console.log('📝 Reply draft detected (thread has', nonDraftMessages.length, 'messages), redirecting to thread view');
+              navigate(`/inbox/email/${draftMessage.threadId}?draft=${draftId}`);
+              return; // Exit early
+            } else {
+              console.log('📝 Standalone draft (thread only has draft), loading in compose');
+            }
+          } catch (error) {
+            console.error('Error checking thread:', error);
+            console.log('📝 Error checking thread, loading in compose as fallback');
+          }
+        } else {
+          console.log('📝 New email draft detected (no real thread), loading in compose');
+        }
 
         // Set recipients - populate both old and new format
         if (toHeader) {
@@ -296,14 +329,6 @@ function Compose() {
           setTo(toHeader); // Keep for backward compatibility
         }
         if (subjectHeader) setSubject(subjectHeader);
-        
-        // Set thread context if this is a reply
-        if (draftMessage.threadId) {
-          setCurrentThreadId(draftMessage.threadId);
-          setIsReply(true);
-          // Fetch thread emails to show context
-          fetchThreadEmails(draftMessage.threadId);
-        }
         
         // Set CC recipients
         if (ccHeader) {
@@ -1333,8 +1358,8 @@ function Compose() {
           {/* Compose Form */}
           {(
           <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
-            <div className="flex-1 min-h-0 overflow-y-auto">
-              <div className="p-3 space-y-2">
+            {/* Fixed header section with recipient fields */}
+            <div className="flex-shrink-0 p-3 space-y-2 overflow-y-auto max-h-[240px]">
               {/* TO Section */}
               <div className="relative">
                 <div className="flex items-center border-b border-gray-200 py-2 gap-2">
@@ -1590,8 +1615,10 @@ function Compose() {
                   className="flex-1 outline-none text-xs py-0.5"
                 />
               </div>
-              
-              {/* Rich Text Editor - fills remaining space */}
+            </div>
+            
+            {/* Flex editor section - fills remaining space */}
+            <div className="flex-1 min-h-0 flex flex-col">
               <div className="flex-1 min-h-0">
                 <RichTextEditor
                   value={newBodyHtml}
@@ -1608,10 +1635,11 @@ function Compose() {
                   compact={false}
                 />
               </div>
-              
-              {/* Attachment thumbnails at bottom */}
-              {attachments.length > 0 && (
-                <div className="bg-gray-50 border-t border-gray-200 p-2">
+            </div>
+            
+            {/* Attachment thumbnails section */}
+            {attachments.length > 0 && (
+              <div className="flex-shrink-0 bg-gray-50 border-t border-gray-200 p-2">
                   <div className="flex items-center gap-1 mb-1">
                     <Paperclip size={12} className="text-gray-500" />
                     <span className="text-[10px] font-medium text-gray-600">
@@ -1667,10 +1695,8 @@ function Compose() {
                           </div>
                         ))}
                       </div>
-                </div>
-              )}
               </div>
-            </div>
+            )}
             
             {/* Footer with buttons */}
             <div className="px-3 py-2 bg-gray-50 border-t border-gray-200 flex items-center justify-between flex-shrink-0">

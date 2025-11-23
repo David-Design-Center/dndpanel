@@ -1,227 +1,210 @@
-# Copilot Instructions for D&D Panel
+# D&D Panel - Gmail Email Client
 
 ## Project Overview
-A React + TypeScript business management application combining Gmail client functionality with invoicing, inventory, shipments, and CRM features. Built with Vite, Supabase, and Google APIs (Gmail, Calendar, Contacts). The codebase is actively being refactored from monolithic to modular architecture.
+React + TypeScript email client built on Gmail API. Uses Vite, Supabase for backend, and direct Gmail API integration (no Electron/backend proxy). Key focus: real-time draft management, thread handling, and optimistic UI updates.
 
-## Critical Architecture Patterns
+## Architecture Patterns
 
-### 1. Email Repository Pattern (SINGLE SOURCE OF TRUTH)
-**Location**: `src/services/emailRepository.ts`, `src/features/email/`
+### Gmail API Integration
+- **Direct Gmail API calls** via `window.gapi.client.gmail` (no backend proxy)
+- **Primary service layer**: `src/integrations/gapiService.ts` (~3,100 lines) - orchestrator with wrapper functions
+- **Modular Gmail modules**: `src/integrations/gmail/` - specialized functionality
+  - `send/compose.ts` - Email sending, draft saving
+  - `send/replyDrafts.ts` - Reply draft lifecycle (create/update/delete/send)
+  - `fetch/messages.ts` - Message fetching, threading
+  - `operations/labels.ts` - Label management
+  - `operations/mutations.ts` - Message state changes (trash, read, starred)
+  - `parsing/` - Body extraction, charset handling
 
-The email system underwent major refactoring to eliminate the "26+ parallel arrays" anti-pattern:
+### Draft Management Architecture
+**Critical Pattern**: Drafts in threads auto-load into reply composer
 
 ```typescript
-// ❌ OLD (deprecated - still exists in EmailPageLayout.tsx but being phased out)
-const [allTabEmails, setAllTabEmails] = useState({ all: [], unread: [], trash: [] });
-const [categoryEmails, setCategoryEmails] = useState({...}); // Caused sync issues
-
-// ✅ NEW (use this for all new email code)
-import { emailRepository } from '@/services/emailRepository';
-import { useEmailListManager } from '@/features/email/hooks';
-
-const emailManager = useEmailListManager();
-const emails = emailManager.getVisibleEmails(); // Auto-synced, no manual state
+// When fetching threads, filter out drafts from display
+const draftMessage = sorted.find(msg => msg.labelIds?.includes('DRAFT'));
+if (draftMessage) {
+  const nonDraftMessages = sorted.filter(msg => !msg.labelIds?.includes('DRAFT'));
+  setThreadMessages(nonDraftMessages);
+  
+  // Fetch FULL draft content (not partial)
+  const fullDraft = await getEmailById(draftMessage.id);
+  setReplyContent(fullDraft.body);
+  setShowReplyComposer(true);
+  setDraftId(draftMessage.id);
+}
 ```
 
-**Key Principle**: `emailRepository` stores emails in a single `Map<string, Email>`. All views (inbox, trash, unread) are **computed on-demand**, never stored separately. Mutations like delete/move are atomic and automatically update all derived views.
+**Draft ID Tracking**: Store BOTH `draftId` (Gmail draft ID) and `messageId` (for UI removal):
+- Gmail API uses draft ID for operations
+- UI lists use message ID
+- Track both to properly remove drafts from UI after send/discard
 
-**Documentation**: See `README/EMAIL_ARCHITECTURE_ANALYSIS.md` and `README/PATH_B_PROGRESS.md` for the architectural decision record.
-
-### 2. Google API Integration Strategy
-**Location**: `src/integrations/gapiService.ts`, `src/integrations/gmail/`
-
-Gmail API calls are organized in a modular structure (Phase 4-5 migration in progress):
-
-```
-src/integrations/gmail/
-├── fetch/messages.ts      # Message/thread fetching
-├── operations/           # Labels, mutations, filters, attachments
-├── send/compose.ts       # Send & draft operations
-├── contacts/profile.ts   # People API integration
-└── utils/               # Parsing, encoding
+**Auto-save Pattern**: Reply drafts use refs to avoid stale closures in timers:
+```typescript
+const replyContentRef = useRef(replyContent);
+// Update ref when value changes
+replyContentRef.current = newContent;
+// Use ref in saveDraft callback to avoid recreating function
+const saveDraft = useCallback(() => {
+  const content = replyContentRef.current; // Always current value
+}, []); // Empty deps - stable function
 ```
 
-**Migration in Progress**: `gapiService.ts` (3,102 lines) is being split into modules. When adding new Gmail functionality:
-1. Create functions in appropriate `gmail/` subdirectory
-2. Export from module, then re-export from `gapiService.ts` 
-3. Do NOT add new code directly to `gapiService.ts`
-
-**Authentication**: Domain-wide delegation tokens are managed server-side via Supabase Edge Functions (`supabase/functions/refresh-gmail-token/`). Frontend uses short-lived tokens. See `README/GMAIL_CLIENT_BATTLE_PLAN.md` for migration to full backend proxy.
-
-### 3. Context-Based State Management
-**Location**: `src/contexts/`
-
-This app uses React Context extensively (not Zustand/Redux) for global state:
-
-- `AuthContext.tsx` - Supabase authentication, profile selection
-- `SecurityContext.tsx` - Authorization checks (allowed users list)
-- `EmailPreloaderContext.tsx` - Background email prefetching
-- `ContactsContext.tsx` - Contact management
-- `BrandContext.tsx` - Brand/vendor data (consolidated from separate suppliers table)
-- `LabelContext.tsx` - Gmail labels state
-
-**Pattern**: Contexts wrap the entire app via `<Layout>` in `App.tsx`. Components access via hooks like `useAuth()`, `useSecurity()`.
-
-### 4. Supabase Integration
-**Location**: `src/lib/supabase.ts`, `supabase/functions/`
-
-**Database**: Postgres with RLS (Row Level Security) policies per user
-**Edge Functions**: 
-- `refresh-gmail-token` - OAuth token refresh
-- `fetch-gmail-thread` - Server-side Gmail API proxy
-- `smart-responder` - AI email responses
-
-**Critical Environment Variables** (must be set in Supabase dashboard):
+### Context Architecture
+**Provider Hierarchy** (see `src/providers/`):
 ```
-GAPI_CLIENT_ID
-GAPI_CLIENT_SECRET
+CoreProviders (global, wraps entire app):
+  - AuthProvider
+  - SecurityProvider
+  - ProfileProvider
+  - LabelProvider
+
+FeatureProviders (route-specific, wraps Layout):
+  - EmailPreloaderProvider
+  - ContactsProvider
+  - FilterCreationProvider
+  - LayoutStateProvider
+  - EmailListProvider
+  - ComposeProvider
 ```
 
-**Pattern**: Frontend calls edge functions via `src/services/backendApi.ts`, never directly.
+**Context Pattern**: All contexts follow error-throwing hook pattern:
+```typescript
+export function useMyContext() {
+  const context = useContext(MyContext);
+  if (context === undefined) {
+    throw new Error('useMyContext must be used within MyProvider');
+  }
+  return context;
+}
+```
+
+### State Management Patterns
+
+**Optimistic UI Updates**: Update local state immediately, sync with Gmail in background:
+```typescript
+// ⚡ INSTANT: Update UI
+const updatedEmail = { ...email, isRead: true };
+setEmail(updatedEmail);
+onEmailUpdate?.(updatedEmail);
+
+// 🔄 BACKGROUND: Sync with Gmail
+markAsRead(email.id).catch(() => {
+  // Revert on error
+  setEmail(email);
+});
+```
+
+**Event-Driven Updates**: Custom events for cross-component coordination:
+- `draft-created` - Increment draft counter
+- `email-deleted` - Remove from UI, update counters
+- `inbox-unread-24h` - Update recent unread count
+- `inbox-refetch-required` - Trigger email list refresh
+
+**Repository Pattern** (transitioning): `emailRepository` as single source of truth:
+```typescript
+// Add to repository
+emailRepository.addEmail(email);
+
+// Remove from repository (triggers UI updates via events)
+emailRepository.deleteEmail(emailId);
+window.dispatchEvent(new CustomEvent('email-deleted', { 
+  detail: { emailId } 
+}));
+```
 
 ## Development Workflows
 
 ### Running the App
 ```bash
-npm run dev        # Starts Vite dev server on http://localhost:5173
+npm run dev          # Start dev server (Vite)
+npm run build        # Production build
+npm run preview      # Preview production build
 ```
 
-**Task**: Use `run_task` tool with `"Start Development Server"` for background execution.
+### Gmail API Authentication
+- Uses Google Identity Services (GIS) for OAuth
+- Required scopes: gmail.modify, gmail.send, gmail.labels, contacts.readonly
+- Token refresh handled automatically in `gapiService.ts`
+- Auth state managed in `AuthContext` → `ProfileContext`
 
-### Path Aliases
-TypeScript paths configured in `tsconfig.json`:
-```typescript
-import { Button } from '@/components/ui/button';  // Resolves to src/components/ui/button
-```
+### Working with Drafts
+**Creating reply drafts**:
+1. User types in reply composer → auto-save triggers after 3s
+2. `createReplyDraft()` saves to Gmail, emits `draft-created` event
+3. Counter increments, draft appears in Drafts folder
 
-### UI Components
-**shadcn/ui** components in `src/components/ui/`. Use existing components before creating new ones. The design system uses Tailwind CSS with custom theme in `tailwind.config.js`.
+**Loading existing drafts**:
+1. Thread fetch detects DRAFT label → filters from thread display
+2. Fetches full draft content via `getEmailById(draftId)`
+3. Auto-loads into reply composer with `setShowReplyComposer(true)`
+4. Sets `isDirty: false` to show "Continuing draft" badge
 
-### Testing
-No formal test suite currently. Manual testing via browser. When making changes to email system, verify:
-- Email counts match Gmail UI
-- Delete removes from all views
-- No duplicate emails after refresh
+**Sending/discarding**:
+1. Call `deleteDraft(draftId)` or Gmail send API
+2. Emit `email-deleted` event with message ID (not draft ID!)
+3. Counter decrements, draft removed from UI
 
-## Project-Specific Conventions
+### Email Threading
+- Threads fetched via `fetchThreadMessages(threadId)`
+- Messages sorted chronologically (oldest first)
+- Latest non-draft message auto-expanded
+- Drafts hidden from thread display but loaded into composer
 
-### Component Organization
-```
-src/
-├── pages/              # Route components (Inbox, Orders, Dashboard, etc.)
-├── components/
-│   ├── common/         # Reusable components (dropdowns, modals)
-│   ├── email/          # Email-specific UI
-│   ├── layout/         # Layout wrappers (ThreeColumnLayout)
-│   └── ui/             # shadcn/ui components
-├── features/           # Feature modules (email system)
-├── services/           # API clients (emailService, contactService)
-├── contexts/           # React contexts
-├── hooks/              # Custom hooks
-└── utils/              # Pure utility functions
-```
+## Common Gotchas
 
-### Naming Patterns
-- **Services**: `*Service.ts` - API interaction (e.g., `emailService.ts`)
-- **Contexts**: `*Context.tsx` - Global state providers
-- **Pages**: PascalCase, match route names (`Inbox.tsx`, `InvoiceGenerator.tsx`)
-- **Handlers**: `handle*` prefix for event handlers
-- **Getters**: `get*` or `fetch*` for async data retrieval
+1. **Draft ID vs Message ID**: Gmail drafts have BOTH. Use draft ID for API calls, message ID for UI updates.
 
-### Email System Specifics
-When working with emails:
-
-1. **Never manually filter/sync arrays** - use repository methods:
+2. **Stale Closures in Timers**: Use refs for values accessed in debounced/throttled callbacks:
    ```typescript
-   emailRepository.getInboxEmails()    // Returns fresh computed view
-   emailRepository.deleteEmail(id)      // Atomic across all views
+   const valueRef = useRef(value);
+   useEffect(() => { valueRef.current = value; }, [value]);
    ```
 
-2. **Tab definitions**: `'all' | 'unread' | 'sent' | 'trash' | 'spam' | 'starred' | 'important' | 'archive' | 'allmail'`
+3. **Context Dependencies**: `ProfileContext` depends on `AuthContext` - always check provider hierarchy in `CoreProviders.tsx`
 
-3. **Labels are Gmail's UPPERCASE format**: `'INBOX'`, `'TRASH'`, `'SENT'`, etc.
+4. **Gmail API Rate Limits**: Use `queueGmailRequest()` wrapper for automatic retry with exponential backoff
 
-4. **Categories**: `'primary' | 'updates' | 'promotions' | 'social'` (Gmail categories)
+5. **Cache Invalidation**: Clear caches when switching profiles:
+   ```typescript
+   clearEmailCacheForProfileSwitch();
+   clearCurrentAccessToken();
+   ```
 
-### Brand/Vendor Consolidation
-**Important**: `suppliers` table is deprecated. All vendor data now lives in `brands` table. See `README/CONSOLIDATION_COMPLETE.md`. When handling supplier orders:
+6. **Event Listeners**: Always clean up in useEffect return:
+   ```typescript
+   useEffect(() => {
+     window.addEventListener('draft-created', handler);
+     return () => window.removeEventListener('draft-created', handler);
+   }, []);
+   ```
 
-```typescript
-// ✅ Correct
-import { useBrand } from '@/contexts/BrandContext';
-<BrandDropdown returnFullBrand={true} />
+## File Structure Navigation
 
-// ❌ Don't use
-import { fetchSuppliers } from '@/services/suppliersService'; // Unused file
-```
+- `src/integrations/gapiService.ts` - Gmail API orchestrator (check here first for Gmail operations)
+- `src/integrations/gmail/` - Modular Gmail functionality (reference implementations)
+- `src/services/emailService.ts` - High-level email operations (uses gapiService internally)
+- `src/contexts/` - React contexts (auth, profile, labels, contacts, layout)
+- `src/components/email/` - Email UI components (list, viewer, compose)
+- `src/pages/Compose.tsx` - Full-screen compose mode (new emails, standalone drafts)
+- `src/components/email/EmbeddedViewEmailClean.tsx` - Thread viewer with inline reply composer
+- `README/` - Extensive architecture docs (read when refactoring major systems)
 
-## Known Issues & Active Work
+## Testing Approach
+Currently no formal test suite. Manual testing workflow:
+1. Create draft → verify counter increments
+2. Navigate away, return → verify draft auto-loads
+3. Send draft → verify removed from UI and counter decrements
+4. Discard draft → verify permanent deletion (not trash)
 
-### Critical Bug: "Ghost Emails"
-**Status**: Fixed via repository pattern but old code paths remain
-**Problem**: Deleted emails could reappear due to parallel array desync
-**Solution**: Always use `emailRepository` for mutations, not local state arrays
-**Files**: See `README/EMAIL_ARCHITECTURE_ANALYSIS.md` for full diagnosis
+## Code Style Conventions
 
-### Refactoring in Progress
-1. **EmailPageLayout.tsx** (2,747 lines) → Using modular `EmailPageLayout/` folder with extracted handlers
-2. **gapiService.ts** (3,102 lines) → Splitting into `src/integrations/gmail/` modules
-3. **Backend Migration**: Moving Gmail API calls to Supabase Edge Functions (see `README/GMAIL_CLIENT_BATTLE_PLAN.md`)
+- **Logging**: Use emoji prefixes for grep-ability: `📝 Draft`, `🗑️ Delete`, `✅ Success`, `❌ Error`
+- **Async Handlers**: Always wrap in try-catch with console.error for debugging
+- **Comments**: Explain WHY not WHAT. Mark race conditions, timing issues prominently.
+- **Component Size**: If >500 lines, consider extracting hooks or sub-components
+- **Type Safety**: Avoid `any`, prefer `unknown` or proper types from `src/types/index.ts`
 
-When editing these files, prefer adding to new modules over expanding monoliths.
+---
 
-## Security & Authentication
-
-### Authorization Model
-- **Allowed Users**: Hardcoded list in `src/config/security.ts` (`SECURITY_CONFIG.ALLOWED_USERS`)
-- **RLS**: All Supabase tables filtered by `auth.uid()`
-- **Password Reset**: Protected route checking for recovery tokens in URL
-
-### Protected Routes
-All routes except `/auth`, `/auth/forgot`, `/auth/reset`, `/privacy-policy`, `/terms-of-service` require authentication via `<ProtectedRoute>` wrapper in `App.tsx`.
-
-### Token Management
-- **Supabase**: Long-lived sessions via localStorage
-- **Google**: Short-lived OAuth tokens refreshed via Edge Function
-- **Never expose**: `GAPI_CLIENT_SECRET` to frontend (server-side only)
-
-## README Documentation
-Extensive documentation in `README/` folder:
-- Architecture decisions (e.g., `EMAIL_ARCHITECTURE_ANALYSIS.md`)
-- Migration guides (e.g., `PATH_B_INTEGRATION_GUIDE.md`)
-- Feature implementations (e.g., `CONTACTS_DROPDOWN_IMPLEMENTATION.md`)
-- Status reports (e.g., `COMPLETE_STATUS_REPORT.md`)
-
-When making architectural changes, update or create a README doc explaining the pattern.
-
-## Common Pitfalls
-
-1. **Don't create parallel state for emails** - The repository pattern exists to prevent this
-2. **Don't call Gmail API directly in components** - Use `emailService.ts` or `gapiService.ts`
-3. **Don't mix old and new email patterns** - Prefer `useEmailListManager` over manual useState
-4. **Don't hardcode Google Client ID/Secret** - Use environment variables
-5. **Check `SecurityContext.isDataLoadingAllowed`** before fetching sensitive data
-
-## Quick Reference Commands
-
-```bash
-# Development
-npm run dev
-
-# Build
-npm run build
-npm run preview
-
-# Linting
-npm run lint
-
-# Supabase (requires Supabase CLI)
-npx supabase functions deploy <function-name>
-```
-
-## Getting Help
-When you encounter unfamiliar patterns:
-1. Check `README/` folder for architectural documentation
-2. Search for similar implementations in the codebase
-3. Look for Context providers in `src/contexts/` for state access patterns
-4. Check `emailRepository.ts` and `useEmailListManager.ts` for email patterns
+**For major refactoring**: Review relevant docs in `README/` folder (e.g., `EMAIL_ARCHITECTURE_ANALYSIS.md`, `REFACTORING_NOTES.md`)

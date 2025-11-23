@@ -6,12 +6,22 @@ import { cleanEmailAddress } from '@/utils/emailFormatting';
 interface EmailItemContentProps {
   email: Email;
   isSentEmail: boolean;
+  hasDraftInThread?: boolean;
 }
 
-export function EmailItemContent({ email, isSentEmail }: EmailItemContentProps) {
+export function EmailItemContent({ email, isSentEmail, hasDraftInThread }: EmailItemContentProps) {
+  // Check if this is a draft email
+  const isDraft = email.labelIds?.includes('DRAFT');
+  
+  // Debug: Check if hasDraftInThread is being passed correctly
+  if ((email as any).hasDraftInThread) {
+    console.log(`📧 Email ${email.id} has hasDraftInThread:`, (email as any).hasDraftInThread, 'prop:', hasDraftInThread);
+  }
+  
   // Determine sender/recipient text
   const senderText = (() => {
-    if (isSentEmail) {
+    // For drafts or sent emails, show TO (recipient)
+    if (isDraft || isSentEmail) {
       const firstRecipient = email.to?.[0];
       if (firstRecipient?.name) {
         return cleanEncodingIssues(firstRecipient.name);
@@ -22,6 +32,7 @@ export function EmailItemContent({ email, isSentEmail }: EmailItemContentProps) 
       return 'Unknown Recipient';
     }
     
+    // For regular emails, show FROM (sender)
     if (email.from?.name) {
       return cleanEncodingIssues(email.from.name);
     }
@@ -53,6 +64,11 @@ export function EmailItemContent({ email, isSentEmail }: EmailItemContentProps) 
         >
           {cleanEmailSubject(email.subject || 'No Subject')}
         </span>
+        {hasDraftInThread && (
+          <span className="px-1.5 py-0.5 text-[10px] font-medium bg-orange-100 text-orange-700 rounded shrink-0">
+            Draft
+          </span>
+        )}
         <span
           className="snippet block min-w-0 flex-1 truncate whitespace-nowrap text-gray-500 leading-5"
           title={email.body}

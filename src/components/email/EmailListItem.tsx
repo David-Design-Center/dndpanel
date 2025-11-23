@@ -214,7 +214,7 @@ function EmailListItem({
           isTogglingImportance={isTogglingImportance}
         />
         <div className="email-row grid grid-cols-[minmax(0,1fr)_9rem] flex-1 min-w-0 items-center gap-3">
-          <EmailItemContent email={email} isSentEmail={isSentEmail} />
+          <EmailItemContent email={email} isSentEmail={isSentEmail} hasDraftInThread={(email as any).hasDraftInThread} />
           <div className="w-40 flex items-center justify-end gap-1">
             <EmailItemDate formattedDate={formattedDate}>
               <EmailItemActions

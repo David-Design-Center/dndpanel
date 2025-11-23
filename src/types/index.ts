@@ -46,6 +46,7 @@ export interface Email {
     mimeType: string;
   }[];
   threadId?: string;
+  hasDraftInThread?: boolean; // Indicates if this thread contains a draft message
 }
 
 export interface GmailLabel {

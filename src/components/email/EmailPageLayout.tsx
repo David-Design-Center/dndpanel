@@ -481,6 +481,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     }
   };
   // Fallback: when activeTab changes to sent/drafts and list is still empty after initial attempts, force a fetch
+  // Also refresh drafts when switching to drafts tab to ensure latest state
   useEffect(() => {
     // Throttle repeated empty-drafts fallback fetches
     const lastDraftFetchRef = (EmailPageLayout as any)._lastDraftFallbackRef || { current: 0 };
@@ -500,24 +501,27 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
           setTabLoading(null);
         }
       }
-      if (activeTab === 'drafts' && allTabEmails.drafts.length === 0 && !tabLoading) {
+      // Always refresh drafts when switching to drafts tab (not just when empty)
+      if (activeTab === 'drafts' && !tabLoading) {
         const now = Date.now();
-        if (now - lastDraftFetchRef.current < 15000) { // 15s cooldown
-          return; // prevent rapid loop
+        if (now - lastDraftFetchRef.current < 5000) { // 5s cooldown to prevent rapid refreshes
+          return;
         }
         lastDraftFetchRef.current = now;
         setTabLoading('drafts');
         try {
+          console.log('🔄 Refreshing drafts list...');
           const draftList = await getDraftEmails(true);
-            setAllTabEmails(prev => ({ ...prev, drafts: draftList || [] }));
-            setHasMoreForTabs(prev => ({ ...prev, drafts: (draftList?.length || 0) > 20 }));
+          setAllTabEmails(prev => ({ ...prev, drafts: draftList || [] }));
+          setHasMoreForTabs(prev => ({ ...prev, drafts: (draftList?.length || 0) > 20 }));
+          console.log('✅ Drafts refreshed:', draftList?.length || 0, 'drafts');
         } finally {
           setTabLoading(null);
         }
       }
     };
     run();
-  }, [activeTab, pageType, labelName, allTabEmails.sent.length, allTabEmails.drafts.length, tabLoading]);
+  }, [activeTab, pageType, labelName, tabLoading]);
 
   // Listen for draft events from Compose window
   useEffect(() => {
@@ -525,63 +529,63 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       console.log('📨 Draft created event received:', event.detail);
       const { draftId } = event.detail;
       
-      // Fetch and add the new draft to the UI immediately
-      if (activeTab === 'drafts' || pageType === 'drafts') {
-        try {
-          // Fetch the draft details
-          const response = await window.gapi.client.gmail.users.drafts.get({
-            userId: 'me',
-            id: draftId,
-            format: 'metadata',
-            metadataHeaders: ['From', 'To', 'Subject', 'Date']
-          });
+      // Always add draft to state (regardless of current tab)
+      try {
+        // Fetch the draft details
+        const response = await window.gapi.client.gmail.users.drafts.get({
+          userId: 'me',
+          id: draftId,
+          format: 'metadata',
+          metadataHeaders: ['From', 'To', 'Subject', 'Date']
+        });
+        
+        if (response.result?.message) {
+          const message = response.result.message;
+          const headers = message.payload?.headers || [];
           
-          if (response.result?.message) {
-            const message = response.result.message;
-            const headers = message.payload?.headers || [];
-            
-            // Convert to Email format
-            const getHeader = (name: string) => {
-              const header = headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase());
-              return header?.value || '';
-            };
-            
-            const draftEmail: Email = {
-              id: message.id,
-              threadId: message.threadId || message.id,
-              subject: getHeader('Subject') || '(No Subject)',
-              from: { name: getHeader('From'), email: getHeader('From') },
-              to: [{ name: getHeader('To'), email: getHeader('To') }],
-              cc: [],
-              date: new Date(parseInt(message.internalDate || '0')).toISOString(),
-              internalDate: message.internalDate || '0',
-              body: '',
-              preview: '',
-              isRead: false,
-              labelIds: message.labelIds || ['DRAFT'],
-              attachments: []
-            };
-            
-            // Add to repository and update UI
-            emailRepository.addEmail(draftEmail);
-            setAllTabEmails(prev => ({
-              ...prev,
-              drafts: [draftEmail, ...prev.drafts]
-            }));
-            
-            // Also add to paginated emails if we're on drafts page
-            if (activeTab === 'drafts') {
-              setPaginatedEmails(prev => [draftEmail, ...prev]);
-              console.log('📨 Draft added to paginated list');
-            }
-            
-            console.log('📨 Draft added to UI:', draftId);
+          // Convert to Email format
+          const getHeader = (name: string) => {
+            const header = headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase());
+            return header?.value || '';
+          };
+          
+          const draftEmail: Email = {
+            id: message.id,
+            threadId: message.threadId || message.id,
+            subject: getHeader('Subject') || '(No Subject)',
+            from: { name: getHeader('From'), email: getHeader('From') },
+            to: [{ name: getHeader('To'), email: getHeader('To') }],
+            cc: [],
+            date: new Date(parseInt(message.internalDate || '0')).toISOString(),
+            internalDate: message.internalDate || '0',
+            body: '',
+            preview: '',
+            isRead: false,
+            labelIds: message.labelIds || ['DRAFT'],
+            attachments: []
+          };
+          
+          // Add to repository
+          emailRepository.addEmail(draftEmail);
+          
+          // Update drafts list (always, not just when viewing drafts)
+          setAllTabEmails(prev => ({
+            ...prev,
+            drafts: [draftEmail, ...prev.drafts]
+          }));
+          
+          // If currently viewing drafts, add to paginated list too
+          if (activeTab === 'drafts' || pageType === 'drafts') {
+            setPaginatedEmails(prev => [draftEmail, ...prev]);
+            console.log('📨 Draft added to paginated list (viewing drafts)');
           }
-        } catch (error) {
-          console.error('❌ Failed to fetch draft:', error);
-          // Fallback: clear cache to trigger refresh
-          clearEmailCache();
+          
+          console.log('✅ Draft added to UI:', draftId);
         }
+      } catch (error) {
+        console.error('❌ Failed to fetch draft:', error);
+        // Fallback: clear cache to trigger refresh when user navigates to drafts
+        clearEmailCache();
       }
     };
 
@@ -848,11 +852,55 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   // No need to emit events - FoldersColumn reads from label.messagesTotal
 
   const handleEmailClick = (id: string) => {
-    // Drafts: open compose popup with draft content
+    // Drafts: check if it's a reply draft (has threadId) or new draft
     if (pageType === 'drafts' || activeTab === 'drafts') {
-      // Open compose popup with the draft ID - it will load all the content
-      openCompose(id);
-      return;
+      // Find the draft email to check if it has a threadId
+      const draftEmail = filteredEmails.find(e => e.id === id);
+      
+      // Check if it's a reply draft by verifying the thread has other messages
+      const hasRealThread = draftEmail?.threadId && draftEmail.threadId !== draftEmail.id;
+      
+      if (hasRealThread) {
+        // Verify the thread actually has more than just the draft
+        (async () => {
+          try {
+            const threadResponse = await window.gapi.client.gmail.users.threads.get({
+              userId: 'me',
+              id: draftEmail.threadId,
+              format: 'metadata'
+            });
+            
+            const messages = threadResponse.result?.messages || [];
+            const nonDraftMessages = messages.filter((msg: any) => 
+              !msg.labelIds?.includes('DRAFT')
+            );
+            
+            if (nonDraftMessages.length > 0) {
+              // Real thread with previous messages - open thread view
+              console.log('📝 Reply draft detected (thread has', nonDraftMessages.length, 'messages), opening thread view');
+              navigate(`/inbox/email/${draftEmail.threadId}?draft=${id}`);
+              if (draftEmail.threadId) {
+                selectEmail(draftEmail.threadId);
+              }
+            } else {
+              // Thread only contains this draft - open compose
+              console.log('📝 Standalone draft detected (thread only has draft), opening compose:', id);
+              openCompose(id);
+            }
+          } catch (error) {
+            console.error('Error checking thread:', error);
+            // On error, assume it's standalone and open compose
+            console.log('📝 Error checking thread, opening compose as fallback:', id);
+            openCompose(id);
+          }
+        })();
+        return;
+      } else {
+        // Standalone draft (new email) - open compose modal
+        console.log('📝 Standalone draft detected (no thread or thread=id), opening compose:', id);
+        openCompose(id);
+        return;
+      }
     } else if (labelName) {
       // For label emails, navigate to inbox with label-specific parameters
       const params = new URLSearchParams({ labelName });
@@ -1215,8 +1263,43 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
           {(!isSplitInbox || inboxViewMode === 'split') && (
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-1">
-                {/* Select All Checkbox */}
-                <label className="flex items-center mr-3">
+                {/* Select All Button */}
+              <button
+                onClick={() => {
+                  setSelectedEmails(prev => {
+                    const next = new Set(prev);
+                    
+                    if (isSplitInbox) {
+                      // ✅ Split view: only select/deselect VISIBLE emails (first 25 from each section)
+                      const visibleUnread = splitUnread.slice(0, 25);
+                      const visibleRead = splitRead.slice(0, 25);
+                      
+                      const allVisibleSelected = 
+                        (visibleUnread.length === 0 || visibleUnread.every(e => next.has(e.id))) &&
+                        (visibleRead.length === 0 || visibleRead.every(e => next.has(e.id)));
+                      
+                      if (allVisibleSelected) {
+                        // Deselect all visible
+                        visibleUnread.forEach(email => next.delete(email.id));
+                        visibleRead.forEach(email => next.delete(email.id));
+                      } else {
+                        // Select all visible
+                        visibleUnread.forEach(email => next.add(email.id));
+                        visibleRead.forEach(email => next.add(email.id));
+                      }
+                    } else {
+                      // Regular view, select/deselect visible page
+                      if (allVisibleSelected) {
+                        visibleEmails.forEach(email => next.delete(email.id));
+                      } else {
+                        visibleEmails.forEach(email => next.add(email.id));
+                      }
+                    }
+                    return next;
+                  });
+                }}
+                className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded transition-colors"
+              >
                 <input
                   ref={selectAllCheckboxRef}
                   type="checkbox"
@@ -1226,88 +1309,65 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                     splitUnread.slice(0, 25).every(e => selectedEmails.has(e.id)) && 
                     splitRead.slice(0, 25).every(e => selectedEmails.has(e.id))
                     : allVisibleSelected}
-                  onChange={() => {
-                    setSelectedEmails(prev => {
-                      const next = new Set(prev);
-                      
-                      if (isSplitInbox) {
-                        // ✅ Split view: only select/deselect VISIBLE emails (first 25 from each section)
-                        const visibleUnread = splitUnread.slice(0, 25);
-                        const visibleRead = splitRead.slice(0, 25);
-                        
-                        const allVisibleSelected = 
-                          (visibleUnread.length === 0 || visibleUnread.every(e => next.has(e.id))) &&
-                          (visibleRead.length === 0 || visibleRead.every(e => next.has(e.id)));
-                        
-                        if (allVisibleSelected) {
-                          // Deselect all visible
-                          visibleUnread.forEach(email => next.delete(email.id));
-                          visibleRead.forEach(email => next.delete(email.id));
-                        } else {
-                          // Select all visible
-                          visibleUnread.forEach(email => next.add(email.id));
-                          visibleRead.forEach(email => next.add(email.id));
-                        }
-                      } else {
-                        // Regular view, select/deselect visible page
-                        if (allVisibleSelected) {
-                          visibleEmails.forEach(email => next.delete(email.id));
-                        } else {
-                          visibleEmails.forEach(email => next.add(email.id));
-                        }
-                      }
-                      return next;
-                    });
-                  }}
-                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  readOnly
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 pointer-events-none"
                 />
-                <span className="ml-1 text-xs text-gray-600">
-                  {selectedEmails.size > 0 ? `${selectedEmails.size} selected` : 'All'}
-                </span>
-              </label>
+                <span>Select All</span>
+              </button>
               
               <button
                 onClick={handleDeleteSelected}
                 disabled={selectedEmails.size === 0}
-                className="group flex items-center space-x-1 px-2 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors relative"
+                className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
-                <Trash2 size={14} />
-                <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
-                  Delete selected emails
-                </div>
+                <Trash2 size={16} />
+                <span>Delete</span>
               </button>
               
               <button
-                onClick={handleMarkReadSelected}
+                onClick={() => {
+                  // Get selected email objects to check their read status
+                  const allEmails = isSplitInbox 
+                    ? [...splitUnread, ...splitRead]
+                    : (paginatedEmails || []);
+                  const selectedEmailsList = allEmails.filter(e => selectedEmails.has(e.id));
+                  
+                  // If any selected email is unread, mark all as read; otherwise mark as unread
+                  const hasUnread = selectedEmailsList.some(e => !e.isRead);
+                  
+                  if (hasUnread) {
+                    handleMarkReadSelected();
+                  } else {
+                    handleMarkUnreadSelected();
+                  }
+                }}
                 disabled={selectedEmails.size === 0}
-                className="group flex items-center space-x-1 px-2 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors relative"
+                className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
-                <MailOpen size={14} />
-                <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
-                  Mark selected as read
-                </div>
-              </button>
-              
-              <button
-                onClick={handleMarkUnreadSelected}
-                disabled={selectedEmails.size === 0}
-                className="group flex items-center space-x-1 px-2 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors relative"
-              >
-                <Mail size={14} />
-                <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
-                  Mark selected as unread
-                </div>
+                {(() => {
+                  // Get selected email objects to determine icon
+                  const allEmails = isSplitInbox 
+                    ? [...splitUnread, ...splitRead]
+                    : (paginatedEmails || []);
+                  const selectedEmailsList = allEmails.filter(e => selectedEmails.has(e.id));
+                  const hasUnread = selectedEmailsList.some(e => !e.isRead);
+                  
+                  return (
+                    <>
+                      {hasUnread ? <MailOpen size={16} /> : <Mail size={16} />}
+                      <span>{hasUnread ? 'Mark as Read' : 'Mark as Unread'}</span>
+                    </>
+                  );
+                })()}
               </button>
               
               <button
                 onClick={handleRefreshCurrentTab}
                 disabled={refreshing || refreshCooldown}
-                className="group flex items-center px-2 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors relative"
+                className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
-                <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
-                <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
-                  {refreshCooldown && !refreshing ? 'Please wait...' : 'Refresh emails'}
-                </div>
+                <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+                <span>Refresh</span>
               </button>
             </div>
             

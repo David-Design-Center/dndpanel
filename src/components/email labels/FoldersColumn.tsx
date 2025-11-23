@@ -19,8 +19,8 @@ import {
   SquarePen,
   Flag,
   Star,
-  MailPlus,
-  RefreshCw
+  RefreshCw,
+  Pen
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -86,7 +86,7 @@ interface FoldersColumnProps {
 }
 
 function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) {
-  const { labels, loadingLabels, deleteLabel, addLabel, isAddingLabel, systemCounts, recentCounts, refreshLabels } = useLabel();
+  const { labels, loadingLabels, deleteLabel, addLabel, isAddingLabel, systemCounts, recentCounts, refreshLabels, labelsLastUpdated } = useLabel();
   // recentCounts.inboxUnreadToday -> unread INBOX messages received since today's New York midnight
   // recentCounts.draftTotal -> total number of drafts (exact)
   const { onSystemFolderFilter } = useLayoutState();
@@ -104,6 +104,24 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
   const [selectedSystemFolder, setSelectedSystemFolder] = useState<string | null>('inbox');
   
   const navigate = useNavigate();
+  
+  // Format the last updated timestamp
+  const formatLastUpdated = useCallback((timestamp: number | null) => {
+    if (!timestamp) return 'Never';
+    
+    const now = Date.now();
+    const diff = now - timestamp;
+    const seconds = Math.floor(diff / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    
+    if (seconds < 60) return 'Just now';
+    if (minutes < 60) return `${minutes}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    
+    const date = new Date(timestamp);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }, []);
 
   // Build hierarchical tree structure from flat labels
   const labelTree = useMemo(() => {
@@ -760,14 +778,14 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
                 <button
                   onClick={handleCompose}
                   disabled={!isGmailSignedIn}
-                  className={`w-full flex items-center justify-center space-x-2 px-3 py-2.5 rounded-full font-medium text-sm transition-colors ${
+                  className={`w-full flex items-center border border-black/30 justify-center space-x-2 px-3 py-2.5 rounded-full font-medium text-sm transition-colors ${
                     isGmailSignedIn 
-                      ? 'bg-gray-800 text-white hover:bg-gray-900' 
-                      : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                      ? 'bg-white text-black hover:bg-gray-100' 
+                      : 'bg-white text-gray-500 cursor-not-allowed'
                   }`}
                 >
-                  <MailPlus size={16} />
-                  <span>Write Email</span>
+                  <Pen size={16} />
+                  <span>Compose</span>
                 </button>
               </div>
 
@@ -855,15 +873,26 @@ function FoldersColumn({ isExpanded, onToggle, onCompose }: FoldersColumnProps) 
                     </button>
                   ) : null}
                   
-                  {/* Refresh Labels Button */}
-                  <button
-                    onClick={handleRefreshLabels}
-                    disabled={isRefreshing || loadingLabels}
-                    className="absolute right-9 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded p-0.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Refresh labels"
-                  >
-                    <RefreshCw size={14} className={`text-gray-600 ${isRefreshing ? 'animate-spin' : ''}`} />
-                  </button>
+                  {/* Refresh Labels Button with Last Updated Tooltip */}
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={handleRefreshLabels}
+                          disabled={isRefreshing || loadingLabels}
+                          className="absolute right-9 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded p-0.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <RefreshCw size={14} className={`text-gray-600 ${isRefreshing ? 'animate-spin' : ''}`} />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="text-xs">
+                        <p>Refresh labels</p>
+                        <p className="text-gray-400 mt-1">
+                          Last updated: {formatLastUpdated(labelsLastUpdated)}
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                   
                   {/* Create Label Dialog */}
                   <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>

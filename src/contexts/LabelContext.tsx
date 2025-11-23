@@ -37,6 +37,7 @@ interface LabelContextType {
   };
   // Simplified: no approximate fallback needed; value is direct Gmail estimate for unread since date boundary
   refreshRecentCounts: (opts?: { force?: boolean }) => Promise<void>;
+  labelsLastUpdated: number | null; // Timestamp of when labels were last fetched
 }
 
 const LabelContext = createContext<LabelContextType | undefined>(undefined);
@@ -73,8 +74,10 @@ const fetchInboxUnreadSinceCutoff = async (_cutoffSeconds: number): Promise<{ co
   let pageToken: string | undefined;
   let total = 0;
   let overLimit = false;
-  // Match the email list query exactly - no time filter, just unread inbox without user labels
-  const query = `label:INBOX -has:userlabels is:unread`;
+  // CRITICAL FIX: Only count messages in PRIMARY inbox (excluding categories and user labels)
+  // -category:* excludes Promotions, Social, Updates, Forums
+  // -has:userlabels excludes custom user labels/folders
+  const query = `in:inbox -category:* -has:userlabels is:unread`;
 
   for (let page = 0; page < MAX_UNREAD_PAGES; page++) {
     const response = await window.gapi.client.gmail.users.messages.list({
@@ -129,6 +132,7 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
   const [labels, setLabels] = useState<GmailLabel[]>([]);
   const [loadingLabels, setLoadingLabels] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [labelsLastUpdated, setLabelsLastUpdated] = useState<number | null>(null);
   
   // Cache to prevent duplicate API calls when switching tabs/pages
   const labelsCache = useRef<{[profileId: string]: { labels: GmailLabel[], timestamp: number }}>({});
@@ -545,6 +549,7 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       console.log('📦 Using cached labels for profile:', currentProfile.name);
       startProgress();
       setLabels(cached.labels);
+      setLabelsLastUpdated(cached.timestamp);
       hydrateUserLabelCounts(cached.labels, cacheKey);
       finishProgress('success');
       return;
@@ -586,10 +591,14 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       setLabels(gmailLabels);
       
       // Cache the result with the same key format
+      const now = Date.now();
       labelsCache.current[cacheKey] = {
         labels: gmailLabels,
-        timestamp: Date.now()
+        timestamp: now
       };
+      
+      // Update last updated timestamp
+      setLabelsLastUpdated(now);
 
       hydrateUserLabelCounts(gmailLabels, cacheKey);
       finishProgress('success');
@@ -844,7 +853,8 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     deleteLabelError,
     systemCounts, // ✅ Export system counts for badges
     recentCounts, // ✅ Export recent dynamic counts
-    refreshRecentCounts // ✅ Method to refresh recent counts
+    refreshRecentCounts, // ✅ Method to refresh recent counts
+    labelsLastUpdated // ✅ Timestamp of when labels were last fetched
   };
 
   return <LabelContext.Provider value={value}>{children}</LabelContext.Provider>;

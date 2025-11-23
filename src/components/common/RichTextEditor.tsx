@@ -724,7 +724,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
 
   return (
     <>
-      <div className={cn("overflow-hidden rich-text-editor", className)}>
+      <div className={cn("overflow-hidden rich-text-editor h-full flex flex-col", className)}>
       {/* Toolbar */}
       {compact ? (
         // Compact toolbar - single row, minimal buttons
@@ -1196,12 +1196,12 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
         onPaste={handlePaste}
         onKeyDown={handleKeyDown}
         className={cn(
-          "p-4 focus:outline-none",
+          "p-4 focus:outline-none flex-1 overflow-y-auto",
           "prose prose-sm max-w-none",
           "text-gray-900 leading-relaxed",
           disabled && "opacity-50 cursor-not-allowed"
         )}
-        style={{ minHeight, fontSize: '12px' }}
+        style={{ fontSize: '12px' }}
         suppressContentEditableWarning={true}
       />
       

@@ -178,7 +178,7 @@ function Settings() {
             </div>
             <div className="bg-white p-3 rounded-b-lg shadow-md">
               <h3 className="font-bold text-base text-gray-800">Out of Office</h3>
-              <p className="text-xs text-gray-600">Set up automatic email responses when you're away</p>
+              <p className="text-xs text-gray-600">Set up automatic responses when you're away</p>
             </div>
           </div>
           

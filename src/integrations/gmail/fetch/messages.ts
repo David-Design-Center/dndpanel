@@ -294,6 +294,15 @@ export const fetchGmailMessages = async (
 
         const attachments: NonNullable<Email['attachments']> = [];
 
+        // Check if any message in the thread is a draft
+        const hasDraftInThread = messages.some((msg: any) => 
+          msg.labelIds?.includes('DRAFT')
+        );
+        
+        if (hasDraftInThread) {
+          console.log(`📧 Thread ${thread.id} has draft - setting hasDraftInThread flag`);
+        }
+
         emails.push({
           id: latestMessage.id,
           from: { name: fromName, email: fromEmail },
@@ -307,7 +316,8 @@ export const fetchGmailMessages = async (
           date: format(new Date(dateHeader), "yyyy-MM-dd'T'HH:mm:ss"),
           labelIds: latestMessage.labelIds || [],
           attachments: attachments.length > 0 ? attachments : undefined,
-          threadId: thread.id
+          threadId: thread.id,
+          hasDraftInThread: hasDraftInThread
         } as Email);
 
         await new Promise(resolve => setTimeout(resolve, 25));
