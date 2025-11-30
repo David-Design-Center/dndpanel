@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Tag, Filter, ChevronRight, Search, Settings, Plus } from 'lucide-react';
+import { Tag, Filter, ChevronRight, Search, Settings, Plus, FolderInput } from 'lucide-react';
 import { useLabel } from '@/contexts/LabelContext';
 import { useNavigate } from 'react-router-dom';
 import { filterAndPrepareLabels, hasExactLabelMatch } from '../utils/labelFiltering';
@@ -164,8 +164,8 @@ export function EmailItemContextMenu({
           onMouseLeave={handleHideLabelSubmenu}
         >
           <div className="flex items-center">
-            <Tag size={16} className="mr-3 text-gray-500" />
-            Add to Folder
+            <FolderInput size={16} className="mr-3 text-gray-500" />
+            Move
           </div>
           <ChevronRight size={14} className="text-gray-400" />
         </button>

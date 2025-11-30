@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Reply, ReplyAll, Forward, Trash, MoreVertical, Star, Paperclip, Download, ChevronLeft, Mail, MailOpen, Flag, MailWarning, Filter, Tag, Search, ChevronRight, Settings, Plus } from 'lucide-react';
+import { X, Reply, ReplyAll, Forward, Trash, MoreVertical, Star, Paperclip, Download, ChevronDown, Mail, MailOpen, Flag, MailWarning, Filter, Search, ChevronRight, Settings, Plus, Maximize2, Minimize2, FolderInput } from 'lucide-react';
 import { parseISO, format, formatDistanceToNow } from 'date-fns';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
@@ -29,6 +29,8 @@ import { replaceCidReferences } from '../../integrations/gmail/fetch/messages';
 import { Email } from '../../types';
 import { useLayoutState } from '../../contexts/LayoutStateContext';
 import { useLabel } from '../../contexts/LabelContext';
+import MoveToFolderDialog from './MoveToFolderDialog';
+import { useProfile } from '../../contexts/ProfileContext';
 import { cleanEmailAddress } from '../../utils/emailFormatting';
 import { toast as sonnerToast } from 'sonner';
 import RichTextEditor from '../common/RichTextEditor';
@@ -41,7 +43,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
 
@@ -120,6 +121,8 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set()); // Track which messages have images loaded
   const [forwardingMessage, setForwardingMessage] = useState<Email | null>(null); // Track which message is being forwarded
   const [forwardType, setForwardType] = useState<'single' | 'all'>('single'); // Track forward type
+  const [isReplyExpanded, setIsReplyExpanded] = useState(false); // Reply composer fullscreen mode
+  const [showMetadata, setShowMetadata] = useState(false); // Email metadata dropdown
   
   // 🎯 CONSOLIDATED DRAFT STATE - Single source of truth prevents race conditions
   const [draftState, setDraftState] = useState({
@@ -195,12 +198,10 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   
   // Three-dot menu state (same as context menu in EmailListItem)
   const [showMoreMenu, setShowMoreMenu] = useState(false);
-  const [showLabelSubmenu, setShowLabelSubmenu] = useState(false);
   const [showFilterSubmenu, setShowFilterSubmenu] = useState(false);
   const [showCreateFilterModal, setShowCreateFilterModal] = useState(false);
   const [showCreateLabelModal, setShowCreateLabelModal] = useState(false);
-  const [isApplyingLabel, setIsApplyingLabel] = useState<string | null>(null);
-  const [labelSearchQuery, setLabelSearchQuery] = useState('');
+  const [showMoveDialog, setShowMoveDialog] = useState(false);
   const [filterLabelQuery, setFilterLabelQuery] = useState('');
   const [selectedFilterLabel, setSelectedFilterLabel] = useState('');
   const [newLabelName, setNewLabelName] = useState('');
@@ -208,14 +209,10 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const [parentLabel, setParentLabel] = useState('');
   const [autoFilterFuture, setAutoFilterFuture] = useState(false);
   
-  const hideLabelTimerRef = useRef<number | null>(null);
   const hideFilterTimerRef = useRef<number | null>(null);
-  const labelButtonRef = useRef<HTMLButtonElement>(null);
   const filterButtonRef = useRef<HTMLButtonElement>(null);
   const dropdownContentRef = useRef<HTMLDivElement>(null);
-  const labelSubmenuRef = useRef<HTMLDivElement>(null);
   const filterSubmenuRef = useRef<HTMLDivElement>(null);
-  const labelSearchRef = useRef<HTMLInputElement>(null);
   const filterModalRef = useRef<HTMLDivElement>(null);
   const createLabelModalRef = useRef<HTMLDivElement>(null);
   const replyComposerRef = useRef<HTMLDivElement>(null); // Add ref for reply composer
@@ -227,6 +224,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
   const { clearSelection } = useLayoutState();
   const { labels, addLabel } = useLabel(); // Get labels from context
+  const { currentProfile } = useProfile(); // Get current profile for From field
   const navigate = useNavigate();
   const { toast } = useToast();
   const [searchParams] = useSearchParams();
@@ -407,6 +405,8 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   // Don't reset composer state here - let fetchEmailAndThread() decide based on drafts
   useEffect(() => {
     console.log('🔄 Component effect triggered - emailId:', emailId, 'draftIdParam:', draftIdParam, 'showReplyComposer:', showReplyComposer);
+    // Reset metadata dropdown when switching emails
+    setShowMetadata(false);
     if (emailId) {
       fetchEmailAndThread();
     }
@@ -703,6 +703,61 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     }
   };
 
+  const handleMoveToFolder = async (labelId: string, labelName: string) => {
+    if (!email) return;
+    
+    const isMovingToInbox = labelId === 'INBOX';
+    console.log(`📁 Moving email ${email.id} to ${isMovingToInbox ? 'Inbox' : `folder: ${labelName}`}`);
+    
+    try {
+      // Get current user labels to remove (exclude system labels)
+      const systemLabels = ['INBOX', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'STARRED', 'IMPORTANT', 'UNREAD', 'CATEGORY_PERSONAL', 'CATEGORY_SOCIAL', 'CATEGORY_PROMOTIONS', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS'];
+      const currentUserLabels = (email.labelIds || []).filter(id => 
+        !systemLabels.includes(id) && !id.startsWith('CATEGORY_')
+      );
+      
+      let labelsToAdd: string[];
+      let labelsToRemove: string[];
+      
+      if (isMovingToInbox) {
+        // Moving to Inbox: add INBOX, remove all user labels
+        labelsToAdd = ['INBOX'];
+        labelsToRemove = currentUserLabels;
+        console.log(`📥 Moving to Inbox. Removing user labels:`, labelsToRemove);
+      } else {
+        // Moving to folder: add the folder label, remove INBOX + current user labels
+        labelsToAdd = [labelId];
+        labelsToRemove = [...new Set([...currentUserLabels, 'INBOX'])];
+        console.log(`📁 Adding label: ${labelId}, Removing labels:`, labelsToRemove);
+      }
+      
+      // Apply the new label and remove old labels
+      await applyLabelsToEmail(email.id, labelsToAdd, labelsToRemove);
+      
+      // Navigate away
+      clearSelection();
+      navigate('/inbox');
+      
+      // Trigger inbox refetch to update the list (don't use onEmailDelete - that deletes the email!)
+      window.dispatchEvent(new CustomEvent('inbox-refetch-required'));
+      
+      // Trigger label counts refresh
+      window.dispatchEvent(new CustomEvent('labels-need-refresh'));
+      
+      toast({ 
+        title: isMovingToInbox 
+          ? 'Moved to Inbox' 
+          : `Moved to ${labelName}` 
+      });
+    } catch (err) {
+      console.error('Failed to move email:', err);
+      toast({ 
+        title: 'Failed to move email',
+        variant: 'destructive'
+      });
+    }
+  };
+
   const handleMarkAsUnread = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (!email) return;
@@ -909,50 +964,16 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     }
   };
 
-  const openCreateLabelModal = () => {
-    setNewLabelName(labelSearchQuery.trim());
-    setNestUnder(false);
-    setParentLabel('');
-    setShowCreateLabelModal(true);
-  };
-
   const handleCreateLabelSubmit = async () => {
     const base = newLabelName.trim();
     if (!base) return;
     const fullName = nestUnder && parentLabel ? `${parentLabel}/${base}` : base;
     try {
       await addLabel(fullName);
-      // Close modal and keep submenu open, set search to created label
       setShowCreateLabelModal(false);
-      setLabelSearchQuery(fullName);
-      setShowLabelSubmenu(true);
-      // focus search input to show the result
-      setTimeout(() => labelSearchRef.current?.focus(), 0);
       sonnerToast.success(`Label "${fullName}" created`);
     } catch (err) {
       sonnerToast.error('Failed to create label');
-    }
-  };
-
-  const handleApplyLabel = async (labelId: string) => {
-    if (!email) return;
-    setIsApplyingLabel(labelId);
-    try {
-      await applyLabelsToEmail(email.id, [labelId]);
-      setShowMoreMenu(false);
-      setShowLabelSubmenu(false);
-      setLabelSearchQuery('');
-      toast({ title: 'Label applied successfully' });
-      await fetchEmailAndThread();
-    } catch (error) {
-      console.error('Error applying label:', error);
-      toast({
-        title: 'Failed to apply label',
-        description: 'Please try again',
-        variant: 'destructive'
-      });
-    } finally {
-      setIsApplyingLabel(null);
     }
   };
 
@@ -994,41 +1015,8 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     setShowMoreMenu(true);
   };
 
-  const handleShowLabelSubmenu = () => {
-    if (hideLabelTimerRef.current) {
-      clearTimeout(hideLabelTimerRef.current);
-      hideLabelTimerRef.current = null;
-    }
-    setShowLabelSubmenu(true);
-    setShowMoreMenu(true); // Keep dropdown open
-    requestAnimationFrame(() => {
-      labelSearchRef.current?.focus();
-    });
-  };
-
-  const handleHideLabelSubmenu = () => {
-    if (hideLabelTimerRef.current) return;
-    hideLabelTimerRef.current = window.setTimeout(() => {
-      setShowLabelSubmenu(false);
-      setLabelSearchQuery('');
-      hideLabelTimerRef.current = null;
-    }, 300); // Increased to 300ms for more time
-  };
-
-  const cancelHideLabelSubmenu = () => {
-    if (hideLabelTimerRef.current) {
-      clearTimeout(hideLabelTimerRef.current);
-      hideLabelTimerRef.current = null;
-    }
-    setShowLabelSubmenu(true);
-    setShowMoreMenu(true); // Keep dropdown open
-  };
-
   useEffect(() => {
     return () => {
-      if (hideLabelTimerRef.current) {
-        clearTimeout(hideLabelTimerRef.current);
-      }
       if (hideFilterTimerRef.current) {
         clearTimeout(hideFilterTimerRef.current);
       }
@@ -1044,16 +1032,12 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       
       // Check if click is inside any of the menus or submenus
       const isInsideDropdown = dropdownContentRef.current?.contains(target);
-      const isInsideLabelSubmenu = labelSubmenuRef.current?.contains(target);
       const isInsideFilterSubmenu = filterSubmenuRef.current?.contains(target);
-      const isInsideLabelButton = labelButtonRef.current?.contains(target);
       const isInsideFilterButton = filterButtonRef.current?.contains(target);
       
       // Only close if click is outside all menus
-      if (!isInsideDropdown && !isInsideLabelSubmenu && !isInsideFilterSubmenu && 
-          !isInsideLabelButton && !isInsideFilterButton) {
+      if (!isInsideDropdown && !isInsideFilterSubmenu && !isInsideFilterButton) {
         setShowMoreMenu(false);
-        setShowLabelSubmenu(false);
         setShowFilterSubmenu(false);
       }
       
@@ -1107,46 +1091,6 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     .filter(label => label.displayName.length > 0)
     .filter(label => label.displayName.toLowerCase().includes(filterLabelQuery.toLowerCase()))
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
-
-  // Filter labels for label submenu (same as EmailListItem's filteredLabels)
-  const filteredLabels = labels
-    .filter(label => {
-      const name = (label.name || '').toLowerCase();
-      return name !== 'sent' &&
-             name !== 'drafts' &&
-             name !== 'draft' &&
-             name !== 'spam' &&
-             name !== 'trash' &&
-             name !== 'important' &&
-             name !== 'starred' &&
-             name !== 'unread' &&
-             name !== 'yellow_star' &&
-             name !== 'deleted messages' &&
-             name !== 'chat' &&
-             name !== 'blocked' &&
-             name !== '[imap]' &&
-             name !== 'junk e-mail' &&
-             name !== 'notes' &&
-             !name.startsWith('category_') &&
-             !name.startsWith('label_') &&
-             !name.startsWith('[imap');
-    })
-    .filter(label => (label.name || '').toLowerCase() !== 'inbox')
-    .map(label => {
-      const rawName = label.name || '';
-      const displayName = rawName.startsWith('INBOX/') ? rawName.substring(6) : rawName;
-      return { ...label, displayName } as typeof label & { displayName: string };
-    })
-    .filter(label => label.displayName.length > 0)
-    .filter(label => label.displayName.toLowerCase().includes(labelSearchQuery.toLowerCase()))
-    .sort((a, b) => a.displayName.localeCompare(b.displayName));
-
-  // Check if there's an exact match for the label search query
-  const hasExactLabelMatch = (() => {
-    const q = labelSearchQuery.trim().toLowerCase();
-    if (!q) return false;
-    return filteredLabels.some(l => (l as any).displayName.toLowerCase() === q);
-  })();
 
   // Forward handlers
   const handleForwardSingle = (message: Email) => {
@@ -1763,7 +1707,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
             className="p-2 hover:bg-gray-100 rounded-full transition-colors"
             title="Back to inbox"
           >
-            <ChevronLeft size={20} className="text-gray-700" />
+            <X size={20} className="text-gray-700" />
           </button>
           
           <div className="w-px h-6 bg-gray-300 mx-2" />
@@ -1793,6 +1737,13 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           >
             <MailWarning size={18} className="text-gray-700" />
           </button>
+          <button
+            onClick={() => setShowMoveDialog(true)}
+            className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+            title="Move to folder"
+          >
+            <FolderInput size={18} className="text-gray-700" />
+          </button>
           
           <div className="w-px h-6 bg-gray-300 mx-2" />
           
@@ -1821,15 +1772,16 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
           {/* More Options Dropdown - Now matching EmailListItem structure */}
           <DropdownMenu 
-            open={showMoreMenu || showLabelSubmenu || showFilterSubmenu} 
+            open={showMoreMenu || showFilterSubmenu} 
             onOpenChange={(open) => {
               // Don't close if submenus are open
-              if (!open && !showLabelSubmenu && !showFilterSubmenu) {
+              if (!open && !showFilterSubmenu) {
                 setShowMoreMenu(false);
               } else if (open) {
                 setShowMoreMenu(true);
               }
             }}
+            modal={false}
           >
             <DropdownMenuTrigger asChild>
               <button
@@ -1845,137 +1797,29 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
               className="w-56 p-0"
               onPointerDownOutside={(e) => {
                 // Prevent closing when clicking on submenus
-                if (showLabelSubmenu || showFilterSubmenu) {
+                if (showFilterSubmenu) {
                   e.preventDefault();
                 }
               }}
               onInteractOutside={(e) => {
                 // Prevent closing when interacting with submenus
-                if (showLabelSubmenu || showFilterSubmenu) {
+                if (showFilterSubmenu) {
                   e.preventDefault();
                 }
               }}
               onEscapeKeyDown={(e) => {
                 // Prevent closing on Escape if submenus are open
-                if (showLabelSubmenu || showFilterSubmenu) {
+                if (showFilterSubmenu) {
                   e.preventDefault();
                 }
               }}
               onFocusOutside={(e) => {
                 // Prevent closing when focus moves to submenus
-                if (showLabelSubmenu || showFilterSubmenu) {
+                if (showFilterSubmenu) {
                   e.preventDefault();
                 }
               }}
             >
-              {/* Add to Folder with Submenu */}
-              <div 
-                className="relative"
-                onMouseEnter={handleShowLabelSubmenu}
-                onMouseLeave={handleHideLabelSubmenu}
-              >
-                <button
-                  ref={labelButtonRef}
-                  className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center justify-between"
-                >
-                  <div className="flex items-center">
-                    <Tag size={16} className="mr-3 text-gray-500" />
-                    Add to Folder
-                  </div>
-                  <ChevronRight size={14} className="text-gray-400" />
-                </button>
-                {/* Label Submenu */}
-                {showLabelSubmenu && dropdownContentRef.current && createPortal(
-                  <div
-                    ref={labelSubmenuRef}
-                    className="fixed bg-white border border-gray-200 rounded-lg shadow-lg w-80 h-80 flex flex-col overflow-hidden z-[10001]"
-                    style={{
-                      right: `${window.innerWidth - dropdownContentRef.current.getBoundingClientRect().left + 4}px`,
-                      top: `${dropdownContentRef.current.getBoundingClientRect().top}px`,
-                      pointerEvents: 'auto',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.stopPropagation();
-                      cancelHideLabelSubmenu();
-                      console.log('Mouse entered submenu');
-                    }}
-                    onMouseLeave={(e) => {
-                      e.stopPropagation();
-                      handleHideLabelSubmenu();
-                      console.log('Mouse left submenu');
-                    }}
-                    onMouseMove={(e) => {
-                      e.stopPropagation();
-                      cancelHideLabelSubmenu();
-                    }}
-                  >
-                    {/* Hover bridge to eliminate dead zone between menu and submenu */}
-                    <div
-                      className="absolute top-0 left-full w-20 h-full"
-                      style={{ pointerEvents: 'auto' }}
-                      onMouseEnter={(e) => {
-                        e.stopPropagation();
-                        cancelHideLabelSubmenu();
-                        console.log('Mouse entered bridge');
-                      }}
-                    />
-                    {/* Search Bar */}
-                    <div className="p-2 border-b border-gray-100">
-                      <div className="relative">
-                        <Search size={14} className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                        <input
-                          ref={labelSearchRef}
-                          type="text"
-                          placeholder="Search labels..."
-                          value={labelSearchQuery}
-                          onChange={(e) => setLabelSearchQuery(e.target.value)}
-                          className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                      </div>
-                    </div>
-                    {/* Scrollable Labels List */}
-                    <div className="flex-1 overflow-y-auto overscroll-contain pr-1" onWheelCapture={(e) => e.stopPropagation()}>
-                      {filteredLabels.length > 0 ? (
-                        filteredLabels.map(label => (
-                          <button
-                            key={label.id}
-                            className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50 flex items-center transition-colors"
-                            onClick={() => handleApplyLabel(label.id)}
-                            disabled={isApplyingLabel === label.id}
-                          >
-                            <div className="w-2 h-2 rounded-full mr-2 bg-blue-500 flex-shrink-0"></div>
-                            <span className="truncate">
-                              {isApplyingLabel === label.id ? 'Applying...' : (label as any).displayName}
-                            </span>
-                          </button>
-                        ))
-                      ) : labelSearchQuery ? (
-                        <div className="px-3 py-2 text-xs text-gray-500">
-                          No labels found for "{labelSearchQuery}"
-                        </div>
-                      ) : (
-                        <div className="px-3 py-2 text-xs text-gray-500">No labels available</div>
-                      )}
-                      {/* Create new label CTA */}
-                      {labelSearchQuery.trim() && !hasExactLabelMatch && (
-                        <div className="sticky bottom-0 bg-white border-t border-gray-100 p-2 mt-2">
-                          <button
-                            className="w-full text-left text-xs text-blue-600 hover:text-blue-700 font-medium px-1 py-1 rounded hover:bg-blue-50"
-                            onClick={(e) => { e.stopPropagation(); openCreateLabelModal(); }}
-                          >
-                            Create label "{labelSearchQuery.trim()}"
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>,
-                  document.body
-                )}
-              </div>
-
-              <DropdownMenuSeparator />
-
               {/* Filter Menu with Submenu */}
               <div 
                 className="relative"
@@ -1999,7 +1843,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                     className="fixed bg-white border border-gray-200 rounded-lg shadow-lg min-w-56 max-h-80 overflow-hidden z-[10001]"
                     style={{
                       right: `${window.innerWidth - dropdownContentRef.current.getBoundingClientRect().left + 4}px`,
-                      top: `${dropdownContentRef.current.getBoundingClientRect().top + (labelButtonRef.current ? labelButtonRef.current.offsetHeight : 0) + 1}px`,
+                      top: `${dropdownContentRef.current.getBoundingClientRect().top}px`,
                       pointerEvents: 'auto',
                     }}
                     onMouseEnter={(e) => {
@@ -2069,8 +1913,17 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                 <span className="font-medium text-sm text-gray-900">{cleanDisplayName(latestMessage.from.name)}</span>
                 <span className="text-xs text-gray-500">{cleanEmailAddress(latestMessage.from.email)}</span>
               </div>
-              <div className="flex items-center gap-1 text-xs text-gray-600">
-                <span>to me</span>
+              <div className="relative">
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowMetadata(!showMetadata);
+                  }}
+                  className="flex items-center gap-1 text-xs text-gray-600 hover:text-gray-800"
+                >
+                  <span>to me</span>
+                  <ChevronDown size={12} className={`transition-transform ${showMetadata ? 'rotate-180' : ''}`} />
+                </button>
               </div>
             </div>
           </div>
@@ -2081,6 +1934,39 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
             <div className="text-gray-500">({relative})</div>
           </div>
         </div>
+        
+        {/* Metadata Dropdown - Rendered outside of overflow containers */}
+        {showMetadata && (
+          <div 
+            className="mx-4 mb-2 bg-white border border-gray-200 rounded-lg shadow-lg p-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="space-y-1.5 text-xs">
+              <div className="flex">
+                <span className="text-gray-500 w-16">from:</span>
+                <span className="text-gray-800 font-medium">{latestMessage.from.name} &lt;{latestMessage.from.email}&gt;</span>
+              </div>
+              <div className="flex">
+                <span className="text-gray-500 w-16">to:</span>
+                <span className="text-gray-800">{latestMessage.to?.map(t => t.email).join(', ') || 'me'}</span>
+              </div>
+              <div className="flex">
+                <span className="text-gray-500 w-16">date:</span>
+                <span className="text-gray-800">{format(parseISO(latestMessage.date), 'MMM d, yyyy, h:mm a')}</span>
+              </div>
+              <div className="flex">
+                <span className="text-gray-500 w-16">subject:</span>
+                <span className="text-gray-800">{latestMessage.subject || '(no subject)'}</span>
+              </div>
+              {latestMessage.cc && latestMessage.cc.length > 0 && (
+                <div className="flex">
+                  <span className="text-gray-500 w-16">cc:</span>
+                  <span className="text-gray-800">{latestMessage.cc.map(c => c.email).join(', ')}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Email Body - Scrollable */}
@@ -2431,7 +2317,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         </div>
         
         {/* Reply Composer - Clean, minimal design */}
-        {showReplyComposer && (
+        {showReplyComposer && !isReplyExpanded && (
           <div ref={replyComposerRef} className="mt-6 mb-20 px-4">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-3">
@@ -2465,6 +2351,40 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                   </span>
                 )}
               </div>
+              <button
+                type="button"
+                onClick={() => setIsReplyExpanded(true)}
+                className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded transition-colors"
+                title="Expand"
+              >
+                <Maximize2 size={16} />
+              </button>
+            </div>
+
+            {/* Email metadata fields */}
+            <div className="space-y-1 mb-3 text-xs border border-gray-200 rounded-lg p-3 bg-gray-50">
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500 w-12">From:</span>
+                <span className="text-gray-800">{currentProfile?.userEmail || 'me'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500 w-12">To:</span>
+                <span className="text-gray-800">
+                  {replyMode === 'forward' 
+                    ? (forwardTo || <span className="text-gray-400 italic">Enter recipient...</span>)
+                    : (latestMessage?.from?.email || email?.from?.email || 'recipient')}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500 w-12">Date:</span>
+                <span className="text-gray-800">{format(new Date(), 'MMM d, yyyy, h:mm a')}</span>
+              </div>
+              {replyMode === 'replyAll' && latestMessage?.cc && latestMessage.cc.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-gray-500 w-12">CC:</span>
+                  <span className="text-gray-800 truncate">{latestMessage.cc.map(c => c.email).join(', ')}</span>
+                </div>
+              )}
             </div>
 
             {replyMode === 'forward' && (
@@ -2477,13 +2397,13 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                     forwardToRef.current = e.target.value; // Update ref
                     handleDraftChange();
                   }}
-                  placeholder="To:"
+                  placeholder="Forward to..."
                   className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
             )}
 
-            <div className="border border-gray-300 rounded overflow-hidden mb-3" style={{ minHeight: '150px' }}>
+            <div className="border border-gray-300 rounded overflow-hidden mb-3" style={{ minHeight: '350px' }}>
               <RichTextEditor
                 value={replyContent}
                 onChange={(content) => {
@@ -2492,6 +2412,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                   handleDraftChange();
                 }}
                 placeholder="Type your message..."
+                minHeight="400px"
               />
             </div>
 
@@ -2582,6 +2503,153 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
               )}
             </div>
           </div>
+        )}
+
+        {/* Fullscreen Reply Composer */}
+        {showReplyComposer && isReplyExpanded && createPortal(
+          <div className="fixed inset-0 z-[9999] bg-black/50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-lg shadow-2xl w-full h-full flex flex-col transition-all duration-300 ease-in-out">
+              {/* Header */}
+              <div className="px-4 py-3 bg-gray-100 border-b border-gray-200 flex items-center justify-between flex-shrink-0 rounded-t-lg">
+                <div className="flex items-center gap-3">
+                  <h2 className="text-sm font-semibold text-gray-800">
+                    {replyMode === 'reply' && 'Reply'}
+                    {replyMode === 'replyAll' && 'Reply all'}
+                    {replyMode === 'forward' && 'Forward'}
+                  </h2>
+                  {draftId && !isDirty && (
+                    <span className="flex items-center gap-1.5 text-xs font-medium text-amber-700 bg-amber-50 px-2 py-1 rounded border border-amber-200">
+                      Continuing draft
+                    </span>
+                  )}
+                  {isSaving && (
+                    <span className="flex items-center gap-1.5 text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                      <span className="animate-pulse">●</span>
+                      Saving...
+                    </span>
+                  )}
+                  {!isSaving && lastSavedAt && (
+                    <span className="flex items-center gap-1.5 text-xs font-medium text-green-600 bg-green-50 px-2 py-1 rounded">
+                      <span>✓</span>
+                      Saved {format(lastSavedAt, 'h:mm a')}
+                    </span>
+                  )}
+                  {!isSaving && !lastSavedAt && isDirty && (
+                    <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded">
+                      Unsaved changes
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsReplyExpanded(false)}
+                    className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded transition-colors"
+                    title="Minimize"
+                  >
+                    <Minimize2 size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsReplyExpanded(false);
+                      setShowReplyComposer(false);
+                    }}
+                    className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded transition-colors"
+                    title="Close"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Body */}
+              <div className="flex-1 flex flex-col min-h-0 p-4">
+                {replyMode === 'forward' && (
+                  <div className="mb-3">
+                    <input
+                      type="email"
+                      value={forwardTo}
+                      onChange={(e) => {
+                        setForwardTo(e.target.value);
+                        forwardToRef.current = e.target.value;
+                        handleDraftChange();
+                      }}
+                      placeholder="Forward to..."
+                      className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+                )}
+
+                <div className="flex-1 border border-gray-300 rounded overflow-hidden">
+                  <RichTextEditor
+                    value={replyContent}
+                    onChange={(content) => {
+                      setReplyContent(content);
+                      replyContentRef.current = content;
+                      handleDraftChange();
+                    }}
+                    placeholder="Type your message..."
+                    minHeight="100%"
+                  />
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 flex items-center gap-2 flex-shrink-0 rounded-b-lg">
+                <button
+                  onClick={handleSendReply}
+                  disabled={sending || !replyContent.trim() || (replyMode === 'forward' && !forwardTo.trim())}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded text-sm font-medium transition-colors shadow-sm"
+                >
+                  {sending ? 'Sending...' : 'Send'}
+                </button>
+                <button
+                  onClick={() => {
+                    if (!isDirty) {
+                      sonnerToast.info('No changes to save');
+                      return;
+                    }
+                    saveDraft();
+                  }}
+                  disabled={isSaving || !isDirty}
+                  className="px-4 py-2 text-sm text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {isSaving ? 'Saving...' : 'Save Draft'}
+                </button>
+                {draftId && (
+                  <button
+                    onClick={async () => {
+                      if (window.confirm('Are you sure you want to discard this draft?')) {
+                        try {
+                          await deleteReplyDraft(draftId);
+                          window.dispatchEvent(new CustomEvent('email-deleted', { detail: { emailId: draftId } }));
+                          sonnerToast.success('Draft discarded');
+                          setIsReplyExpanded(false);
+                          setShowReplyComposer(false);
+                          setReplyContent('');
+                          setForwardTo('');
+                          setDraftId(null);
+                          setIsDirty(false);
+                          isDirtyRef.current = false;
+                          replyContentRef.current = '';
+                          forwardToRef.current = '';
+                          await fetchEmailAndThread();
+                        } catch (error) {
+                          console.error('Failed to discard draft:', error);
+                          sonnerToast.error('Failed to discard draft');
+                        }
+                      }
+                    }}
+                    className="px-4 py-2 text-sm text-red-600 hover:text-red-700 hover:bg-red-50 rounded transition-colors"
+                  >
+                    Discard Draft
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>,
+          document.body
         )}
       </div>
 
@@ -2835,7 +2903,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                         <SelectValue placeholder="Choose parent label..." />
                       </SelectTrigger>
                       <SelectContent className="max-h-64">
-                        {filteredLabels.map((label: any) => (
+                        {filteredFilterLabels.map((label: any) => (
                           <SelectItem key={label.id} value={label.displayName}>
                             {label.displayName}
                           </SelectItem>
@@ -2956,6 +3024,14 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         </div>,
         document.body
       )}
+      
+      {/* Move to Folder Dialog */}
+      <MoveToFolderDialog
+        open={showMoveDialog}
+        onOpenChange={setShowMoveDialog}
+        selectedCount={1}
+        onMove={handleMoveToFolder}
+      />
     </div>
   );
 }

@@ -11,9 +11,11 @@ import {
   Trash2,
   Mail,
   MailOpen,
+  FolderInput,
   MessageSquareWarning} from 'lucide-react';
 import { useCompose } from '@/contexts/ComposeContext';
 import EmailListItem from './EmailListItem';
+import MoveToFolderDialog from './MoveToFolderDialog';
 import ThreeColumnLayout from '../layout/ThreeColumnLayout';
 import { Email } from '../../types';
 import {
@@ -237,6 +239,9 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   const emailSelection = useEmailSelection({
     pageType,
     labelName,
+    labelIdParam,
+    emails,
+    allTabEmails,
     setAllTabEmails,
     setCategoryEmails,
     setEmails
@@ -252,6 +257,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     handleDeleteSelected,
     handleMarkReadSelected,
     handleMarkUnreadSelected,
+    handleMoveSelected,
     clearSelection
   } = emailSelection;
   
@@ -281,6 +287,9 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     hasAttachment: false,
     dateRange: { start: '', end: '' }
   });
+  
+  // Move to folder dialog state
+  const [showMoveDialog, setShowMoveDialog] = useState(false);
 
   // Focused/Other partitioning logic
   const calculateFocusedScore = (email: Email): number => {
@@ -409,13 +418,11 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     setPaginatedEmails([]);
     setNextPageToken(undefined);
     
-    if (labelName && (labelIdParam || effectiveLabelQuery)) {
-      // For labels, refresh label emails
-      await fetchLabelEmails(true);
-    } else {
-      // ✅ Use pagination as single source - no need for fetchAllEmailTypes
-      await loadPaginatedEmails(undefined, false); // Reload first page
-    }
+    // Clear email cache to ensure fresh data
+    clearEmailCache();
+    
+    // ✅ Use pagination for all cases (labels and inbox)
+    await loadPaginatedEmails(undefined, false); // Reload first page
     
     setRefreshing(false);
     setIsRefreshLoading(false);
@@ -440,29 +447,13 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       setPaginatedEmails([]);
       setNextPageToken(undefined);
       
-      if (labelName && (labelIdParam || effectiveLabelQuery)) {
-        // For label pages, refresh only the current label
-        console.log(`🔄 Refreshing label: ${labelName}`);
-        await fetchLabelEmails(true);
-        await loadPaginatedEmails(undefined, false); // Reload first page
-      } else if (pageType === 'inbox') {
-        // For inbox, refresh based on current tab
-        console.log(`🔄 Refreshing current tab: ${activeTab}`);
-        
-        // ✅ Always reload paginated emails for inbox (single source of truth)
-        await loadPaginatedEmails(undefined, false);
-        
-        // ✅ No need for fetchAllEmailTypes or tab-specific loads
-        // usePagination handles everything
-      } else {
-        // For other page types (sent, drafts, etc.), use pagination
-        console.log(`🔄 Refreshing page type: ${pageType}`);
-        await loadPaginatedEmails(undefined, false);
-      }
+      // ✅ Use pagination for all cases - single source of truth
+      console.log(`🔄 Refreshing: ${labelName ? `label "${labelName}"` : `tab "${activeTab}"`}`);
+      await loadPaginatedEmails(undefined, false);
       
       // Show success message
       toast.success('Refreshed successfully', {
-        description: `${labelName ? `Label "${labelName}"` : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} emails updated`,
+        description: `${labelName ? `Folder "${labelName}"` : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} emails updated`,
         duration: 3000
       });
       
@@ -660,6 +651,32 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       window.removeEventListener('email-deleted', handleDraftDeleted as any);
     };
   }, []); // No dependencies - always has fresh state via functional updates
+
+  // Handle label deletion - navigate away if viewing deleted label
+  useEffect(() => {
+    const handleLabelDeleted = (event: CustomEvent<{ labelId: string; labelName: string }>) => {
+      const { labelId, labelName: deletedLabelName } = event.detail;
+      console.log('🗑️ Label deleted event received:', labelId, deletedLabelName);
+      
+      // Check if we're currently viewing this label
+      if (labelIdParam === labelId || labelName === deletedLabelName) {
+        console.log('📍 Currently viewing deleted label, navigating to inbox...');
+        
+        // Clear the email list
+        setPaginatedEmails([]);
+        setEmails([]);
+        
+        // Navigate to inbox
+        navigate('/inbox');
+      }
+    };
+
+    window.addEventListener('label-deleted', handleLabelDeleted as any);
+
+    return () => {
+      window.removeEventListener('label-deleted', handleLabelDeleted as any);
+    };
+  }, [labelIdParam, labelName, navigate, setPaginatedEmails, setEmails]);
 
   // Pagination settings & state for toolbar chevrons
   const PAGE_SIZE = 25;
@@ -1299,7 +1316,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                     return next;
                   });
                 }}
-                className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                className="flex items-center gap-1 px-2 py-1 text-xs text-gray-700 hover:bg-gray-100 rounded transition-colors"
               >
                 <input
                   ref={selectAllCheckboxRef}
@@ -1311,7 +1328,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                     splitRead.slice(0, 25).every(e => selectedEmails.has(e.id))
                     : allVisibleSelected}
                   readOnly
-                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 pointer-events-none"
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 pointer-events-none w-3 h-3"
                 />
                 <span>Select All</span>
               </button>
@@ -1319,10 +1336,19 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
               <button
                 onClick={handleDeleteSelected}
                 disabled={selectedEmails.size === 0}
-                className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="flex items-center gap-1 px-2 py-1 text-xs text-gray-700 hover:bg-gray-100 rounded disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
-                <Trash2 size={16} />
+                <Trash2 size={12} />
                 <span>Delete</span>
+              </button>
+              
+              <button
+                onClick={() => setShowMoveDialog(true)}
+                disabled={selectedEmails.size === 0}
+                className="flex items-center gap-1 px-2 py-1 text-xs text-gray-700 hover:bg-gray-100 rounded disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                <FolderInput size={12} />
+                <span>Move</span>
               </button>
               
               <button
@@ -1343,7 +1369,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                   }
                 }}
                 disabled={selectedEmails.size === 0}
-                className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="flex items-center gap-1 px-2 py-1 text-xs text-gray-700 hover:bg-gray-100 rounded disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 {(() => {
                   // Get selected email objects to determine icon
@@ -1355,8 +1381,8 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                   
                   return (
                     <>
-                      {hasUnread ? <MailOpen size={16} /> : <Mail size={16} />}
-                      <span>{hasUnread ? 'Mark as Read' : 'Mark as Unread'}</span>
+                      {hasUnread ? <MailOpen size={12} /> : <Mail size={12} />}
+                      <span>{hasUnread ? 'Mark Read' : 'Mark Unread'}</span>
                     </>
                   );
                 })()}
@@ -1365,17 +1391,17 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
               <button
                 onClick={handleRefreshCurrentTab}
                 disabled={refreshing || refreshCooldown}
-                className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="flex items-center gap-1 px-2 py-1 text-xs text-gray-700 hover:bg-gray-100 rounded disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
-                <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+                <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
                 <span>Refresh</span>
               </button>
             </div>
             
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               
               {selectedEmails.size > 0 && (
-                <span className="text-xs text-gray-600">
+                <span className="text-[10px] text-gray-600">
                   {selectedEmails.size} selected
                 </span>
               )}
@@ -2009,6 +2035,14 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
           </DndContext>
         </div>
       </div>
+      
+      {/* Move to Folder Dialog */}
+      <MoveToFolderDialog
+        open={showMoveDialog}
+        onOpenChange={setShowMoveDialog}
+        selectedCount={selectedEmails.size}
+        onMove={handleMoveSelected}
+      />
     </ThreeColumnLayout>
   );
 }

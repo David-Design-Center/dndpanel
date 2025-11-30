@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
-import { X, Paperclip, CheckCircle, Plus, SendHorizontal } from 'lucide-react';
+import { X, Paperclip, CheckCircle, Plus, SendHorizontal, Maximize2, Minimize2 } from 'lucide-react';
 import { sendEmail, getThreadEmails, clearEmailCache, saveDraft, deleteDraft } from '../services/emailService';
 import { emailRepository } from '../services/emailRepository';
 // Customer orders (type 'Customer Order') are already included in invoices query; here we fetch supplier orders from 'orders' table
@@ -47,7 +47,7 @@ interface AttachmentItem {
 function Compose() {
   const { currentProfile } = useProfile();
   const { searchContacts, setShouldLoadContacts } = useContacts();
-  const { closeCompose, draftId: contextDraftId } = useCompose();
+  const { closeCompose, draftId: contextDraftId, isExpanded, toggleExpand } = useCompose();
   const [searchParams] = useSearchParams();
   const [toRecipients, setToRecipients] = useState<string[]>([]);
   const [toInput, setToInput] = useState('');
@@ -55,6 +55,9 @@ function Compose() {
   const [ccRecipients, setCcRecipients] = useState<string[]>([]); // Start empty, will be set in useEffect
   const [showCc, setShowCc] = useState(true); // Show CC by default since we have hardcoded recipient
   const [ccInput, setCcInput] = useState('');
+  const [bccRecipients, setBccRecipients] = useState<string[]>([]);
+  const [showBcc, setShowBcc] = useState(false);
+  const [bccInput, setBccInput] = useState('');
   const [showContactDropdown, setShowContactDropdown] = useState(false);
   const [showCcContactDropdown, setShowCcContactDropdown] = useState(false);
   const [filteredContacts, setFilteredContacts] = useState<Contact[]>([]);
@@ -1316,11 +1319,10 @@ function Compose() {
         </div>
       )}
 
-      <div className="fixed bottom-4 right-4 z-50 w-[600px] max-h-[90vh] flex flex-col">
+      <div className={`fixed z-50 flex flex-col transition-all duration-300 ease-in-out ${isExpanded ? 'inset-4' : 'bottom-4 right-4 w-[600px]'}`}>
         {/* Main Compose Window - Gmail-style popup */}
         <div 
-          className="bg-white rounded-lg shadow-2xl overflow-hidden flex flex-col"
-          style={{ height: '580px' }}
+          className={`bg-white rounded-lg shadow-2xl overflow-hidden flex flex-col transition-all duration-300 ease-in-out ${isExpanded ? 'h-full' : 'h-[580px]'}`}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
         >
@@ -1346,6 +1348,14 @@ function Compose() {
               <div className="flex space-x-1">
                 <button 
                   type="button"
+                  onClick={toggleExpand}
+                  className="p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded"
+                  title={isExpanded ? 'Minimize' : 'Expand'}
+                >
+                  {isExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                </button>
+                <button 
+                  type="button"
                   onClick={handleCancel}
                   className="p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded"
                   title="Close"
@@ -1359,11 +1369,23 @@ function Compose() {
           {(
           <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
             {/* Fixed header section with recipient fields */}
-            <div className="flex-shrink-0 p-3 space-y-2 overflow-y-auto max-h-[240px]">
+            <div className="flex-shrink-0 p-3 space-y-1 overflow-y-auto max-h-[280px]">
+              {/* From (read-only) */}
+              <div className="flex items-center border-b border-gray-200 py-1.5 gap-2">
+                <span className="text-gray-500 text-xs w-14">From:</span>
+                <span className="text-xs text-gray-800">{currentProfile?.userEmail || 'me@example.com'}</span>
+              </div>
+              
+              {/* Date (read-only) */}
+              <div className="flex items-center border-b border-gray-200 py-1.5 gap-2">
+                <span className="text-gray-500 text-xs w-14">Date:</span>
+                <span className="text-xs text-gray-800">{format(new Date(), 'MMM d, yyyy, h:mm a')}</span>
+              </div>
+              
               {/* TO Section */}
               <div className="relative">
-                <div className="flex items-center border-b border-gray-200 py-2 gap-2">
-                  <span className="text-gray-500 text-xs">To:</span>
+                <div className="flex items-center border-b border-gray-200 py-1.5 gap-2">
+                  <span className="text-gray-500 text-xs w-14">To:</span>
                   <div className="flex-1 flex flex-wrap items-center gap-1">
                     {/* Display existing TO recipients */}
                     {toRecipients.map((email, index) => (
@@ -1473,8 +1495,8 @@ function Compose() {
               {/* CC Section */}
               {showCc && (
                 <div className="relative">
-                  <div className="flex items-center border-b border-gray-200 py-2 gap-2">
-                    <span className="text-gray-500 text-xs">CC:</span>
+                  <div className="flex items-center border-b border-gray-200 py-1.5 gap-2">
+                    <span className="text-gray-500 text-xs w-14">CC:</span>
                     <div className="flex-1 flex flex-wrap items-center gap-1">
                       {/* Display existing CC recipients */}
                       {ccRecipients.map((email, index) => (
@@ -1589,22 +1611,91 @@ function Compose() {
                 </div>
               )}
               
-              {/* Show/Hide CC toggle */}
-              {!showCc && (
-                <div className="flex items-center">
-                  <button
-                    type="button"
-                    onClick={() => setShowCc(true)}
-                    className="text-blue-600 hover:text-blue-800 text-xs flex items-center gap-0.5"
-                  >
-                    <Plus size={12} />
-                    Add CC
-                  </button>
+              {/* Show/Hide CC/BCC toggles */}
+              {(!showCc || !showBcc) && (
+                <div className="flex items-center gap-3">
+                  {!showCc && (
+                    <button
+                      type="button"
+                      onClick={() => setShowCc(true)}
+                      className="text-blue-600 hover:text-blue-800 text-xs flex items-center gap-0.5"
+                    >
+                      <Plus size={12} />
+                      CC
+                    </button>
+                  )}
+                  {!showBcc && (
+                    <button
+                      type="button"
+                      onClick={() => setShowBcc(true)}
+                      className="text-blue-600 hover:text-blue-800 text-xs flex items-center gap-0.5"
+                    >
+                      <Plus size={12} />
+                      BCC
+                    </button>
+                  )}
                 </div>
               )}
               
-              <div className="flex items-center border-b border-gray-200 py-2 gap-2">
-                <span className="text-gray-500 text-xs">Subject:</span>
+              {/* BCC Section */}
+              {showBcc && (
+                <div className="relative">
+                  <div className="flex items-center border-b border-gray-200 py-1.5 gap-2">
+                    <span className="text-gray-500 text-xs w-14">BCC:</span>
+                    <div className="flex-1 flex flex-wrap items-center gap-1">
+                      {bccRecipients.map((email, index) => (
+                        <div key={index} className="flex items-center bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded-full text-[10px]">
+                          <span>{email}</span>
+                          <button
+                            type="button"
+                            onClick={() => setBccRecipients(bccRecipients.filter((_, i) => i !== index))}
+                            className="ml-1 text-purple-600 hover:text-purple-800"
+                          >
+                            <X size={10} />
+                          </button>
+                        </div>
+                      ))}
+                      <input
+                        type="text"
+                        value={bccInput}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setBccInput(value);
+                          if (value.endsWith(' ') || value.endsWith(',')) {
+                            const email = value.slice(0, -1).trim();
+                            if (email && email.includes('@') && !bccRecipients.includes(email)) {
+                              setBccRecipients([...bccRecipients, email]);
+                              setBccInput('');
+                            }
+                          }
+                        }}
+                        onBlur={() => {
+                          const email = bccInput.trim();
+                          if (email && email.includes('@') && !bccRecipients.includes(email)) {
+                            setBccRecipients([...bccRecipients, email]);
+                            setBccInput('');
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            const email = bccInput.trim();
+                            if (email && email.includes('@') && !bccRecipients.includes(email)) {
+                              setBccRecipients([...bccRecipients, email]);
+                              setBccInput('');
+                            }
+                          }
+                        }}
+                        className="flex-1 min-w-[100px] outline-none text-xs py-0.5"
+                        placeholder=""
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              <div className="flex items-center border-b border-gray-200 py-1.5 gap-2">
+                <span className="text-gray-500 text-xs w-14">Subject:</span>
                 <input
                   type="text"
                   value={subject}

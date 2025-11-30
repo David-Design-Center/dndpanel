@@ -33,11 +33,15 @@ const extractAttachments = (part: EmailPart, inlineCids: string[]): Array<{ name
     // Include this as an attachment if:
     // 1. It has a filename AND
     // 2. It has an attachmentId AND
-    // 3. Either it has NO Content-ID, OR its Content-ID is NOT in the inline list
+    // 3. Either:
+    //    - It has NO Content-ID, OR
+    //    - Its Content-ID is NOT in the inline list, OR
+    //    - It's NOT an image type (PDFs and other files should always show as attachments)
     if (filename && p.body?.attachmentId) {
-      const isInline = contentId && inlineCids.includes(contentId);
+      const isImage = p.mimeType?.startsWith('image/');
+      const isInlineImage = isImage && contentId && inlineCids.includes(contentId);
       
-      if (!isInline) {
+      if (!isInlineImage) {
         console.log(`📎 Found attachment: ${filename} (${p.mimeType}, ${(p.body.size || 0) / 1024}KB)`);
         attachments.push({
           name: filename,

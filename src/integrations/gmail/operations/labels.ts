@@ -375,3 +375,49 @@ export const applyGmailLabels = async (
     throw error;
   }
 };
+
+/**
+ * Batch apply labels to multiple messages at once
+ * Uses Gmail's batchModify API - supports up to 1000 message IDs per request
+ */
+export const batchApplyGmailLabels = async (
+  messageIds: string[],
+  addLabelIds: string[],
+  removeLabelIds: string[] = []
+): Promise<void> => {
+  try {
+    if (!isGmailSignedIn()) {
+      throw new Error('Not signed in to Gmail');
+    }
+
+    if (messageIds.length === 0) {
+      console.log('No messages to modify');
+      return;
+    }
+
+    // Gmail API limit is 1000 IDs per request
+    const BATCH_SIZE = 1000;
+    const batches = [];
+    for (let i = 0; i < messageIds.length; i += BATCH_SIZE) {
+      batches.push(messageIds.slice(i, i + BATCH_SIZE));
+    }
+
+    console.log(`📦 Batch applying labels to ${messageIds.length} messages in ${batches.length} batch(es):`, { addLabelIds, removeLabelIds });
+
+    for (const batch of batches) {
+      await window.gapi.client.gmail.users.messages.batchModify({
+        userId: 'me',
+        resource: {
+          ids: batch,
+          addLabelIds,
+          removeLabelIds
+        }
+      });
+    }
+
+    console.log(`✅ Successfully batch applied labels to ${messageIds.length} messages`);
+  } catch (error) {
+    console.error('Error batch applying labels to Gmail messages:', error);
+    throw error;
+  }
+};

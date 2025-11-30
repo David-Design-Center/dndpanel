@@ -19,6 +19,7 @@ import {
   updateGmailLabel as gmailUpdateLabel,
   deleteGmailLabel as gmailDeleteLabel,
   applyGmailLabels as gmailApplyLabels,
+  batchApplyGmailLabels as gmailBatchApplyLabels,
 } from './gmail/operations/labels';
 
 // Import mutations
@@ -1777,6 +1778,19 @@ export const applyGmailLabels = async (
   removeLabelIds: string[] = []
 ): Promise<void> => {
   return gmailApplyLabels(messageId, addLabelIds, removeLabelIds);
+};
+
+/**
+ * Batch apply labels to multiple Gmail messages at once
+ * Uses Gmail's batchModify API - supports up to 1000 message IDs per request
+ * ⚠️ DELEGATED TO: src/integrations/gmail/operations/labels.ts
+ */
+export const batchApplyGmailLabels = async (
+  messageIds: string[],
+  addLabelIds: string[],
+  removeLabelIds: string[] = []
+): Promise<void> => {
+  return gmailBatchApplyLabels(messageIds, addLabelIds, removeLabelIds);
 };
 
 /**

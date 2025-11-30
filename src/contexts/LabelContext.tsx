@@ -17,7 +17,7 @@ interface LabelContextType {
   refreshLabels: (forceRefresh?: boolean) => Promise<void>;
   clearLabelsCache: () => void;
   error: string | null;
-  addLabel: (name: string) => Promise<void>;
+  addLabel: (name: string) => Promise<GmailLabel | null>;
   editLabel: (id: string, newName: string) => Promise<void>;
   deleteLabel: (id: string) => Promise<void>;
   isAddingLabel: boolean;
@@ -697,7 +697,7 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     setDeleteLabelError(null);
   };
 
-  const addLabel = async (name: string) => {
+  const addLabel = async (name: string): Promise<GmailLabel | null> => {
     if (!isGmailSignedIn || !isGmailApiReady || !currentProfile) {
       throw new Error('Gmail API not ready or no profile selected');
     }
@@ -711,7 +711,7 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       
       // Optimistically add to local state immediately for instant UI update
       if (createdLabel?.id) {
-        setLabels(prev => [...prev, {
+        const newLabel: GmailLabel = {
           id: createdLabel.id,
           name: createdLabel.name || name,
           type: createdLabel.type || 'user',
@@ -719,15 +719,19 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
           messagesUnread: 0,
           threadsTotal: 0,
           threadsUnread: 0
-        }]);
+        };
+        setLabels(prev => [...prev, newLabel]);
         markLabelsHydrated([createdLabel.id]);
         console.log('✅ Label added to UI immediately');
+        
+        // Refresh for accurate counts
+        await refreshLabels();
+        
+        console.log(`Successfully added label: ${name} for profile: ${currentProfile.name}`);
+        return newLabel;
       }
       
-      // Refresh for accurate counts
-      await refreshLabels();
-      
-      console.log(`Successfully added label: ${name} for profile: ${currentProfile.name}`);
+      return null;
     } catch (err) {
       console.error('Error adding Gmail label:', err);
       setAddLabelError(err instanceof Error ? err.message : 'Failed to add label');
@@ -768,11 +772,22 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     try {
       setIsDeletingLabel(true);
       setDeleteLabelError(null);
-      console.log(`Deleting Gmail label: ${id} for profile: ${currentProfile.name}`);
+      
+      // Find the label name before deleting (for event dispatch)
+      const labelToDelete = labels.find(l => l.id === id);
+      const labelName = labelToDelete?.name || '';
+      
+      console.log(`Deleting Gmail label: ${id} (${labelName}) for profile: ${currentProfile.name}`);
       
       // Optimistically remove from local state immediately for instant UI update
       setLabels(prev => prev.filter(label => label.id !== id));
       console.log('✅ Label removed from UI immediately');
+      
+      // Dispatch event to notify other components (EmailPageLayout, FoldersColumn)
+      // This allows them to navigate away if viewing the deleted label
+      window.dispatchEvent(new CustomEvent('label-deleted', { 
+        detail: { labelId: id, labelName } 
+      }));
       
       await deleteGmailLabel(id);
       

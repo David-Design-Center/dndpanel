@@ -1399,6 +1399,57 @@ export const applyLabelsToEmail = async (
 };
 
 /**
+ * Batch apply labels to multiple emails at once
+ * Uses Gmail's batchModify API for efficiency - single API call instead of N calls
+ */
+export const batchApplyLabelsToEmails = async (
+  messageIds: string[],
+  addLabelIds: string[],
+  removeLabelIds: string[] = []
+): Promise<void> => {
+  try {
+    console.log(`📦 Batch applying labels to ${messageIds.length} emails:`, { add: addLabelIds, remove: removeLabelIds });
+    
+    // Import batch function dynamically to avoid circular deps
+    const { batchApplyGmailLabels } = await import('../integrations/gapiService');
+    
+    // Call the batch Gmail API
+    await batchApplyGmailLabels(messageIds, addLabelIds, removeLabelIds);
+    
+    // Invalidate caches
+    if (emailCache.list) {
+      emailCache.list.timestamp = 0;
+      console.log('Email list cache invalidated after batch label update');
+    }
+    
+    // Remove from details cache
+    messageIds.forEach(id => {
+      if (emailCache.details[id]) {
+        delete emailCache.details[id];
+      }
+    });
+    
+    // Trigger inbox refetch if user labels were added
+    const hasUserLabelAdded = addLabelIds.length > 0 && !addLabelIds.every(id => 
+      ['INBOX', 'UNREAD', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'IMPORTANT', 'STARRED', 'CHAT'].includes(id) ||
+      id.startsWith('CATEGORY_')
+    );
+    
+    if (hasUserLabelAdded) {
+      console.log('🔄 User labels applied in batch - triggering inbox refetch');
+      window.dispatchEvent(new CustomEvent('inbox-refetch-required', { 
+        detail: { messageIds, addedLabels: addLabelIds }
+      }));
+    }
+    
+    console.log(`✅ Successfully batch applied labels to ${messageIds.length} emails`);
+  } catch (error) {
+    console.error('Error batch applying labels to emails:', error);
+    throw error;
+  }
+};
+
+/**
  * Get user profile
  */
 export const getUserProfile = async (): Promise<{ name: string; email: string; picture?: string } | null> => {
