@@ -755,6 +755,13 @@ export function clearOptimizedCaches(): void {
   sessionCache.recentPrimaryIds = []; // Clear cached IDs
 }
 
+// Listen for profile switch events
+if (typeof window !== 'undefined') {
+  window.addEventListener('clear-all-caches', () => {
+    clearOptimizedCaches();
+  });
+}
+
 /**
  * Get cached label by ID for fast lookups
  */

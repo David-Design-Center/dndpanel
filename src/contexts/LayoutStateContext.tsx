@@ -110,6 +110,19 @@ export function LayoutStateProvider({ children }: { children: ReactNode }) {
   const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
   const [systemFolderFilterHandler, setSystemFolderFilterHandler] = useState<((folderType: string) => void) | undefined>(undefined);
 
+  // Listen for profile switches and clear selected email
+  useEffect(() => {
+    const handleClearCache = () => {
+      setSelectedEmailId(null);
+      console.log('🔄 LayoutStateContext: Cleared selected email');
+    };
+
+    window.addEventListener('clear-all-caches', handleClearCache as EventListener);
+    return () => {
+      window.removeEventListener('clear-all-caches', handleClearCache as EventListener);
+    };
+  }, []);
+
   // Persist state changes to localStorage
   useEffect(() => {
     saveToLocalStorage('sidebarCollapsed', isSidebarCollapsed);

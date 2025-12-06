@@ -54,6 +54,21 @@ export function BrandProvider({ children }: { children: React.ReactNode }) {
   const [addBrandError, setAddBrandError] = useState<string | null>(null);
   const { user } = useAuth();
 
+  // Listen for profile switches and clear cache
+  useEffect(() => {
+    const handleClearCache = () => {
+      setBrands([]);
+      setAddBrandError(null);
+      setLoadingBrands(false);
+      console.log('🔄 BrandContext: Cleared brands cache');
+    };
+
+    window.addEventListener('clear-all-caches', handleClearCache as EventListener);
+    return () => {
+      window.removeEventListener('clear-all-caches', handleClearCache as EventListener);
+    };
+  }, []);
+
   // Create default brand objects
   const defaultBrandObjects: Brand[] = DEFAULT_BRANDS.map(name => ({
     id: `default-${name.toLowerCase().replace(/\s+/g, '-')}`,

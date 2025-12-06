@@ -268,3 +268,20 @@ export async function fetchUserCalendars(userEmail: string) {
   ongoingRequests.set(cacheKey, calendarsPromise);
   return calendarsPromise;
 }
+
+/**
+ * Clear all calendar caches - call on profile switch
+ */
+export function clearCalendarCaches(): void {
+  tokenCache.clear();
+  eventsCache.clear();
+  ongoingRequests.clear();
+  console.log('🔄 CalendarService: Cleared all caches');
+}
+
+// Listen for profile switch events
+if (typeof window !== 'undefined') {
+  window.addEventListener('clear-all-caches', () => {
+    clearCalendarCaches();
+  });
+}

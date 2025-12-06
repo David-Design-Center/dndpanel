@@ -10,8 +10,6 @@
 
 **Do NOT rely on patterns found in existing codebase.** Much of it was built without official documentation and may use deprecated or inefficient approaches. When in doubt, verify against current Gmail API docs via MCP.
 
-See `LEGACY.md` in repo root for known technical debt areas.
-
 ---
 
 ## Project Overview
@@ -64,7 +62,6 @@ FeatureProviders (route-specific, wraps Layout):
 | Email UI components | `src/components/email/` |
 | Thread viewer | `src/components/email/EmbeddedViewEmailClean.tsx` |
 | Folders sidebar | `src/components/email labels/FoldersColumn.tsx` |
-| Architecture docs | `README/` |
 
 ## Code Style Conventions
 
@@ -82,7 +79,3 @@ FeatureProviders (route-specific, wraps Layout):
 4. **Gmail API Rate Limits**: Use `queueGmailRequest()` wrapper for automatic retry with exponential backoff
 5. **Cache Invalidation**: Clear caches when switching profiles via `clearEmailCacheForProfileSwitch()`
 6. **Event Listeners**: Always clean up in useEffect return
-
----
-
-**For major refactoring**: Review docs in `README/` folder (e.g., `EMAIL_ARCHITECTURE_ANALYSIS.md`, `REFACTORING_NOTES.md`)

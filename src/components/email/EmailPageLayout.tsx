@@ -566,8 +566,8 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
             drafts: [draftEmail, ...prev.drafts]
           }));
           
-          // If currently viewing drafts, add to paginated list too
-          if (activeTab === 'drafts' || pageType === 'drafts') {
+          // If currently viewing drafts (not a custom label), add to paginated list too
+          if ((activeTab === 'drafts' || pageType === 'drafts') && !labelName) {
             setPaginatedEmails(prev => [draftEmail, ...prev]);
             console.log('📨 Draft added to paginated list (viewing drafts)');
           }
@@ -871,7 +871,8 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
 
   const handleEmailClick = (id: string) => {
     // Drafts: check if it's a reply draft (has threadId) or new draft
-    if (pageType === 'drafts' || activeTab === 'drafts') {
+    // Note: Only treat as draft when NOT viewing a custom label (labelName is null)
+    if ((pageType === 'drafts' || activeTab === 'drafts') && !labelName) {
       // Find the draft email to check if it has a threadId
       const draftEmail = filteredEmails.find(e => e.id === id);
       
@@ -1953,7 +1954,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                               onCreateFilter={handleCreateFilter}
                               isSelected={selectedEmails.has(email.id)}
                               onToggleSelect={handleToggleSelectEmail}
-                              isDraft={activeTab === 'drafts'}
+                              isDraft={activeTab === 'drafts' && !labelName}
                               renderAsTableRow
                             />
                           ))}

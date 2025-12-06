@@ -101,6 +101,21 @@ export function useTabManagement(options: UseTabManagementOptions): UseTabManage
     setSystemFolderFilterHandler(handleSystemFolderFilter);
   }, [setSystemFolderFilterHandler, handleSystemFolderFilter]);
 
+  /**
+   * Reset activeTab to 'all' when navigating to a custom label
+   * 
+   * BUG FIX: When switching from system folders (e.g., Drafts) to custom labels,
+   * activeTab was staying as 'drafts', causing all emails to be treated as drafts
+   * and opening compose windows instead of the email viewer.
+   */
+  useEffect(() => {
+    if (labelName) {
+      // Viewing a custom label - reset to 'all' to clear any system folder state
+      setActiveTab('all');
+      console.log('📂 Reset activeTab to "all" (viewing custom label:', labelName, ')');
+    }
+  }, [labelName, setActiveTab]);
+
   return {
     switchInboxViewMode,
     handleSystemFolderFilter

@@ -398,3 +398,10 @@ export class EmailRepository {
 
 // Singleton instance
 export const emailRepository = new EmailRepository();
+
+// Listen for profile switch events
+if (typeof window !== 'undefined') {
+  window.addEventListener('clear-all-caches', () => {
+    emailRepository.clear();
+  });
+}

@@ -424,8 +424,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             console.log('🔍 Admin check - name:', profile.name);
             console.log('🔍 Admin check - email:', data.user.email);
             
-            // Only David should have admin privileges
-            const isUserAdmin = (profile.is_admin || false) && profile.name === 'David';
+            // David and Marti have admin privileges (Dashboard access)
+            const isUserAdmin = (profile.is_admin || false) && (profile.name === 'David' || profile.name === 'Marti');
             console.log('🔍 Admin check - Final result:', isUserAdmin);
             
             setIsAdmin(isUserAdmin);

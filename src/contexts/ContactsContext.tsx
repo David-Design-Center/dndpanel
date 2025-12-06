@@ -92,6 +92,9 @@ export const ContactsProvider: React.FC<ContactsProviderProps> = ({ children }) 
   }, []);
 
   const clearContactsCache = useCallback(() => {
+    // Clear the singleton's in-memory cache (contacts array + isLoaded flag)
+    contactService.clearContacts();
+    // Clear React state
     setContacts([]);
     setError(null);
     setIsLoading(false);

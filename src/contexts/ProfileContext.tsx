@@ -336,9 +336,32 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
 
   const clearProfile = () => {
     devLog.debug('ProfileContext: Clearing current profile');
+    
+    // CRITICAL: Clear all cached data to prevent data leakage between profiles
+    // This ensures "Log Out" behaves the same as switching profiles
+    
+    // Clear session storage data that might be profile-specific
+    const keysToKeep: string[] = []; // Don't keep anything when logging out
+    Object.keys(sessionStorage).forEach(key => {
+      if (!keysToKeep.includes(key)) {
+        sessionStorage.removeItem(key);
+      }
+    });
+    
+    // Clear emailService cache
+    clearEmailCacheForProfileSwitch('');
+    
+    // Clear GAPI client token
+    console.log('🔑 Clearing GAPI client token (profile cleared)');
+    clearCurrentAccessToken();
+    
+    // Dispatch clear-all-caches event to clear contacts, labels, etc.
+    console.log('🔄 Dispatching clear-all-caches event (profile cleared)');
+    window.dispatchEvent(new CustomEvent('clear-all-caches', {
+      detail: { newProfile: null, oldProfile: currentProfile?.name }
+    }));
+    
     setCurrentProfile(null);
-    sessionStorage.removeItem('selectedProfileId');
-    sessionStorage.removeItem('currentProfileId');
     
     // Stop token refresh scheduler
     import('../integrations/gapiService').then(({ stopTokenRefreshScheduler }) => {
@@ -352,6 +375,9 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     console.log('📧 Cleared current user email');
     
     setError(null);
+    
+    // Reset auth flow state so data contexts don't fetch until new profile is selected
+    setAuthFlowCompleted(false);
     
     // Configure back to traditional auth when no profile is selected
     devLog.debug('🔑 Clearing profile, switching to traditional auth');

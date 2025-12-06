@@ -82,6 +82,21 @@ export function OutOfOfficeSettingsProvider({ children }: { children: React.Reac
   const { profiles, authFlowCompleted } = useProfile();
   const location = useLocation();
 
+  // Listen for profile switches and clear cache
+  React.useEffect(() => {
+    const handleClearCache = () => {
+      setSettings({});
+      setError(null);
+      setIsLoading(false);
+      console.log('🔄 OutOfOfficeSettingsContext: Cleared settings cache');
+    };
+
+    window.addEventListener('clear-all-caches', handleClearCache as EventListener);
+    return () => {
+      window.removeEventListener('clear-all-caches', handleClearCache as EventListener);
+    };
+  }, []);
+
   // Load settings from Supabase when profiles are available
   useEffect(() => {
     const loadSettings = async () => {

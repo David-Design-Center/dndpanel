@@ -36,6 +36,21 @@ export function ItemsProvider({ children }: { children: React.ReactNode }) {
   const [addItemError, setAddItemError] = useState<string | null>(null);
   const { user } = useAuth();
 
+  // Listen for profile switches and clear cache
+  useEffect(() => {
+    const handleClearCache = () => {
+      setItems([]);
+      setAddItemError(null);
+      setLoadingItems(false);
+      console.log('🔄 ItemsContext: Cleared items cache');
+    };
+
+    window.addEventListener('clear-all-caches', handleClearCache as EventListener);
+    return () => {
+      window.removeEventListener('clear-all-caches', handleClearCache as EventListener);
+    };
+  }, []);
+
   const defaultItemObjects = DEFAULT_ITEMS.map(name => ({
     id: `default-${name}`,
     description: name,

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Email } from '../types';
 
 interface FilterCreationState {
@@ -22,6 +22,23 @@ export const FilterCreationProvider: React.FC<{ children: ReactNode }> = ({ chil
     emailData: null,
     shouldOpenCreate: false
   });
+
+  // Listen for profile switches and clear filter creation state
+  useEffect(() => {
+    const handleClearCache = () => {
+      setFilterCreation({
+        isCreating: false,
+        emailData: null,
+        shouldOpenCreate: false
+      });
+      console.log('🔄 FilterCreationContext: Cleared filter creation state');
+    };
+
+    window.addEventListener('clear-all-caches', handleClearCache as EventListener);
+    return () => {
+      window.removeEventListener('clear-all-caches', handleClearCache as EventListener);
+    };
+  }, []);
 
   const startFilterCreation = (email: Email) => {
     setFilterCreation({

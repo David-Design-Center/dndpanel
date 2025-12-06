@@ -108,6 +108,24 @@ export function OutOfOfficeProvider({ children }: OutOfOfficeProviderProps) {
     refreshStatus();
   }, [currentProfile, isGmailApiReady, location.pathname]);
 
+  // Listen for profile switches and clear cache
+  useEffect(() => {
+    const handleClearCache = () => {
+      // Clear the in-memory vacation status cache
+      statusCache.current = {};
+      setIsOutOfOfficeState(false);
+      setIsLoading(false);
+      // Clear localStorage vacation statuses
+      localStorage.removeItem('outOfOfficeStatuses');
+      console.log('🔄 OutOfOfficeContext: Cleared vacation status cache');
+    };
+
+    window.addEventListener('clear-all-caches', handleClearCache as EventListener);
+    return () => {
+      window.removeEventListener('clear-all-caches', handleClearCache as EventListener);
+    };
+  }, []);
+
   // Listen for tab visibility refresh events (instead of relying on auth state changes)
   useEffect(() => {
     const handleTabVisibleRefresh = () => {
