@@ -9,7 +9,7 @@ import { EmailDndProvider } from '../../contexts/EmailDndContext';
 import { useLabel } from '../../contexts/LabelContext';
 import { batchApplyLabelsToEmails, markEmailAsTrash } from '../../services/emailService';
 import { toast } from 'sonner';
-import { SpamFilterDialog } from '../email/SpamFilterDialog';
+import { MoveEmailDialog, MoveDialogType } from '../email/MoveEmailDialog';
 import { Email } from '../../types';
 
 const Compose = lazy(() => import('../../pages/Compose'));
@@ -20,12 +20,15 @@ function Layout() {
   const { isComposeOpen, openCompose } = useCompose();
   const { incrementLabelUnreadCount } = useLabel();
 
-  // Trash filter dialog state (asks to block sender)
-  const [trashDialogOpen, setTrashDialogOpen] = useState(false);
-  const [pendingTrashDrop, setPendingTrashDrop] = useState<{
+  // Move dialog state (for Trash and custom folders)
+  const [moveDialogOpen, setMoveDialogOpen] = useState(false);
+  const [pendingMoveDrop, setPendingMoveDrop] = useState<{
     emailIds: string[];
     emails: Email[];
     unreadCount: number;
+    dialogType: MoveDialogType;
+    folderId: string;
+    folderName: string;
   } | null>(null);
 
   // Check if we're on an email-related route that should show folders column
@@ -52,9 +55,29 @@ function Layout() {
       
       // Special handling for Trash - show dialog first to ask about blocking sender
       if (folderId === 'TRASH') {
-        // Store pending drop and show dialog
-        setPendingTrashDrop({ emailIds, emails, unreadCount });
-        setTrashDialogOpen(true);
+        setPendingMoveDrop({ 
+          emailIds, 
+          emails, 
+          unreadCount, 
+          dialogType: 'trash',
+          folderId,
+          folderName: 'Trash'
+        });
+        setMoveDialogOpen(true);
+        return; // Wait for dialog confirmation
+      }
+      
+      // Special handling for custom labels/folders - show dialog to create filter
+      if (folderId.startsWith('Label_')) {
+        setPendingMoveDrop({ 
+          emailIds, 
+          emails, 
+          unreadCount, 
+          dialogType: 'folder',
+          folderId,
+          folderName
+        });
+        setMoveDialogOpen(true);
         return; // Wait for dialog confirmation
       }
       
@@ -92,17 +115,9 @@ function Layout() {
         return;
       }
       
-      // Moving to a custom label/folder
-      // Add the new label, remove from INBOX
-      await batchApplyLabelsToEmails(emailIds, [folderId], ['INBOX']);
+      // Other system folders (SENT, STARRED, IMPORTANT, etc.)
+      await batchApplyLabelsToEmails(emailIds, [folderId], []);
       toast.success(`${emailCount} email${emailCount > 1 ? 's' : ''} moved to ${folderName}`);
-      
-      // Locally increment custom folder unread counter
-      if (unreadCount > 0) {
-        incrementLabelUnreadCount(folderId, unreadCount);
-        // Decrement INBOX counter
-        incrementLabelUnreadCount('INBOX', -unreadCount);
-      }
       
     } catch (error) {
       console.error('Error moving emails to folder:', error);
@@ -115,40 +130,51 @@ function Layout() {
     }
   }, [incrementLabelUnreadCount]);
 
-  // Handle trash dialog confirmation
-  const handleTrashConfirm = useCallback(async () => {
-    if (!pendingTrashDrop) return;
+  // Handle move dialog confirmation (for both Trash and custom folders)
+  const handleMoveConfirm = useCallback(async () => {
+    if (!pendingMoveDrop) return;
     
-    const { emailIds, unreadCount } = pendingTrashDrop;
+    const { emailIds, unreadCount, dialogType, folderId, folderName } = pendingMoveDrop;
     const emailCount = emailIds.length;
     
     // Close dialog
-    setTrashDialogOpen(false);
+    setMoveDialogOpen(false);
     
     // Immediately remove emails from UI (optimistic update)
     window.dispatchEvent(new CustomEvent('emails-moved', {
-      detail: { emailIds, targetFolder: 'TRASH', targetFolderName: 'Trash' }
+      detail: { emailIds, targetFolder: folderId, targetFolderName: folderName }
     }));
     
     // Clear selection
     window.dispatchEvent(new CustomEvent('clear-email-selection'));
     
     try {
-      // Move to trash one by one (trash has special API)
-      for (const emailId of emailIds) {
-        await markEmailAsTrash(emailId);
-      }
-      toast.success(`${emailCount} email${emailCount > 1 ? 's' : ''} moved to Trash`);
-      
-      // Locally increment Trash unread counter
-      if (unreadCount > 0) {
-        incrementLabelUnreadCount('TRASH', unreadCount);
-        // Decrement INBOX counter
-        incrementLabelUnreadCount('INBOX', -unreadCount);
+      if (dialogType === 'trash') {
+        // Move to trash one by one (trash has special API)
+        for (const emailId of emailIds) {
+          await markEmailAsTrash(emailId);
+        }
+        toast.success(`${emailCount} email${emailCount > 1 ? 's' : ''} moved to Trash`);
+        
+        // Locally increment Trash unread counter
+        if (unreadCount > 0) {
+          incrementLabelUnreadCount('TRASH', unreadCount);
+          incrementLabelUnreadCount('INBOX', -unreadCount);
+        }
+      } else {
+        // Moving to a custom label/folder - add label and remove from INBOX
+        await batchApplyLabelsToEmails(emailIds, [folderId], ['INBOX']);
+        toast.success(`${emailCount} email${emailCount > 1 ? 's' : ''} moved to ${folderName}`);
+        
+        // Locally increment custom folder unread counter
+        if (unreadCount > 0) {
+          incrementLabelUnreadCount(folderId, unreadCount);
+          incrementLabelUnreadCount('INBOX', -unreadCount);
+        }
       }
     } catch (error) {
-      console.error('Error moving to trash:', error);
-      toast.error('Failed to move emails to Trash');
+      console.error(`Error moving to ${folderName}:`, error);
+      toast.error(`Failed to move emails to ${folderName}`);
       
       // Revert optimistic update on error
       window.dispatchEvent(new CustomEvent('inbox-refetch-required', {
@@ -157,12 +183,12 @@ function Layout() {
     }
     
     // Clear pending state
-    setPendingTrashDrop(null);
-  }, [pendingTrashDrop, incrementLabelUnreadCount]);
+    setPendingMoveDrop(null);
+  }, [pendingMoveDrop, incrementLabelUnreadCount]);
 
-  const handleTrashDialogClose = useCallback(() => {
-    setTrashDialogOpen(false);
-    setPendingTrashDrop(null);
+  const handleMoveDialogClose = useCallback(() => {
+    setMoveDialogOpen(false);
+    setPendingMoveDrop(null);
   }, []);
 
   // Wrap email content with DnD provider
@@ -214,12 +240,15 @@ function Layout() {
         </Suspense>
       )}
 
-      {/* Trash Filter Dialog - asks if user wants to block sender */}
-      <SpamFilterDialog
-        isOpen={trashDialogOpen}
-        onClose={handleTrashDialogClose}
-        onConfirm={handleTrashConfirm}
-        emails={pendingTrashDrop?.emails || []}
+      {/* Move Email Dialog - asks if user wants to create filter for sender */}
+      <MoveEmailDialog
+        isOpen={moveDialogOpen}
+        onClose={handleMoveDialogClose}
+        onConfirm={handleMoveConfirm}
+        emails={pendingMoveDrop?.emails || []}
+        dialogType={pendingMoveDrop?.dialogType || 'trash'}
+        targetFolderId={pendingMoveDrop?.folderId}
+        targetFolderName={pendingMoveDrop?.folderName}
       />
     </ProfileGuard>
   );
