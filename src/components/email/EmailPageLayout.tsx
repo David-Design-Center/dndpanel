@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   RefreshCw,
@@ -14,6 +14,7 @@ import {
   FolderInput,
   MessageSquareWarning} from 'lucide-react';
 import { useCompose } from '@/contexts/ComposeContext';
+import { useEmailDnd } from '@/contexts/EmailDndContext';
 import EmailListItem from './EmailListItem';
 import MoveToFolderDialog from './MoveToFolderDialog';
 import ThreeColumnLayout from '../layout/ThreeColumnLayout';
@@ -30,19 +31,6 @@ import { useLayoutState } from '../../contexts/LayoutStateContext';
 import { toast } from 'sonner';
 // Import custom hooks
 import { usePagination, useEmailFetch, useEmailSelection, useEmailFilters, useEmailCounts, useTabManagement } from './EmailPageLayout/hooks';
-// Import DND packages
-import { 
-  DndContext, 
-  DragOverlay,
-  useSensor, 
-  useSensors, 
-  MouseSensor, 
-  TouchSensor, 
-  closestCenter,
-  DragEndEvent 
-} from '@dnd-kit/core';
-import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
-import { createPortal } from 'react-dom';
 import { Table, TableBody } from '@/components/ui/table';
 
 type EmailPageType = 'inbox' | 'unread' | 'sent' | 'drafts' | 'trash';
@@ -389,23 +377,24 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   // Inbox filtering mode removed (always 'all')
 
   // DND Setup
-  const sensors = useSensors(
-    useSensor(MouseSensor, {
-      activationConstraint: {
-        distance: 10,
-      },
-    }),
-    useSensor(TouchSensor, {
-      activationConstraint: {
-        delay: 250,
-        tolerance: 5,
-      },
-    })
-  );
-
-  const [activeEmail, setActiveEmail] = useState<Email | null>(null);
   // Track explicit tab-level loading (distinct from global optimized first paint)
   const [tabLoading, setTabLoading] = useState<string | null>(null);
+
+  // Register email source with DnD context for drag-to-folder functionality
+  const { registerEmailSource } = useEmailDnd();
+  
+  // Memoize getters to prevent infinite re-registration
+  // Use paginatedEmails which is the actual displayed list
+  const getEmailsForDnd = useCallback(() => {
+    return paginatedEmails.length > 0 ? paginatedEmails : emails;
+  }, [paginatedEmails, emails]);
+  
+  const getSelectedIdsForDnd = useCallback(() => selectedEmails, [selectedEmails]);
+  
+  // Register with DnD context
+  useEffect(() => {
+    registerEmailSource(getEmailsForDnd, getSelectedIdsForDnd);
+  }, [registerEmailSource, getEmailsForDnd, getSelectedIdsForDnd]);
 
   const handleRefresh = async () => {
     if (!isGmailSignedIn || refreshCooldown) return;
@@ -677,6 +666,50 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       window.removeEventListener('label-deleted', handleLabelDeleted as any);
     };
   }, [labelIdParam, labelName, navigate, setPaginatedEmails, setEmails]);
+
+  // Handle emails moved via drag & drop - immediate UI update
+  useEffect(() => {
+    const handleEmailsMoved = (event: CustomEvent<{ emailIds: string[]; targetFolder: string; targetFolderName: string }>) => {
+      const { emailIds } = event.detail;
+      console.log('📦 Emails moved event received:', emailIds.length, 'emails');
+      
+      // Remove moved emails from paginated list (optimistic UI update)
+      setPaginatedEmails(prev => {
+        const filtered = prev.filter(e => !emailIds.includes(e.id));
+        console.log(`📦 Removed ${prev.length - filtered.length} emails from list`);
+        return filtered;
+      });
+      
+      // Also remove from allTabEmails
+      setAllTabEmails(prev => {
+        const filterEmails = (emails: Email[]) => emails.filter(e => !emailIds.includes(e.id));
+        return {
+          all: filterEmails(prev.all),
+          unread: filterEmails(prev.unread),
+          trash: filterEmails(prev.trash),
+          drafts: filterEmails(prev.drafts),
+          sent: filterEmails(prev.sent || []),
+          important: filterEmails(prev.important || []),
+          starred: filterEmails(prev.starred || []),
+          spam: filterEmails(prev.spam || []),
+          allmail: filterEmails(prev.allmail || [])
+        };
+      });
+    };
+
+    const handleClearSelection = () => {
+      console.log('📦 Clear selection event received');
+      setSelectedEmails(new Set());
+    };
+
+    window.addEventListener('emails-moved', handleEmailsMoved as any);
+    window.addEventListener('clear-email-selection', handleClearSelection);
+
+    return () => {
+      window.removeEventListener('emails-moved', handleEmailsMoved as any);
+      window.removeEventListener('clear-email-selection', handleClearSelection);
+    };
+  }, [setPaginatedEmails, setAllTabEmails, setSelectedEmails]);
 
   // Pagination settings & state for toolbar chevrons
   const PAGE_SIZE = 25;
@@ -1127,22 +1160,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     });
   };
 
-  const handleDragStart = (event: any) => {
-    const { active } = event;
-    const currentEmails = (pageType === 'inbox' && !labelName) ? allTabEmails[activeTab] : emails;
-    const email = currentEmails.find(email => email.id === active.id);
-    setActiveEmail(email || null);
-  };
-
-  const handleDragEnd = (_event: DragEndEvent) => {
-    setActiveEmail(null);
-    // Handle drag end logic here
-  };
-
-  const handleDragCancel = () => {
-    setActiveEmail(null);
-  };
-
   // If authentication is still loading or Gmail is initializing, show loading state
   if (authLoading || isGmailInitializing) {
     return (
@@ -1412,14 +1429,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
         </div>
 
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-            onDragCancel={handleDragCancel}
-            modifiers={[restrictToVerticalAxis]}
-          >
           <div className="bg-white flex-1 flex flex-col min-w-[480px] max-w-full min-h-0 relative">
             {/* Filter Chips (no categories, no Focused/Other) */}
             {pageType === 'inbox' && !labelName && (
@@ -2011,29 +2020,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
               </div>
             )}
           </div>
-
-          {/* Drag Overlay */}
-          {createPortal(
-            <DragOverlay>
-              {activeEmail ? (
-                <div className="opacity-60 bg-white rounded-lg shadow-lg border-2 border-blue-300">
-                  <EmailListItem 
-                    key={`drag-${activeEmail.id}`}
-                    email={activeEmail} 
-                    onClick={() => {}}
-                    isDraggable={false}
-                    renderAsTableRow={false}
-                    onEmailUpdate={() => {}}
-                    onEmailDelete={() => {}}
-                    onCreateFilter={() => {}}
-                    isSelected={false}
-                  />
-                </div>
-              ) : null}
-            </DragOverlay>,
-            document.body
-          )}
-          </DndContext>
         </div>
       </div>
       

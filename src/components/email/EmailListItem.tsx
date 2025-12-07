@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Email } from '@/types';
-import { useSortable } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
+import { useDraggable } from '@dnd-kit/core';
 import { useLayoutState } from '@/contexts/LayoutStateContext';
 import { TableRow, TableCell } from '@/components/ui/table';
 import { formatEmailDate, calculateContextMenuPosition, getEmailRowClassName } from './utils/emailItemFormatting';
@@ -61,22 +60,26 @@ function EmailListItem({
   const [showCreateFilterModal, setShowCreateFilterModal] = useState(false);
   const [createLabelInitialName, setCreateLabelInitialName] = useState('');
   
-  // Sortable
+  // Draggable for drag-to-folder
   const {
     attributes,
     listeners,
     setNodeRef,
     transform,
-    transition,
     isDragging
-  } = useSortable({
+  } = useDraggable({
     id: email.id,
-    disabled: !isDraggable
+    disabled: !isDraggable,
+    data: {
+      type: 'email',
+      email
+    }
   });
   
+  // When dragging, hide the original element (DragOverlay shows the ghost)
   const style = {
-    transform: CSS.Transform.toString(transform),
-    transition
+    opacity: isDragging ? 0 : 1,
+    visibility: isDragging ? 'hidden' as const : 'visible' as const
   };
 
   // Computed values
@@ -86,7 +89,17 @@ function EmailListItem({
   const rowClassName = getEmailRowClassName(isActiveEmail, isSelected, email.isRead ?? true, isDragging);
 
   // Handlers
-  const handleEmailClick = () => {
+  const handleEmailClick = (e: React.MouseEvent) => {
+    // Cmd+click (Mac) or Ctrl+click (Windows) = toggle selection
+    if (e.metaKey || e.ctrlKey) {
+      e.preventDefault();
+      if (onToggleSelect) {
+        onToggleSelect(email.id);
+      }
+      return;
+    }
+    
+    // Normal click = navigate to email
     if (!email.isRead) {
       handleToggleReadStatus();
     }

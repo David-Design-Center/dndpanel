@@ -29,6 +29,7 @@ export type TreeViewProps = {
   onSelectionChange?: (selectedIds: string[]) => void;
   indent?: number;
   animateExpand?: boolean;
+  nodeWrapper?: (node: TreeNode, children: React.ReactNode) => React.ReactNode;
 };
 
 // Main TreeView component
@@ -47,6 +48,7 @@ export function TreeView({
   onSelectionChange,
   indent = 20,
   animateExpand = true,
+  nodeWrapper,
 }: TreeViewProps) {
   const [internalExpandedIds, setInternalExpandedIds] = useState<Set<string>>(
     new Set(defaultExpandedIds),
@@ -135,7 +137,7 @@ export function TreeView({
         <File className="h-4 w-4" />
       );
 
-    return (
+    const nodeContent = (
       <div key={node.id} className="select-none">
         <motion.div
           className={cn(
@@ -262,6 +264,11 @@ export function TreeView({
         </AnimatePresence>
       </div>
     );
+
+    // Wrap with nodeWrapper if provided
+    return nodeWrapper ? (
+      <React.Fragment key={node.id}>{nodeWrapper(node, nodeContent)}</React.Fragment>
+    ) : nodeContent;
   };
 
   return (

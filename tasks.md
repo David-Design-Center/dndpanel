@@ -31,16 +31,24 @@ Email management upgrades: drag/drop moves, bulk move dialog, compose resize, sp
 
 ## Phase 2: Core Feature
 
-### 3. Drag Emails Into Folders (~5 hours)
-- [ ] Remove `restrictToVerticalAxis` modifier from `DndContext`
-- [ ] Add `useDroppable` to folder items in `FoldersColumn.tsx`
-- [ ] Create event bridge or lift `DndContext` to share between EmailPageLayout and FoldersColumn
-- [ ] Implement real `handleDragEnd` → detect folder drop → call `applyLabelsToEmail`
-- [ ] Add visual feedback (highlight folder on drag-over)
-- [ ] Handle special cases: Trash (use `markEmailAsTrash`), Spam (add SPAM label)
+### 3. Drag Emails Into Folders (~5 hours) ✅
+- [x] Remove `restrictToVerticalAxis` modifier from `DndContext`
+- [x] Add `useDroppable` to folder items in `FoldersColumn.tsx`
+- [x] Create event bridge or lift `DndContext` to share between EmailPageLayout and FoldersColumn
+- [x] Implement real `handleDragEnd` → detect folder drop → call `applyLabelsToEmail`
+- [x] Add visual feedback (highlight folder on drag-over)
+- [x] Handle special cases: Trash (use `markEmailAsTrash`), Spam (add SPAM label)
+- [x] Multi-email drag: if dragged email is in selection, move all selected emails
+- [x] Drag overlay shows count badge for multiple emails
 - [ ] Test drag from email list to sidebar folders
 
-**Files:** `src/components/email/EmailPageLayout.tsx`, `src/components/email labels/FoldersColumn.tsx`, possibly new shared DnD context
+**Files:** 
+- `src/contexts/EmailDndContext.tsx` (NEW - shared DnD context with sensors, handlers, drag overlay)
+- `src/components/email/DroppableFolderItem.tsx` (NEW - drop target wrapper with visual feedback)
+- `src/components/layout/Layout.tsx` (wraps email routes with EmailDndProvider)
+- `src/components/email/EmailPageLayout.tsx` (removed local DndContext, registers email source)
+- `src/components/email labels/FoldersColumn.tsx` (system folders + tree nodes wrapped with DroppableFolderItem)
+- `src/components/ui/tree-view.tsx` (added nodeWrapper prop)
 
 ---
 

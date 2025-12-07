@@ -114,7 +114,7 @@ export const fetchGmailLabels = async (): Promise<GmailLabel[]> => {
       }
     };
 
-    const processLabelGroup = async (group: any[], labelGroupName: string) => {
+    const processLabelGroup = async (group: any[], _labelGroupName: string) => {
       if (!group.length) {
         return;
       }
@@ -155,7 +155,7 @@ export const fetchGmailLabels = async (): Promise<GmailLabel[]> => {
       }
     };
 
-    const systemLabelDetails = labelsToFetchDetails.filter((label) =>
+    const systemLabelDetails = labelsToFetchDetails.filter((label: any) =>
       SYSTEM_LABELS_WITH_COUNTS.has(label.id)
     );
 
@@ -326,7 +326,7 @@ export const deleteGmailLabel = async (id: string): Promise<void> => {
       throw new Error("Cannot delete system labels");
     }
 
-    const response = await window.gapi.client.gmail.users.labels.delete({
+    await window.gapi.client.gmail.users.labels.delete({
       userId: "me",
       id: id,
     });
@@ -390,6 +390,7 @@ export const batchApplyGmailLabels = async (
     }
 
     for (const batch of batches) {
+      // @ts-ignore - batchModify exists in Gmail API but not in gapi type definitions
       await window.gapi.client.gmail.users.messages.batchModify({
         userId: "me",
         resource: {

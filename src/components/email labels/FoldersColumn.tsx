@@ -58,6 +58,7 @@ import { useLabel } from "../../contexts/LabelContext";
 import { useLayoutState } from "../../contexts/LayoutStateContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { GmailLabel } from "../../types";
+import { DroppableFolderItem } from "../email/DroppableFolderItem";
 // Remove unused import
 
 interface NestedLabel {
@@ -453,9 +454,7 @@ function FoldersColumn({
 
   // Listen for label refresh requests when emails are labeled
   useEffect(() => {
-    const handleLabelsNeedRefresh = async (event: Event) => {
-      const customEvent = event as CustomEvent;
-
+    const handleLabelsNeedRefresh = async (_event: Event) => {
       // Force refresh labels to update counters (bypass cache)
       try {
         await refreshLabels(true);
@@ -907,71 +906,88 @@ function FoldersColumn({
                           const IconComponent = folder.icon;
                           const isActive =
                             selectedSystemFolder === folder.folderType;
+                          
+                          // Map folder type to Gmail label ID for drop target
+                          const folderLabelId = folder.folderType === 'inbox' ? 'INBOX' :
+                            folder.folderType === 'sent' ? 'SENT' :
+                            folder.folderType === 'drafts' ? 'DRAFT' :
+                            folder.folderType === 'trash' ? 'TRASH' :
+                            folder.folderType === 'spam' ? 'SPAM' :
+                            folder.folderType === 'important' ? 'IMPORTANT' :
+                            folder.folderType === 'starred' ? 'STARRED' :
+                            folder.folderType.toUpperCase();
+                          
                           return (
-                            <Tooltip key={folder.name}>
-                              <TooltipTrigger asChild>
-                                <button
-                                  onClick={() =>
-                                    handleSystemFolderClick(folder.folderType)
-                                  }
-                                  className={`w-full flex items-center justify-between px-2 py-1.5 text-sm rounded-md transition-colors group ${
-                                    isActive
-                                      ? "bg-gray-200"
-                                      : "hover:bg-gray-100"
-                                  }`}
-                                >
-                                  <div className="flex items-center space-x-2 min-w-0 flex-1">
-                                    <IconComponent
-                                      size={18}
-                                      className="flex-shrink-0 transition-transform duration-200 group-hover:-rotate-12"
-                                      style={{
-                                        color: folder.color,
-                                        opacity: isActive ? 0.8 : 1,
-                                      }}
-                                    />
-                                    <span className="text-gray-900 truncate">
-                                      {folder.name}
-                                    </span>
-                                  </div>
+                            <DroppableFolderItem
+                              key={folder.name}
+                              id={folderLabelId}
+                              name={folder.name}
+                            >
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    onClick={() =>
+                                      handleSystemFolderClick(folder.folderType)
+                                    }
+                                    className={`w-full flex items-center justify-between px-2 py-1.5 text-sm rounded-md transition-colors group ${
+                                      isActive
+                                        ? "bg-gray-200"
+                                        : "hover:bg-gray-100"
+                                    }`}
+                                  >
+                                    <div className="flex items-center space-x-2 min-w-0 flex-1">
+                                      <IconComponent
+                                        size={18}
+                                        className="flex-shrink-0 transition-transform duration-200 group-hover:-rotate-12"
+                                        style={{
+                                          color: folder.color,
+                                          opacity: isActive ? 0.8 : 1,
+                                        }}
+                                      />
+                                      <span className="text-gray-900 truncate">
+                                        {folder.name}
+                                      </span>
+                                    </div>
 
-                                  {/* Count badges logic: Inbox (unread), Drafts (total), others suppressed */}
-                                  {(() => {
-                                    const isInbox = folder.name === "Inbox";
-                                    const isDrafts = folder.name === "Drafts";
-                                    if (isInbox) {
-                                      const displayUnread =
-                                        folder.unreadCount || 0;
-                                      // ✅ Show actual number - no 99+ cap
-                                      return (
-                                        <div className="text-gray-700 text-xs px-1.5 py-0.5 rounded-full min-w-[18px] text-center flex-shrink-0 ml-2 font-medium">
-                                          {displayUnread}
-                                        </div>
-                                      );
-                                    }
-                                    if (isDrafts) {
-                                      const total = folder.totalCount || 0;
-                                      if (total <= 0) return null;
-                                      return (
-                                        <div className="text-gray-700 text-xs px-1.5 py-0.5 rounded-full min-w-[20px] text-center flex-shrink-0 ml-2 font-medium">
-                                          {total}
-                                        </div>
-                                      );
-                                    }
-                                    return null; // suppress all others (Trash, Spam, Important, etc.)
-                                  })()}
-                                </button>
-                              </TooltipTrigger>
-                              {folder.tooltip ? (
-                                <TooltipContent
-                                  side="right"
-                                  className="max-w-xs bg-gray-800 text-white border-gray-700"
-                                >
-                                  <p className="text-xs leading-snug">
-                                    {folder.tooltip}
-                                  </p>
-                                </TooltipContent>
-                              ) : null}
-                            </Tooltip>
+                                    {/* Count badges logic: Inbox (unread), Drafts (total), others suppressed */}
+                                    {(() => {
+                                      const isInbox = folder.name === "Inbox";
+                                      const isDrafts = folder.name === "Drafts";
+                                      if (isInbox) {
+                                        const displayUnread =
+                                          folder.unreadCount || 0;
+                                        // ✅ Show actual number - no 99+ cap
+                                        return (
+                                          <div className="text-gray-700 text-xs px-1.5 py-0.5 rounded-full min-w-[18px] text-center flex-shrink-0 ml-2 font-medium">
+                                            {displayUnread}
+                                          </div>
+                                        );
+                                      }
+                                      if (isDrafts) {
+                                        const total = folder.totalCount || 0;
+                                        if (total <= 0) return null;
+                                        return (
+                                          <div className="text-gray-700 text-xs px-1.5 py-0.5 rounded-full min-w-[20px] text-center flex-shrink-0 ml-2 font-medium">
+                                            {total}
+                                          </div>
+                                        );
+                                      }
+                                      return null; // suppress all others (Trash, Spam, Important, etc.)
+                                    })()}
+                                  </button>
+                                </TooltipTrigger>
+                                {folder.tooltip ? (
+                                  <TooltipContent
+                                    side="right"
+                                    className="max-w-xs bg-gray-800 text-white border-gray-700"
+                                  >
+                                    <p className="text-xs leading-snug">
+                                      {folder.tooltip}
+                                    </p>
+                                  </TooltipContent>
+                                ) : null}
+                              </Tooltip>
+                            </DroppableFolderItem>
                           );
                         })}
                       </div>
@@ -1141,6 +1157,17 @@ function FoldersColumn({
                         animateExpand={true}
                         indent={12}
                         className="space-y-0 [&_.tree-line]:border-gray-200 [&_.tree-chevron]:text-gray-400 [&_.tree-chevron]:scale-75"
+                        nodeWrapper={(node, children) => {
+                          const nestedLabel = node.data as NestedLabel;
+                          return (
+                            <DroppableFolderItem
+                              id={nestedLabel?.id || node.id}
+                              name={nestedLabel?.displayName || (typeof node.label === 'string' ? node.label : node.id)}
+                            >
+                              {children}
+                            </DroppableFolderItem>
+                          );
+                        }}
                       />
                     </div>
                   ) : (

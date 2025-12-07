@@ -40,6 +40,8 @@ interface LabelContextType {
   isDeletingLabel: boolean;
   deleteLabelError: string | null;
   systemCounts: Record<string, number>; // ✅ NEW: Clear derivation for system folder badges
+  // ✅ Local deltas for custom labels (tracked until manual refresh)
+  incrementLabelUnreadCount: (labelId: string, delta: number) => void;
   // ✅ Recent counts (live, derived separately from static label metadata)
   recentCounts: {
     inboxUnreadToday: number; // unread INBOX messages received since New York midnight
@@ -86,7 +88,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // This ensures exact match with Gmail app and eliminates redundant API calls
 
 export function LabelProvider({ children }: { children: React.ReactNode }) {
-  const [labels, setLabels] = useState<GmailLabel[]>([]);
+  const [labels, setLabelsInternal] = useState<GmailLabel[]>([]);
   const [loadingLabels, setLoadingLabels] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [labelsLastUpdated, setLabelsLastUpdated] = useState<number | null>(
@@ -112,7 +114,35 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
   }>({ cacheKey: null, promise: null });
   const hydratedLabelIdsRef = useRef<Set<string>>(new Set());
   const inboxReadyRef = useRef<boolean>(false);
+  const labelsCountRef = useRef<number>(0); // Track labels count for stale closure checks
   const [hydratedLabelsVersion, setHydratedLabelsVersion] = useState(0);
+
+  // ✅ Local delta tracking for custom label unread counts (cleared on manual refresh)
+  // Key = labelId, Value = delta to add to the API count
+  const [labelUnreadDeltas, setLabelUnreadDeltas] = useState<Record<string, number>>({});
+
+  // Wrapper to update both state and ref
+  const setLabels = useCallback((value: GmailLabel[] | ((prev: GmailLabel[]) => GmailLabel[])) => {
+    setLabelsInternal((prev) => {
+      const next = typeof value === 'function' ? value(prev) : value;
+      labelsCountRef.current = next.length;
+      return next;
+    });
+  }, []);
+
+  // Increment local unread count for a label (used when dragging unread emails)
+  const incrementLabelUnreadCount = useCallback((labelId: string, delta: number) => {
+    if (!labelId || delta === 0) return;
+    setLabelUnreadDeltas(prev => ({
+      ...prev,
+      [labelId]: (prev[labelId] || 0) + delta
+    }));
+  }, []);
+
+  // Clear local deltas (called on manual refresh)
+  const clearLabelUnreadDeltas = useCallback(() => {
+    setLabelUnreadDeltas({});
+  }, []);
 
   const markLabelsHydrated = useCallback(
     (labelIds: Array<string | undefined | null>) => {
@@ -464,6 +494,16 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      // When forcing refresh, clear hydrated labels so they get re-fetched with fresh counters
+      if (forceRefresh) {
+        resetHydratedLabels();
+        // Also clear any in-flight user label detail requests
+        userLabelDetailsInFlight.current = { cacheKey: null, promise: null };
+        // Clear local unread deltas - we're getting fresh data from API
+        clearLabelUnreadDeltas();
+        userLabelDetailsInFlight.current = { cacheKey: null, promise: null };
+      }
+
       const startProgress = () => emitLoadingProgress("labels", "start");
       const finishProgress = (status: "success" | "error") =>
         emitLoadingProgress("labels", status);
@@ -499,12 +539,22 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       // Skip if we already loaded recently (within 3 seconds) or if already loading
       const timeSinceLastLoad = Date.now() - lastLoadedAt.current;
       if (timeSinceLastLoad < 3000 && lastLoadedAt.current > 0) {
+        // Still restore from cache if labels state is empty (e.g., after remount)
+        if (labelsCountRef.current === 0 && cached) {
+          setLabels(cached.labels);
+          setLabelsLastUpdated(cached.timestamp);
+        }
         return;
       }
 
       // If already in-flight, wait for it to complete
       if (inFlightRequest.current) {
         await inFlightRequest.current;
+        // Restore from cache after waiting if labels are empty
+        if (labelsCountRef.current === 0 && cached) {
+          setLabels(cached.labels);
+          setLabelsLastUpdated(cached.timestamp);
+        }
         return;
       }
 
@@ -566,6 +616,8 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       hydrateUserLabelCounts,
       markLabelsHydrated,
       isSystemLabel,
+      resetHydratedLabels,
+      clearLabelUnreadDeltas,
     ]
   ); // Removed location.pathname to prevent unnecessary refreshes on navigation
 
@@ -870,8 +922,15 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       map[label.id] = count;
     }
 
+    // ✅ Apply local deltas for custom labels (tracked until manual refresh)
+    for (const [labelId, delta] of Object.entries(labelUnreadDeltas)) {
+      if (delta !== 0) {
+        map[labelId] = Math.max(0, (map[labelId] || 0) + delta);
+      }
+    }
+
     return map;
-  }, [labels]);
+  }, [labels, labelUnreadDeltas]);
 
   const value = {
     labels,
@@ -888,7 +947,8 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     editLabelError,
     isDeletingLabel,
     deleteLabelError,
-    systemCounts, // ✅ Export system counts for badges
+    systemCounts, // ✅ Export system counts for badges (includes local deltas)
+    incrementLabelUnreadCount, // ✅ Method to locally increment label unread count
     recentCounts, // ✅ Export recent dynamic counts
     refreshRecentCounts, // ✅ Method to refresh recent counts
     labelsLastUpdated, // ✅ Timestamp of when labels were last fetched
