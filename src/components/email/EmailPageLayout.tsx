@@ -15,6 +15,7 @@ import {
   MessageSquareWarning} from 'lucide-react';
 import { useCompose } from '@/contexts/ComposeContext';
 import { useEmailDnd } from '@/contexts/EmailDndContext';
+import { useLabel } from '@/contexts/LabelContext';
 import EmailListItem from './EmailListItem';
 import MoveToFolderDialog from './MoveToFolderDialog';
 import ThreeColumnLayout from '../layout/ThreeColumnLayout';
@@ -46,6 +47,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   const { isGmailSignedIn, loading: authLoading, isGmailInitializing } = useAuth();
   const { selectEmail, setSystemFolderFilterHandler } = useLayoutState();
   const { openCompose } = useCompose();
+  const { refreshLabels } = useLabel();
 
   // Ref to preserve scroll position during state updates
   const emailListRef = useRef<HTMLDivElement>(null);
@@ -413,6 +415,10 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     // ✅ Use pagination for all cases (labels and inbox)
     await loadPaginatedEmails(undefined, false); // Reload first page
     
+    // ✅ Also refresh label counts (Inbox, Drafts, etc.) to sync counters
+    // systemOnly=true to preserve custom label counters
+    await refreshLabels(true, true);
+    
     setRefreshing(false);
     setIsRefreshLoading(false);
     
@@ -439,6 +445,10 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       // ✅ Use pagination for all cases - single source of truth
       console.log(`🔄 Refreshing: ${labelName ? `label "${labelName}"` : `tab "${activeTab}"`}`);
       await loadPaginatedEmails(undefined, false);
+      
+      // ✅ Also refresh label counts (Inbox, Drafts, etc.) to sync counters
+      // systemOnly=true to preserve custom label counters
+      await refreshLabels(true, true);
       
       // Show success message
       toast.success('Refreshed successfully', {

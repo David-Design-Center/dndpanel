@@ -27,7 +27,7 @@ import { subscribeLabelUpdateEvent } from "../utils/labelUpdateEvents";
 interface LabelContextType {
   labels: GmailLabel[];
   loadingLabels: boolean;
-  refreshLabels: (forceRefresh?: boolean) => Promise<void>;
+  refreshLabels: (forceRefresh?: boolean, systemOnly?: boolean) => Promise<void>;
   clearLabelsCache: () => void;
   error: string | null;
   addLabel: (name: string) => Promise<GmailLabel | null>;
@@ -448,7 +448,12 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
 
           const currentUnread = label.messagesUnread ?? 0;
           const updatedUnread = Math.max(0, currentUnread + delta);
-          if (updatedUnread === currentUnread) {
+          
+          // Also update threadsUnread for INBOX (used by FoldersColumn display)
+          const currentThreadsUnread = label.threadsUnread ?? 0;
+          const updatedThreadsUnread = Math.max(0, currentThreadsUnread + delta);
+          
+          if (updatedUnread === currentUnread && updatedThreadsUnread === currentThreadsUnread) {
             return label;
           }
 
@@ -456,6 +461,7 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
           return {
             ...label,
             messagesUnread: updatedUnread,
+            threadsUnread: updatedThreadsUnread,
           };
         });
 
@@ -468,8 +474,49 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     };
   }, [isGmailSignedIn]);
 
+  // Listen for draft-created and draft-deleted events to update Draft counter
+  useEffect(() => {
+    if (!isGmailSignedIn) return;
+
+    const handleDraftCreated = () => {
+      console.log('📝 LabelContext: Draft created, incrementing DRAFT count');
+      setLabels((prev) => {
+        return prev.map((label) => {
+          if (label.id !== 'DRAFT') return label;
+          return {
+            ...label,
+            threadsTotal: (label.threadsTotal ?? 0) + 1,
+            messagesTotal: (label.messagesTotal ?? 0) + 1,
+          };
+        });
+      });
+    };
+
+    const handleDraftDeleted = () => {
+      console.log('🗑️ LabelContext: Draft deleted, decrementing DRAFT count');
+      setLabels((prev) => {
+        return prev.map((label) => {
+          if (label.id !== 'DRAFT') return label;
+          return {
+            ...label,
+            threadsTotal: Math.max(0, (label.threadsTotal ?? 0) - 1),
+            messagesTotal: Math.max(0, (label.messagesTotal ?? 0) - 1),
+          };
+        });
+      });
+    };
+
+    window.addEventListener('draft-created', handleDraftCreated);
+    window.addEventListener('draft-deleted', handleDraftDeleted);
+
+    return () => {
+      window.removeEventListener('draft-created', handleDraftCreated);
+      window.removeEventListener('draft-deleted', handleDraftDeleted);
+    };
+  }, [isGmailSignedIn]);
+
   const refreshLabels = useCallback(
-    async (forceRefresh: boolean = false) => {
+    async (forceRefresh: boolean = false, systemOnly: boolean = false) => {
       // Security check: Block all data fetches during auth flow
       if (shouldBlockDataFetches(location.pathname)) {
         return;
@@ -494,8 +541,9 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // When forcing refresh, clear hydrated labels so they get re-fetched with fresh counters
-      if (forceRefresh) {
+      // When forcing refresh (and NOT systemOnly), clear hydrated labels so they get re-fetched with fresh counters
+      // When systemOnly is true, we preserve custom label state and only refresh system labels
+      if (forceRefresh && !systemOnly) {
         resetHydratedLabels();
         // Also clear any in-flight user label detail requests
         userLabelDetailsInFlight.current = { cacheKey: null, promise: null };
@@ -569,7 +617,19 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
           .map((label) => label.id);
         markLabelsHydrated(instantHydratedIds);
 
-        setLabels(gmailLabels);
+        // When systemOnly is true, merge fresh system labels with existing custom labels
+        if (systemOnly) {
+          setLabels(prev => {
+            // Keep existing custom labels (preserve their counters)
+            const existingCustomLabels = prev.filter(label => !isSystemLabel(label));
+            // Get fresh system labels
+            const freshSystemLabels = gmailLabels.filter(label => isSystemLabel(label));
+            // Merge: fresh system + existing custom
+            return [...freshSystemLabels, ...existingCustomLabels];
+          });
+        } else {
+          setLabels(gmailLabels);
+        }
 
         // Cache the result with the same key format
         const now = Date.now();
@@ -587,10 +647,13 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
         // Update last updated timestamp
         setLabelsLastUpdated(now);
 
-        if (!hasDetailedCounters) {
-          hydrateUserLabelCounts(gmailLabels, cacheKey);
-        } else {
-          markLabelsHydrated(gmailLabels.map((label) => label.id));
+        // Skip hydrating user labels when systemOnly is true (preserve custom label state)
+        if (!systemOnly) {
+          if (!hasDetailedCounters) {
+            hydrateUserLabelCounts(gmailLabels, cacheKey);
+          } else {
+            markLabelsHydrated(gmailLabels.map((label) => label.id));
+          }
         }
         finishProgress("success");
       } catch (err) {
