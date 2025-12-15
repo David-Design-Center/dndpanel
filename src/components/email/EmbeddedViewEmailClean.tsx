@@ -934,6 +934,13 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       sonnerToast.error('Please select a folder');
       return;
     }
+    
+    // 🔧 SELF-FILTER BUG FIX (Dec 2025): Prevent creating filter for own email
+    const currentUserEmail = cleanEmailAddress(currentProfile?.userEmail || '').toLowerCase();
+    if (sender.toLowerCase() === currentUserEmail) {
+      sonnerToast.error('Cannot create filter for your own email address. This would affect all your sent emails.');
+      return;
+    }
 
     try {
       sonnerToast.message('Creating rule…');

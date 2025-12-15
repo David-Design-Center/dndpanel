@@ -13,6 +13,7 @@ import { createGmailFilter } from '@/integrations/gapiService';
 import { cleanEmailAddress } from '@/utils/emailFormatting';
 import { toast } from 'sonner';
 import { Email } from '@/types';
+import { useProfile } from '@/contexts/ProfileContext';
 
 export type MoveDialogType = 'trash' | 'folder';
 
@@ -44,12 +45,17 @@ export function MoveEmailDialog({
 }: MoveEmailDialogProps) {
   const [createFilter, setCreateFilter] = useState(false);
   const [isCreatingFilter, setIsCreatingFilter] = useState(false);
+  const { currentProfile } = useProfile();
 
-  // Extract unique sender emails
+  // 🔧 SELF-FILTER BUG FIX (Dec 2025): Get current user's email to exclude from filters
+  const currentUserEmail = cleanEmailAddress(currentProfile?.userEmail || '').toLowerCase();
+
+  // Extract unique sender emails, excluding current user's own email
   const senderEmails = [...new Set(
     emails
       .map(email => cleanEmailAddress(email.from?.email || ''))
       .filter(Boolean)
+      .filter(email => email.toLowerCase() !== currentUserEmail) // Exclude self
   )];
 
   const isTrash = dialogType === 'trash';
@@ -121,6 +127,10 @@ export function MoveEmailDialog({
     ? `This email will be moved to ${folderDisplayName}.`
     : `${emails.length} emails will be moved to ${folderDisplayName}.`;
   
+  // 🔧 SELF-FILTER BUG FIX (Dec 2025): Check if all senders were filtered out (all were self)
+  const allSendersAreSelf = senderEmails.length === 0 && emails.length > 0;
+  const canCreateFilter = senderEmails.length > 0;
+
   const checkboxLabel = isTrash 
     ? `Block ${senderDisplay}`
     : `Always move emails from ${senderDisplay} here`;
@@ -141,6 +151,8 @@ export function MoveEmailDialog({
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
 
+        {/* 🔧 SELF-FILTER BUG FIX: Show checkbox only if there are external senders */}
+        {canCreateFilter ? (
         <div className="flex items-start space-x-3 py-4">
           <Checkbox
             id="create-filter"
@@ -160,6 +172,14 @@ export function MoveEmailDialog({
             </p>
           </div>
         </div>
+        ) : allSendersAreSelf ? (
+          <div className="py-4 px-3 bg-amber-50 border border-amber-200 rounded-md">
+            <p className="text-sm text-amber-800">
+              <strong>Note:</strong> Cannot create auto-filter for your own sent emails. 
+              The email{emails.length > 1 ? 's' : ''} will still be moved to {folderDisplayName}.
+            </p>
+          </div>
+        ) : null}
 
         <DialogFooter className="gap-2 sm:gap-0">
           <Button variant="outline" onClick={handleCancel} disabled={isCreatingFilter}>

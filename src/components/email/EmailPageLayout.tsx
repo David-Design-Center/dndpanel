@@ -45,9 +45,9 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { isGmailSignedIn, loading: authLoading, isGmailInitializing } = useAuth();
-  const { selectEmail, setSystemFolderFilterHandler } = useLayoutState();
+  const { selectEmail, setSystemFolderFilterHandler, selectedEmailId, clearSelection: clearViewSelection } = useLayoutState();
   const { openCompose } = useCompose();
-  const { refreshLabels } = useLabel();
+  const { refreshLabels, incrementLabelUnreadCount } = useLabel();
 
   // Ref to preserve scroll position during state updates
   const emailListRef = useRef<HTMLDivElement>(null);
@@ -234,7 +234,14 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     allTabEmails,
     setAllTabEmails,
     setCategoryEmails,
-    setEmails
+    setEmails,
+    // 🔧 BULK DELETE FIX (Dec 2025): Additional options for complete bulk delete behavior
+    setPaginatedEmails,
+    paginatedEmails,
+    incrementLabelUnreadCount,
+    selectedEmailId,
+    clearViewSelection,
+    navigate
   });
   
   // Destructure for backwards compatibility

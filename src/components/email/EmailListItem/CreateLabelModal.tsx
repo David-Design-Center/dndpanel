@@ -7,6 +7,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useLabel } from '@/contexts/LabelContext';
+import { useProfile } from '@/contexts/ProfileContext';
 import { toast } from 'sonner';
 import { createGmailFilter, fetchGmailLabels } from '@/integrations/gapiService';
 import { cleanEmailAddress } from '@/utils/emailFormatting';
@@ -27,11 +28,17 @@ export function CreateLabelModal({
   email
 }: CreateLabelModalProps) {
   const { labels, addLabel } = useLabel();
+  const { currentProfile } = useProfile();
   const [newLabelName, setNewLabelName] = useState(initialName);
   const [nestUnder, setNestUnder] = useState(false);
   const [parentLabel, setParentLabel] = useState('');
   const [autoFilterFuture, setAutoFilterFuture] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
+
+  // 🔧 SELF-FILTER BUG FIX (Dec 2025): Get current user's email
+  const currentUserEmail = cleanEmailAddress(currentProfile?.userEmail || '').toLowerCase();
+  const senderEmail = cleanEmailAddress(email.from?.email || '').toLowerCase();
+  const isSenderSelf = senderEmail === currentUserEmail && currentUserEmail !== '';
 
   // Update initial name when prop changes
   useEffect(() => {
@@ -61,6 +68,13 @@ export function CreateLabelModal({
         const sender = cleanEmailAddress(email.from?.email || '');
         if (!sender) {
           toast.error('Cannot create auto-filter: missing sender email');
+          onClose();
+          return;
+        }
+        
+        // 🔧 SELF-FILTER BUG FIX: Skip filter if sender is self
+        if (isSenderSelf) {
+          toast.warning('Auto-filter skipped: Cannot create filter for your own email address.');
           onClose();
           return;
         }

@@ -128,6 +128,23 @@ export function parseEmailBody(message: any): string {
     }
   }
   
+  // 🔧 PLAIN TEXT FALLBACK (Dec 2025): Last resort fix for malformed HTML
+  // Only runs if body still has raw newlines AND no <br> tags AND no block elements
+  // This catches edge cases where HTML wrapper exists but content is plain text
+  if (body) {
+    const hasRawNewlines = /[\r\n]/.test(body);
+    const hasLineBreakTags = /<br[\s/>]/i.test(body);
+    const hasBlockElements = /<(p|div|table|tr|ul|ol|li|h[1-6])[\s>]/i.test(body);
+    
+    if (hasRawNewlines && !hasLineBreakTags && !hasBlockElements) {
+      console.log('📝 FALLBACK: Converting raw newlines to <br> (plain text in HTML wrapper)');
+      body = body
+        .replace(/\r\n/g, '<br>')
+        .replace(/\n/g, '<br>')
+        .replace(/\r/g, '<br>');
+    }
+  }
+  
   return body;
 }
 

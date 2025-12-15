@@ -24,6 +24,13 @@ export interface UseEmailSelectionOptions {
   setAllTabEmails: React.Dispatch<React.SetStateAction<Record<string, Email[]>>>;
   setCategoryEmails: React.Dispatch<React.SetStateAction<any>>;
   setEmails: React.Dispatch<React.SetStateAction<Email[]>>;
+  // 🔧 BULK DELETE FIX (Dec 2025): Additional options for complete bulk delete behavior
+  setPaginatedEmails: React.Dispatch<React.SetStateAction<Email[]>>;
+  paginatedEmails: Email[]; // Current paginated emails for unread count lookup
+  incrementLabelUnreadCount: (labelId: string, delta: number) => void;
+  selectedEmailId: string | null; // Currently viewed email ID
+  clearViewSelection: () => void; // Clear the email view panel
+  navigate: (path: string) => void;
 }
 
 export interface UseEmailSelectionReturn {
@@ -48,7 +55,14 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
     allTabEmails,
     setAllTabEmails,
     setCategoryEmails,
-    setEmails
+    setEmails,
+    // 🔧 BULK DELETE FIX (Dec 2025): Additional options
+    setPaginatedEmails,
+    paginatedEmails,
+    incrementLabelUnreadCount,
+    selectedEmailId,
+    clearViewSelection,
+    navigate
   } = options;
 
   // Selection state
@@ -79,6 +93,24 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
     const emailIds = Array.from(selectedEmails);
     const emailCount = emailIds.length;
     const loadingToastId = toast.loading(`Deleting ${emailCount} email${emailCount > 1 ? 's' : ''}...`);
+
+    // 🔧 BULK DELETE FIX (Dec 2025): Count unread emails BEFORE deletion for counter update
+    // Search in all possible email sources to find the emails being deleted
+    const allEmailSources = [
+      ...emails,
+      ...paginatedEmails,
+      ...(allTabEmails.all || []),
+      ...(allTabEmails.unread || [])
+    ];
+    // Dedupe by ID to avoid counting same email twice
+    const emailMap = new Map(allEmailSources.map(e => [e.id, e]));
+    const emailsToDelete = emailIds.map(id => emailMap.get(id)).filter(Boolean) as Email[];
+    const unreadCount = emailsToDelete.filter(e => !e.isRead).length;
+    
+    console.log(`🗑️ BULK DELETE: ${emailIds.length} emails, ${unreadCount} unread`);
+    
+    // 🔧 BULK DELETE FIX (Dec 2025): Check if currently viewing any of the deleted emails
+    const isViewingDeletedEmail = selectedEmailId && emailIds.includes(selectedEmailId);
 
     try {
       // Delete all selected emails
@@ -126,8 +158,30 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
         );
       }
 
+      // 🔧 BULK DELETE FIX (Dec 2025): Also update paginatedEmails for immediate UI feedback
+      setPaginatedEmails(prev => prev.filter(email => !emailIds.includes(email.id)));
+
       // Clear selection
       setSelectedEmails(new Set());
+
+      // 🔧 BULK DELETE FIX (Dec 2025): Update unread counter
+      if (unreadCount > 0) {
+        if (labelIdParam) {
+          // Viewing a custom folder - decrement that folder's counter
+          incrementLabelUnreadCount(labelIdParam, -unreadCount);
+        } else {
+          // Viewing inbox - decrement INBOX counter
+          incrementLabelUnreadCount('INBOX', -unreadCount);
+        }
+        // Also increment TRASH counter (emails moved to trash)
+        incrementLabelUnreadCount('TRASH', unreadCount);
+      }
+
+      // 🔧 BULK DELETE FIX (Dec 2025): Close ViewEmail if deleted email was being viewed
+      if (isViewingDeletedEmail) {
+        clearViewSelection();
+        navigate('/inbox');
+      }
 
       // Show success toast
       toast.success(`${emailCount} email${emailCount > 1 ? 's' : ''} deleted`, {
@@ -146,7 +200,7 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
         id: loadingToastId
       });
     }
-  }, [selectedEmails, pageType, labelName, setAllTabEmails, setCategoryEmails, setEmails]);
+  }, [selectedEmails, emails, paginatedEmails, allTabEmails, pageType, labelName, labelIdParam, setAllTabEmails, setCategoryEmails, setEmails, setPaginatedEmails, incrementLabelUnreadCount, selectedEmailId, clearViewSelection, navigate]);
 
   /**
    * Mark all selected emails as read

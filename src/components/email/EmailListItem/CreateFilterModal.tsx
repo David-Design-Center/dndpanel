@@ -7,6 +7,7 @@ import { createGmailFilter, fetchGmailLabels } from '@/integrations/gapiService'
 import { cleanEmailAddress } from '@/utils/emailFormatting';
 import { cleanEncodingIssues } from '@/utils/textEncoding';
 import { useLabel } from '@/contexts/LabelContext';
+import { useProfile } from '@/contexts/ProfileContext';
 import { filterAndPrepareLabels } from '../utils/labelFiltering';
 
 interface CreateFilterModalProps {
@@ -23,16 +24,26 @@ export function CreateFilterModal({
   onFilterCreated
 }: CreateFilterModalProps) {
   const { labels } = useLabel();
+  const { currentProfile } = useProfile();
   const [filterLabelQuery, setFilterLabelQuery] = useState('');
   const [selectedFilterLabel, setSelectedFilterLabel] = useState('');
   const modalRef = useRef<HTMLDivElement>(null);
 
   const filteredFilterLabels = filterAndPrepareLabels(labels, filterLabelQuery);
 
+  // 🔧 SELF-FILTER BUG FIX (Dec 2025): Get current user's email
+  const currentUserEmail = cleanEmailAddress(currentProfile?.userEmail || '').toLowerCase();
+
   const handleCreateFilterWithLabel = async () => {
     const sender = cleanEmailAddress(email.from?.email || '');
     if (!sender) {
       toast.error('Missing sender email');
+      return;
+    }
+    
+    // 🔧 SELF-FILTER BUG FIX: Prevent creating filter for own email
+    if (sender.toLowerCase() === currentUserEmail) {
+      toast.error('Cannot create filter for your own email address. This would affect all your sent emails.');
       return;
     }
     if (!selectedFilterLabel) {
