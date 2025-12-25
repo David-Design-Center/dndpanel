@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Reply, ReplyAll, Forward, Trash, MoreVertical, Star, Paperclip, Download, ChevronDown, Mail, MailOpen, Flag, MailWarning, Filter, Search, ChevronRight, Settings, Plus, Maximize2, Minimize2, FolderInput } from 'lucide-react';
+import { X, Reply, ReplyAll, Forward, Trash, MoreVertical, Star, Paperclip, Download, ChevronDown, ChevronRight, Mail, MailOpen, Flag, MailWarning, Filter, Search, Settings, Plus, Maximize2, Minimize2, FolderInput } from 'lucide-react';
 import { parseISO, format, formatDistanceToNow } from 'date-fns';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
@@ -31,6 +31,8 @@ import { useLayoutState } from '../../contexts/LayoutStateContext';
 import { useLabel } from '../../contexts/LabelContext';
 import MoveToFolderDialog from './MoveToFolderDialog';
 import { useProfile } from '../../contexts/ProfileContext';
+import { useContacts } from '../../contexts/ContactsContext';
+import { getProfileInitial } from '../../lib/utils';
 import { cleanEmailAddress } from '../../utils/emailFormatting';
 import { toast as sonnerToast } from 'sonner';
 import RichTextEditor from '../common/RichTextEditor';
@@ -45,6 +47,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
+import { stripQuotedText } from '../../utils/emailContentProcessing';
 
 interface EmbeddedViewEmailProps {
   emailId: string;
@@ -52,15 +55,16 @@ interface EmbeddedViewEmailProps {
   onEmailDelete?: (emailId: string) => void;
 }
 
-// Format time like Gmail: "10:32 AM (15 min ago)"
-const formatEmailTime = (dateString: string): { time: string; relative: string } => {
+// Format time like Gmail: "Dec 19, 2025, 7:37 AM (4 days ago)"
+const formatEmailTime = (dateString: string): { time: string; relative: string; fullDate: string } => {
   try {
     const date = parseISO(dateString);
     const time = format(date, 'h:mm a');
     const relative = formatDistanceToNow(date, { addSuffix: true });
-    return { time, relative };
+    const fullDate = format(date, 'MMM d, yyyy, h:mm a');
+    return { time, relative, fullDate };
   } catch {
-    return { time: '', relative: '' };
+    return { time: '', relative: '', fullDate: '' };
   }
 };
 
@@ -119,6 +123,8 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const [sending, setSending] = useState(false);
   const [expandedMessages, setExpandedMessages] = useState<Set<string>>(new Set());
   const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set()); // Track which messages have images loaded
+  const [expandedQuotedContent, setExpandedQuotedContent] = useState<Set<string>>(new Set()); // Track which messages have quoted content expanded
+  const [quotedContentMap, setQuotedContentMap] = useState<Map<string, string>>(new Map()); // Store quoted content per message ID
   const [forwardingMessage, setForwardingMessage] = useState<Email | null>(null); // Track which message is being forwarded
   const [forwardType, setForwardType] = useState<'single' | 'all'>('single'); // Track forward type
   const [isReplyExpanded, setIsReplyExpanded] = useState(false); // Reply composer fullscreen mode
@@ -209,6 +215,18 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const [parentLabel, setParentLabel] = useState('');
   const [autoFilterFuture, setAutoFilterFuture] = useState(false);
   
+  // CC/BCC state for reply composer
+  const [showCc, setShowCc] = useState(false);
+  const [ccRecipients, setCcRecipients] = useState<string[]>([]);
+  const [ccInput, setCcInput] = useState('');
+  const [showCcDropdown, setShowCcDropdown] = useState(false);
+  const [filteredCcContacts, setFilteredCcContacts] = useState<any[]>([]);
+  const [showBcc, setShowBcc] = useState(false);
+  const [bccRecipients, setBccRecipients] = useState<string[]>([]);
+  const [bccInput, setBccInput] = useState('');
+  const [showBccDropdown, setShowBccDropdown] = useState(false);
+  const [filteredBccContacts, setFilteredBccContacts] = useState<any[]>([]);
+  
   const hideFilterTimerRef = useRef<number | null>(null);
   const filterButtonRef = useRef<HTMLButtonElement>(null);
   const dropdownContentRef = useRef<HTMLDivElement>(null);
@@ -225,6 +243,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const { clearSelection } = useLayoutState();
   const { labels, addLabel } = useLabel(); // Get labels from context
   const { currentProfile } = useProfile(); // Get current profile for From field
+  const { searchContacts, setShouldLoadContacts } = useContacts(); // For CC/BCC dropdown
   const navigate = useNavigate();
   const { toast } = useToast();
   const [searchParams] = useSearchParams();
@@ -268,7 +287,30 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
       const payload = draftDetails.result.message.payload;
       
-      // Step 4: Extract body content
+      // Step 4a: Extract CC and BCC headers
+      const headers = payload?.headers || [];
+      const ccHeader = headers.find((h: any) => h.name.toLowerCase() === 'cc')?.value || '';
+      const bccHeader = headers.find((h: any) => h.name.toLowerCase() === 'bcc')?.value || '';
+      
+      // Parse CC/BCC into arrays of email addresses
+      const parseCcEmails = (headerValue: string): string[] => {
+        if (!headerValue) return [];
+        // Split by comma, extract email from "Name <email>" or just "email" format
+        return headerValue.split(',')
+          .map(part => {
+            const match = part.match(/<([^>]+)>/) || part.match(/([^\s,]+@[^\s,]+)/);
+            return match ? match[1].trim() : '';
+          })
+          .filter(email => email && email.includes('@'));
+      };
+      
+      const draftCcRecipients = parseCcEmails(ccHeader);
+      const draftBccRecipients = parseCcEmails(bccHeader);
+      
+      console.log('📧 Draft CC recipients:', draftCcRecipients);
+      console.log('📧 Draft BCC recipients:', draftBccRecipients);
+      
+      // Step 4b: Extract body content
       let bodyHtml = '';
       const findBody = (parts: any[]): { html: string; text: string } => {
         let html = '';
@@ -374,6 +416,18 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         isDirty: false,
         error: null
       });
+      
+      // Step 7: Set CC/BCC state from draft
+      if (draftCcRecipients.length > 0) {
+        setCcRecipients(draftCcRecipients);
+        setShowCc(true);
+        console.log('📧 Set CC recipients from draft:', draftCcRecipients);
+      }
+      if (draftBccRecipients.length > 0) {
+        setBccRecipients(draftBccRecipients);
+        setShowBcc(true);
+        console.log('📧 Set BCC recipients from draft:', draftBccRecipients);
+      }
       
       console.log('✅ COMPLETE loadDraftCompletely - content length:', bodyHtml.length);
       return true;
@@ -494,16 +548,16 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
               // 🎯 Use consolidated load function
               await loadDraftCompletely(draftMessage.id);
               
-              // Expand the latest non-draft message
+              // Expand all non-draft messages
               if (nonDraftMessages.length > 0) {
-                setExpandedMessages(new Set([nonDraftMessages[nonDraftMessages.length - 1].id]));
+                setExpandedMessages(new Set(nonDraftMessages.map(m => m.id)));
               }
             } else {
               console.log('⚠️ No draft message found in thread!');
               console.log('⚠️ But composer state - showReplyComposer:', showReplyComposer, 'replyContent length:', replyContent.length);
               setThreadMessages(sorted);
-              // Auto-expand the latest message
-              setExpandedMessages(new Set([sorted[sorted.length - 1].id]));
+              // Auto-expand all messages
+              setExpandedMessages(new Set(sorted.map(m => m.id)));
             }
             
             setLoadedImages(new Set());
@@ -552,13 +606,13 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
             // 🎯 Use consolidated load function
             await loadDraftCompletely(draftMessage.id);
             
-            // Expand the latest non-draft message
+            // Expand all non-draft messages
             if (nonDraftMessages.length > 0) {
-              setExpandedMessages(new Set([nonDraftMessages[nonDraftMessages.length - 1].id]));
+              setExpandedMessages(new Set(nonDraftMessages.map(m => m.id)));
             }
           } else {
             setThreadMessages(sorted);
-            setExpandedMessages(new Set([sorted[sorted.length - 1].id]));
+            setExpandedMessages(new Set(sorted.map(m => m.id)));
           }
           
           setLoadedImages(new Set());
@@ -579,17 +633,133 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     }
   };
 
+  // CC input handlers
+  const handleCcInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setCcInput(value);
+    
+    // Trigger contacts load if not yet loaded
+    setShouldLoadContacts(true);
+
+    // Update filtered contacts based on input
+    const contacts = searchContacts(value, 5);
+    setFilteredCcContacts(contacts);
+    const shouldShow = value.trim().length > 0 && contacts.length > 0;
+    setShowCcDropdown(shouldShow);
+  };
+
+  const handleCcContactSelect = (contact: { email: string; name: string }) => {
+    if (!ccRecipients.includes(contact.email)) {
+      setCcRecipients(prev => [...prev, contact.email]);
+      handleDraftChange();
+    }
+    setCcInput('');
+    setShowCcDropdown(false);
+    setFilteredCcContacts([]);
+  };
+
+  const handleCcInputFocus = () => {
+    setShouldLoadContacts(true);
+    if (ccInput.trim().length > 0) {
+      const contacts = searchContacts(ccInput, 5);
+      setFilteredCcContacts(contacts);
+      setShowCcDropdown(contacts.length > 0);
+    }
+  };
+
+  const handleCcInputBlur = () => {
+    setTimeout(() => {
+      setShowCcDropdown(false);
+    }, 150);
+  };
+
+  const handleCcInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const email = ccInput.trim();
+      if (email && email.includes('@') && !ccRecipients.includes(email)) {
+        setCcRecipients(prev => [...prev, email]);
+        setCcInput('');
+        handleDraftChange();
+      }
+    }
+  };
+
+  const removeCcRecipient = (email: string) => {
+    setCcRecipients(prev => prev.filter(recipient => recipient !== email));
+    handleDraftChange();
+  };
+
+  // BCC input handlers
+  const handleBccInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setBccInput(value);
+    
+    setShouldLoadContacts(true);
+
+    const contacts = searchContacts(value, 5);
+    setFilteredBccContacts(contacts);
+    const shouldShow = value.trim().length > 0 && contacts.length > 0;
+    setShowBccDropdown(shouldShow);
+  };
+
+  const handleBccContactSelect = (contact: { email: string; name: string }) => {
+    if (!bccRecipients.includes(contact.email)) {
+      setBccRecipients(prev => [...prev, contact.email]);
+      handleDraftChange();
+    }
+    setBccInput('');
+    setShowBccDropdown(false);
+    setFilteredBccContacts([]);
+  };
+
+  const handleBccInputFocus = () => {
+    setShouldLoadContacts(true);
+    if (bccInput.trim().length > 0) {
+      const contacts = searchContacts(bccInput, 5);
+      setFilteredBccContacts(contacts);
+      setShowBccDropdown(contacts.length > 0);
+    }
+  };
+
+  const handleBccInputBlur = () => {
+    setTimeout(() => {
+      setShowBccDropdown(false);
+    }, 150);
+  };
+
+  const handleBccInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const email = bccInput.trim();
+      if (email && email.includes('@') && !bccRecipients.includes(email)) {
+        setBccRecipients(prev => [...prev, email]);
+        setBccInput('');
+        handleDraftChange();
+      }
+    }
+  };
+
+  const removeBccRecipient = (email: string) => {
+    setBccRecipients(prev => prev.filter(recipient => recipient !== email));
+    handleDraftChange();
+  };
+
   const handleSendReply = async () => {
     if (!email || !replyContent.trim()) return;
 
     setSending(true);
     try {
+      // Prepare CC/BCC strings
+      const ccString = ccRecipients.filter(e => e.trim()).join(',');
+      const bccString = bccRecipients.filter(e => e.trim()).join(',');
+      
       if (replyMode === 'reply') {
-        await sendReply(email, replyContent);
-        toast({ title: 'Reply sent successfully' });
+        await sendReply(email, replyContent, false, ccString, bccString);
+        toast({ title: 'Email sent' });
       } else if (replyMode === 'replyAll') {
-        await sendReplyAll(email, replyContent);
-        toast({ title: 'Reply sent to all recipients' });
+        await sendReplyAll(email, replyContent, ccString, bccString);
+        toast({ title: 'Email sent' });
       } else if (replyMode === 'forward' && forwardTo.trim()) {
         const subject = email.subject.startsWith('Fwd: ') ? email.subject : `Fwd: ${email.subject}`;
         await sendEmail({
@@ -599,8 +769,8 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           body: replyContent,
           threadId: email.threadId,
           internalDate: null
-        });
-        toast({ title: 'Email forwarded successfully' });
+        }, undefined, undefined, ccString, bccString);
+        toast({ title: 'Email sent' });
       }
 
       // Delete draft after successful send
@@ -623,6 +793,10 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       setShowReplyComposer(false);
       setReplyContent('');
       setForwardTo('');
+      setCcRecipients([]);
+      setBccRecipients([]);
+      setShowCc(false);
+      setShowBcc(false);
       setDraftId(null);
       setIsDirty(false);
       isDirtyRef.current = false;
@@ -638,7 +812,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     } catch (err) {
       console.error('Error sending reply:', err);
       toast({ 
-        title: 'Failed to send', 
+        title: 'Failed to send email', 
         description: 'Please try again',
         variant: 'destructive'
       });
@@ -938,7 +1112,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     // 🔧 SELF-FILTER BUG FIX (Dec 2025): Prevent creating filter for own email
     const currentUserEmail = cleanEmailAddress(currentProfile?.userEmail || '').toLowerCase();
     if (sender.toLowerCase() === currentUserEmail) {
-      sonnerToast.error('Cannot create filter for your own email address. This would affect all your sent emails.');
+      sonnerToast.error('Cannot create rule for your own email address. This would affect all your sent emails.');
       return;
     }
 
@@ -961,7 +1135,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         { addLabelIds: [match.id] }
       );
 
-      sonnerToast.success(`Filter created! Emails from "${sender}" will be moved to "${selectedFilterLabel}"`);
+      sonnerToast.success(`Rule created! Emails from "${sender}" will be moved to "${selectedFilterLabel}"`);
       await fetchEmailAndThread();
     } catch (err) {
       console.error('Filter creation error:', err);
@@ -978,9 +1152,9 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     try {
       await addLabel(fullName);
       setShowCreateLabelModal(false);
-      sonnerToast.success(`Label "${fullName}" created`);
+      sonnerToast.success(`Folder "${fullName}" created`);
     } catch (err) {
-      sonnerToast.error('Failed to create label');
+      sonnerToast.error('Failed to create folder');
     }
   };
 
@@ -1114,10 +1288,28 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     setShowReplyComposer(true);
   };
 
-  // Format forwarded message content
+  // Initialize reply/replyAll composer with signature
+  useEffect(() => {
+    // Only initialize when composer opens for reply/replyAll (not forward, not loading draft)
+    if (showReplyComposer && (replyMode === 'reply' || replyMode === 'replyAll') && !draftId) {
+      // Initialize with signature if available, otherwise empty
+      const signatureContent = currentProfile?.signature 
+        ? '<br><br>' + currentProfile.signature 
+        : '';
+      setReplyContent(signatureContent);
+      console.log('✍️ Reply composer initialized with signature');
+    }
+  }, [showReplyComposer, replyMode, draftId, currentProfile?.signature]);
+
+  // Format forwarded message content (with signature)
   useEffect(() => {
     if (replyMode === 'forward' && forwardingMessage && showReplyComposer) {
-      let forwardedContent = '';
+      // Add signature at top (before forwarded content)
+      const signatureContent = currentProfile?.signature 
+        ? '<br><br>' + currentProfile.signature 
+        : '';
+      
+      let forwardedContent = signatureContent;
       
       if (forwardType === 'single') {
         // Format single message forward
@@ -1129,7 +1321,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           day: 'numeric' 
         });
         
-        forwardedContent = `<br><br>---------- Forwarded message ---------<br>` +
+        forwardedContent += `<br><br>---------- Forwarded message ---------<br>` +
           `From: &lt;${forwardingMessage.from.email}&gt;<br>` +
           `Date: ${date} at ${time}<br>` +
           `Subject: ${forwardingMessage.subject}<br>` +
@@ -1137,7 +1329,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           `${forwardingMessage.body || ''}`;
       } else if (forwardType === 'all') {
         // Format all messages in thread
-        forwardedContent = '<br><br>';
+        forwardedContent += '<br><br>';
         threadMessages.forEach((msg, index) => {
           const { time } = formatEmailTime(msg.date);
           const date = new Date(msg.date).toLocaleDateString('en-US', { 
@@ -1161,7 +1353,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     }
     // 🎯 REMOVED: Auto-clear logic that caused race conditions
     // Content should only be cleared explicitly by user actions (close, discard, send)
-  }, [replyMode, forwardingMessage, forwardType, showReplyComposer, threadMessages]);
+  }, [replyMode, forwardingMessage, forwardType, showReplyComposer, threadMessages, currentProfile?.signature]);
 
   // Draft saving utilities
   const hashDraftState = useCallback(() => {
@@ -1257,12 +1449,18 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         recipientEmail = email?.from?.email || '';
       }
 
+      // Build CC/BCC strings from current state
+      const ccString = ccRecipients.filter(e => e.trim()).join(',');
+      const bccString = bccRecipients.filter(e => e.trim()).join(',');
+
       const payload = {
         to: recipientEmail,
         body: currentReplyContent,
         mode: currentReplyMode,
         threadId: email?.threadId,
-        inReplyTo: email?.id
+        inReplyTo: email?.id,
+        cc: ccString || undefined,
+        bcc: bccString || undefined
       };
 
       console.log('📝 Draft payload:', { ...payload, body: payload.body.substring(0, 100) + '...' });
@@ -1459,6 +1657,18 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     }
   };
 
+  const toggleQuotedContent = (messageId: string) => {
+    setExpandedQuotedContent(prev => {
+      const next = new Set(prev);
+      if (next.has(messageId)) {
+        next.delete(messageId);
+      } else {
+        next.add(messageId);
+      }
+      return next;
+    });
+  };
+
   // Ensure inline images load for any message currently expanded (including initial single-message threads)
   useEffect(() => {
     if (!threadMessages.length) return;
@@ -1572,8 +1782,19 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     console.log('🖼️ Rendering email body, length:', htmlBody.length);
     console.log('🖼️ First 300 chars:', htmlBody.substring(0, 300));
 
+    // Strip quoted content (Gmail/Outlook reply history)
+    const { cleanBody, quotedContent } = stripQuotedText(htmlBody);
+    
+    // Store quoted content in map for later toggle
+    if (quotedContent && !quotedContentMap.has(message.id)) {
+      setQuotedContentMap(prev => new Map(prev).set(message.id, quotedContent));
+      console.log('📝 Stored quoted content for message:', message.id, 'Length:', quotedContent.length);
+    }
+    
+    console.log('✂️ Stripped quoted content. Original:', htmlBody.length, 'Clean:', cleanBody.length, 'Quoted:', quotedContent?.length || 0);
+
     // Sanitize with email-safe config - preserve formatting and images
-    const clean = DOMPurify.sanitize(htmlBody, {
+    const clean = DOMPurify.sanitize(cleanBody, {
       ADD_TAGS: ['style', 'link'],
       ADD_ATTR: ['target', 'style', 'class', 'id', 'width', 'height', 'src', 'href', 'alt', 'title', 'align', 'valign', 'border', 'cellpadding', 'cellspacing', 'bgcolor', 'color', 'size', 'face'],
       ALLOW_DATA_ATTR: false,
@@ -1649,14 +1870,17 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         srcDoc={wrappedHtml}
         title="Email content"
         className="w-full border-0"
-        style={{ minHeight: '400px', height: 'auto' }}
+        style={{ minHeight: '50px', height: 'auto' }}
         sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         referrerPolicy="no-referrer"
         onLoad={(e) => {
           const iframe = e.target as HTMLIFrameElement;
           if (iframe.contentDocument) {
-            const height = iframe.contentDocument.documentElement.scrollHeight;
-            iframe.style.height = `${height + 20}px`;
+            // Use body scrollHeight for more accurate measurement
+            const body = iframe.contentDocument.body;
+            const height = body ? body.scrollHeight : iframe.contentDocument.documentElement.scrollHeight;
+            // Reduce extra padding from 20px to 5px
+            iframe.style.height = `${height + 5}px`;
           }
         }}
       />
@@ -1981,24 +2205,28 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         <div className="px-4 py-2">
           {threadMessages.length > 1 ? (
             <div className="space-y-1.5">
-              {threadMessages.map((message) => {
+              {[...threadMessages].reverse().map((message) => {
                 const isExpanded = expandedMessages.has(message.id);
-                const { time: msgTime } = formatEmailTime(message.date);
+                const { fullDate, relative } = formatEmailTime(message.date);
+                
+                // Extract recipients for expanded view
+                const toEmails = message.to?.map(t => t.email).join(', ') || '';
+                const ccEmails = message.cc?.map(c => c.email).join(', ') || '';
 
                 return (
                   <div
                     key={message.id}
-                    className={`border border-gray-200 rounded overflow-hidden transition-all ${
-                      isExpanded ? 'shadow-sm' : ''
+                    className={`overflow-hidden transition-all ${
+                      isExpanded ? '' : ''
                     }`}
                   >
                     {/* Collapsed Header */}
                     <div className="w-full px-2 py-1.5 flex items-center gap-2 hover:bg-gray-50 transition-colors">
                       <button
                         onClick={() => toggleMessageExpansion(message.id)}
-                        className="flex items-center gap-2 flex-1 min-w-0 text-left"
+                        className="flex items-start gap-2 flex-1 min-w-0 text-left"
                       >
-                        <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-medium ${getSenderColor(message.from.email)}`}>
+                        <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0 mt-0.5 ${getSenderColor(message.from.email)}`}>
                           {getInitials(message.from.name)}
                         </div>
                         <div className="flex-1 min-w-0">
@@ -2008,13 +2236,29 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                               <Paperclip size={12} className="text-gray-400" />
                             )}
                           </div>
+                          <div className="text-xs text-black mt-0.5 font-bold">
+                            {fullDate} ({relative})
+                          </div>
+                          {isExpanded && (
+                            <div className="text-xs text-gray-500 mt-1 space-y-0.5">
+                              {toEmails && (
+                                <div className="truncate">
+                                  <span className="text-gray-400">To:</span> {toEmails}
+                                </div>
+                              )}
+                              {ccEmails && (
+                                <div className="truncate">
+                                  <span className="text-gray-400">CC:</span> {ccEmails}
+                                </div>
+                              )}
+                            </div>
+                          )}
                           {!isExpanded && (
                             <div className="text-xs text-gray-500 truncate mt-0.5">
                               {message.preview ? message.preview.substring(0, 100) : 'No preview'}
                             </div>
                           )}
                         </div>
-                        <div className="text-xs text-gray-500">{msgTime}</div>
                       </button>
                       
                       {/* Action Icons */}
@@ -2059,8 +2303,39 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
                     {/* Expanded Body */}
                     {isExpanded && (
-                      <div className="px-2 pb-2 pt-1.5 border-t border-gray-100">
+                      <div className="px-2 pb-2 pt-1.5">
                         {renderMessageBody(message)}
+                        
+                        {/* Quoted Content Toggle - Gmail-style "..." */}
+                        {quotedContentMap.has(message.id) && (
+                          <div className="mt-3 pt-2">
+                            <button
+                              onClick={() => toggleQuotedContent(message.id)}
+                              className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-800 transition-colors"
+                            >
+                              {expandedQuotedContent.has(message.id) ? (
+                                <ChevronDown size={12} className="text-gray-500" />
+                              ) : (
+                                <ChevronRight size={12} className="text-gray-500" />
+                              )}
+                            </button>
+                            
+                            {expandedQuotedContent.has(message.id) && (
+                              <div className="mt-2 pl-3 border-l-2 border-gray-300">
+                                <div 
+                                  className="text-xs text-gray-600 opacity-75"
+                                  dangerouslySetInnerHTML={{ 
+                                    __html: DOMPurify.sanitize(quotedContentMap.get(message.id)!, {
+                                      ADD_TAGS: ['style', 'link'],
+                                      ADD_ATTR: ['target', 'style', 'class', 'href'],
+                                      ALLOW_DATA_ATTR: false,
+                                    })
+                                  }}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        )}
                         
                         {/* Attachments Section */}
                         {message.attachments && message.attachments.length > 0 && (
@@ -2196,6 +2471,40 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           ) : (
             <div>
               {renderMessageBody(latestMessage)}
+              
+              {/* Quoted Content Toggle - Gmail-style "..." for single message */}
+              {quotedContentMap.has(latestMessage.id) && (
+                <div className="mt-3 pt-2 border-t border-gray-100">
+                  <button
+                    onClick={() => toggleQuotedContent(latestMessage.id)}
+                    className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-800 transition-colors"
+                  >
+                    {expandedQuotedContent.has(latestMessage.id) ? (
+                      <ChevronDown size={12} className="text-gray-500" />
+                    ) : (
+                      <ChevronRight size={12} className="text-gray-500" />
+                    )}
+                    <span className="font-medium">
+                      {expandedQuotedContent.has(latestMessage.id) ? 'Hide' : 'Show'} quoted text
+                    </span>
+                  </button>
+                  
+                  {expandedQuotedContent.has(latestMessage.id) && (
+                    <div className="mt-2 pl-3 border-l-2 border-gray-300">
+                      <div 
+                        className="text-xs text-gray-600 opacity-75"
+                        dangerouslySetInnerHTML={{ 
+                          __html: DOMPurify.sanitize(quotedContentMap.get(latestMessage.id)!, {
+                            ADD_TAGS: ['style', 'link'],
+                            ADD_ATTR: ['target', 'style', 'class', 'href'],
+                            ALLOW_DATA_ATTR: false,
+                          })
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
               
               {/* Attachments Section for single email */}
               {latestMessage.attachments && latestMessage.attachments.length > 0 && (
@@ -2392,7 +2701,243 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                   <span className="text-gray-800 truncate">{latestMessage.cc.map(c => c.email).join(', ')}</span>
                 </div>
               )}
+              
+              {/* CC/BCC Toggle buttons */}
+              {(!showCc || !showBcc) && (
+                <div className="flex items-center gap-2 pt-1 border-t border-gray-200 mt-1">
+                  {!showCc && (
+                    <button
+                      type="button"
+                      onClick={() => setShowCc(true)}
+                      className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                    >
+                      Add CC
+                    </button>
+                  )}
+                  {!showBcc && (
+                    <button
+                      type="button"
+                      onClick={() => setShowBcc(true)}
+                      className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                    >
+                      Add BCC
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
+
+            {/* CC Section */}
+            {showCc && (
+              <div className="relative mb-2">
+                <div className="flex items-center border border-gray-200 rounded-lg py-1.5 px-3 gap-2 bg-gray-50">
+                  <span className="text-gray-500 text-xs w-10">CC:</span>
+                  <div className="flex-1 flex flex-wrap items-center gap-1">
+                    {/* Display existing CC recipients */}
+                    {ccRecipients.map((email, index) => (
+                      <div key={index} className="flex items-center bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded-full text-[10px]">
+                        <span>{email}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeCcRecipient(email)}
+                          className="ml-1 text-blue-600 hover:text-blue-800"
+                        >
+                          <X size={10} />
+                        </button>
+                      </div>
+                    ))}
+                    
+                    {/* CC Input field */}
+                    <input
+                      type="text"
+                      value={ccInput}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        handleCcInputChange(e);
+                        
+                        // Auto-convert to badge when space or comma is detected
+                        if (value.endsWith(' ') || value.endsWith(',')) {
+                          const email = value.slice(0, -1).trim();
+                          if (email && email.includes('@') && !ccRecipients.includes(email)) {
+                            setCcRecipients([...ccRecipients, email]);
+                            setCcInput('');
+                            handleDraftChange();
+                          }
+                        }
+                      }}
+                      onFocus={handleCcInputFocus}
+                      onBlur={() => {
+                        // Convert to badge on blur if valid email
+                        const email = ccInput.trim();
+                        if (email && email.includes('@') && !ccRecipients.includes(email)) {
+                          setCcRecipients([...ccRecipients, email]);
+                          setCcInput('');
+                          handleDraftChange();
+                        }
+                        handleCcInputBlur();
+                      }}
+                      onKeyDown={handleCcInputKeyDown}
+                      className="flex-1 min-w-[100px] outline-none text-xs py-0.5 bg-transparent"
+                      placeholder=""
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowCc(false);
+                      setCcRecipients([]);
+                      setCcInput('');
+                    }}
+                    className="text-gray-400 hover:text-gray-600"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+                
+                {/* CC Contact dropdown */}
+                {showCcDropdown && (
+                  <div className="absolute top-full left-0 right-0 z-[998] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto mt-1">
+                    {filteredCcContacts.length > 0 ? (
+                      filteredCcContacts.map((contact, index) => (
+                        <div
+                          key={`cc-${contact.email}-${index}`}
+                          onClick={() => handleCcContactSelect(contact)}
+                          className="flex items-center px-2 py-1.5 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                        >
+                          {contact.photoUrl ? (
+                            <img
+                              src={contact.photoUrl}
+                              alt={contact.name}
+                              className="w-6 h-6 rounded-full mr-2 flex-shrink-0"
+                            />
+                          ) : (
+                            <div className="w-6 h-6 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-medium mr-2 flex-shrink-0">
+                              {getProfileInitial(contact.name, contact.email)}
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs font-medium text-gray-900 truncate">
+                                {contact.name}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-gray-500 truncate">{contact.email}</p>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="px-2 py-2 text-gray-500 text-xs">No contacts found</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* BCC Section */}
+            {showBcc && (
+              <div className="relative mb-2">
+                <div className="flex items-center border border-gray-200 rounded-lg py-1.5 px-3 gap-2 bg-gray-50">
+                  <span className="text-gray-500 text-xs w-10">BCC:</span>
+                  <div className="flex-1 flex flex-wrap items-center gap-1">
+                    {/* Display existing BCC recipients */}
+                    {bccRecipients.map((email, index) => (
+                      <div key={index} className="flex items-center bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded-full text-[10px]">
+                        <span>{email}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeBccRecipient(email)}
+                          className="ml-1 text-purple-600 hover:text-purple-800"
+                        >
+                          <X size={10} />
+                        </button>
+                      </div>
+                    ))}
+                    
+                    {/* BCC Input field */}
+                    <input
+                      type="text"
+                      value={bccInput}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        handleBccInputChange(e);
+                        
+                        // Auto-convert to badge when space or comma is detected
+                        if (value.endsWith(' ') || value.endsWith(',')) {
+                          const email = value.slice(0, -1).trim();
+                          if (email && email.includes('@') && !bccRecipients.includes(email)) {
+                            setBccRecipients([...bccRecipients, email]);
+                            setBccInput('');
+                            handleDraftChange();
+                          }
+                        }
+                      }}
+                      onFocus={handleBccInputFocus}
+                      onBlur={() => {
+                        // Convert to badge on blur if valid email
+                        const email = bccInput.trim();
+                        if (email && email.includes('@') && !bccRecipients.includes(email)) {
+                          setBccRecipients([...bccRecipients, email]);
+                          setBccInput('');
+                          handleDraftChange();
+                        }
+                        handleBccInputBlur();
+                      }}
+                      onKeyDown={handleBccInputKeyDown}
+                      className="flex-1 min-w-[100px] outline-none text-xs py-0.5 bg-transparent"
+                      placeholder=""
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowBcc(false);
+                      setBccRecipients([]);
+                      setBccInput('');
+                    }}
+                    className="text-gray-400 hover:text-gray-600"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+                
+                {/* BCC Contact dropdown */}
+                {showBccDropdown && (
+                  <div className="absolute top-full left-0 right-0 z-[998] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto mt-1">
+                    {filteredBccContacts.length > 0 ? (
+                      filteredBccContacts.map((contact, index) => (
+                        <div
+                          key={`bcc-${contact.email}-${index}`}
+                          onClick={() => handleBccContactSelect(contact)}
+                          className="flex items-center px-2 py-1.5 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                        >
+                          {contact.photoUrl ? (
+                            <img
+                              src={contact.photoUrl}
+                              alt={contact.name}
+                              className="w-6 h-6 rounded-full mr-2 flex-shrink-0"
+                            />
+                          ) : (
+                            <div className="w-6 h-6 rounded-full bg-purple-500 text-white flex items-center justify-center text-xs font-medium mr-2 flex-shrink-0">
+                              {getProfileInitial(contact.name, contact.email)}
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs font-medium text-gray-900 truncate">
+                                {contact.name}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-gray-500 truncate">{contact.email}</p>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="px-2 py-2 text-gray-500 text-xs">No contacts found</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {replyMode === 'forward' && (
               <div className="mb-3">
@@ -2572,6 +3117,210 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
               {/* Body */}
               <div className="flex-1 flex flex-col min-h-0 p-4">
+                {/* CC/BCC Toggle buttons for expanded mode */}
+                {(!showCc || !showBcc) && (
+                  <div className="flex items-center gap-3 mb-3">
+                    {!showCc && (
+                      <button
+                        type="button"
+                        onClick={() => setShowCc(true)}
+                        className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                      >
+                        Add CC
+                      </button>
+                    )}
+                    {!showBcc && (
+                      <button
+                        type="button"
+                        onClick={() => setShowBcc(true)}
+                        className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                      >
+                        Add BCC
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* CC Section for expanded mode */}
+                {showCc && (
+                  <div className="relative mb-3">
+                    <div className="flex items-center border border-gray-200 rounded-lg py-1.5 px-3 gap-2 bg-gray-50">
+                      <span className="text-gray-500 text-xs w-10">CC:</span>
+                      <div className="flex-1 flex flex-wrap items-center gap-1">
+                        {ccRecipients.map((email, index) => (
+                          <div key={index} className="flex items-center bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded-full text-[10px]">
+                            <span>{email}</span>
+                            <button
+                              type="button"
+                              onClick={() => removeCcRecipient(email)}
+                              className="ml-1 text-blue-600 hover:text-blue-800"
+                            >
+                              <X size={10} />
+                            </button>
+                          </div>
+                        ))}
+                        <input
+                          type="text"
+                          value={ccInput}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            handleCcInputChange(e);
+                            if (value.endsWith(' ') || value.endsWith(',')) {
+                              const email = value.slice(0, -1).trim();
+                              if (email && email.includes('@') && !ccRecipients.includes(email)) {
+                                setCcRecipients([...ccRecipients, email]);
+                                setCcInput('');
+                                handleDraftChange();
+                              }
+                            }
+                          }}
+                          onFocus={handleCcInputFocus}
+                          onBlur={() => {
+                            const email = ccInput.trim();
+                            if (email && email.includes('@') && !ccRecipients.includes(email)) {
+                              setCcRecipients([...ccRecipients, email]);
+                              setCcInput('');
+                              handleDraftChange();
+                            }
+                            handleCcInputBlur();
+                          }}
+                          onKeyDown={handleCcInputKeyDown}
+                          className="flex-1 min-w-[100px] outline-none text-xs py-0.5 bg-transparent"
+                          placeholder=""
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowCc(false);
+                          setCcRecipients([]);
+                          setCcInput('');
+                        }}
+                        className="text-gray-400 hover:text-gray-600"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                    {showCcDropdown && (
+                      <div className="absolute top-full left-0 right-0 z-[10000] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto mt-1">
+                        {filteredCcContacts.length > 0 ? (
+                          filteredCcContacts.map((contact, index) => (
+                            <div
+                              key={`cc-exp-${contact.email}-${index}`}
+                              onClick={() => handleCcContactSelect(contact)}
+                              className="flex items-center px-2 py-1.5 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                            >
+                              {contact.photoUrl ? (
+                                <img src={contact.photoUrl} alt={contact.name} className="w-6 h-6 rounded-full mr-2 flex-shrink-0" />
+                              ) : (
+                                <div className="w-6 h-6 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-medium mr-2 flex-shrink-0">
+                                  {getProfileInitial(contact.name, contact.email)}
+                                </div>
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <span className="text-xs font-medium text-gray-900 truncate">{contact.name}</span>
+                                <p className="text-[10px] text-gray-500 truncate">{contact.email}</p>
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="px-2 py-2 text-gray-500 text-xs">No contacts found</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* BCC Section for expanded mode */}
+                {showBcc && (
+                  <div className="relative mb-3">
+                    <div className="flex items-center border border-gray-200 rounded-lg py-1.5 px-3 gap-2 bg-gray-50">
+                      <span className="text-gray-500 text-xs w-10">BCC:</span>
+                      <div className="flex-1 flex flex-wrap items-center gap-1">
+                        {bccRecipients.map((email, index) => (
+                          <div key={index} className="flex items-center bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded-full text-[10px]">
+                            <span>{email}</span>
+                            <button
+                              type="button"
+                              onClick={() => removeBccRecipient(email)}
+                              className="ml-1 text-purple-600 hover:text-purple-800"
+                            >
+                              <X size={10} />
+                            </button>
+                          </div>
+                        ))}
+                        <input
+                          type="text"
+                          value={bccInput}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            handleBccInputChange(e);
+                            if (value.endsWith(' ') || value.endsWith(',')) {
+                              const email = value.slice(0, -1).trim();
+                              if (email && email.includes('@') && !bccRecipients.includes(email)) {
+                                setBccRecipients([...bccRecipients, email]);
+                                setBccInput('');
+                                handleDraftChange();
+                              }
+                            }
+                          }}
+                          onFocus={handleBccInputFocus}
+                          onBlur={() => {
+                            const email = bccInput.trim();
+                            if (email && email.includes('@') && !bccRecipients.includes(email)) {
+                              setBccRecipients([...bccRecipients, email]);
+                              setBccInput('');
+                              handleDraftChange();
+                            }
+                            handleBccInputBlur();
+                          }}
+                          onKeyDown={handleBccInputKeyDown}
+                          className="flex-1 min-w-[100px] outline-none text-xs py-0.5 bg-transparent"
+                          placeholder=""
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowBcc(false);
+                          setBccRecipients([]);
+                          setBccInput('');
+                        }}
+                        className="text-gray-400 hover:text-gray-600"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                    {showBccDropdown && (
+                      <div className="absolute top-full left-0 right-0 z-[10000] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto mt-1">
+                        {filteredBccContacts.length > 0 ? (
+                          filteredBccContacts.map((contact, index) => (
+                            <div
+                              key={`bcc-exp-${contact.email}-${index}`}
+                              onClick={() => handleBccContactSelect(contact)}
+                              className="flex items-center px-2 py-1.5 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                            >
+                              {contact.photoUrl ? (
+                                <img src={contact.photoUrl} alt={contact.name} className="w-6 h-6 rounded-full mr-2 flex-shrink-0" />
+                              ) : (
+                                <div className="w-6 h-6 rounded-full bg-purple-500 text-white flex items-center justify-center text-xs font-medium mr-2 flex-shrink-0">
+                                  {getProfileInitial(contact.name, contact.email)}
+                                </div>
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <span className="text-xs font-medium text-gray-900 truncate">{contact.name}</span>
+                                <p className="text-[10px] text-gray-500 truncate">{contact.email}</p>
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="px-2 py-2 text-gray-500 text-xs">No contacts found</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {replyMode === 'forward' && (
                   <div className="mb-3">
                     <input
@@ -2831,7 +3580,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                         </button>
                       ))
                     ) : (
-                      <div className="px-3 py-3 text-sm text-gray-500">No labels found</div>
+                      <div className="px-3 py-3 text-sm text-gray-500">No folders found</div>
                     )}
                   </div>
                 </div>
@@ -2868,7 +3617,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
             {/* Modal Header */}
             <div className="px-6 py-4 border-b border-gray-200">
               <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-gray-900">New label</h2>
+                <h2 className="text-lg font-semibold text-gray-900">New folder</h2>
                 <button
                   onClick={() => setShowCreateLabelModal(false)}
                   className="p-1 hover:bg-gray-100 rounded transition-colors"
@@ -2881,9 +3630,9 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
             <div className="px-6 py-4">
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <label className="text-sm text-gray-600">Label name</label>
+                  <label className="text-sm text-gray-600">Folder name</label>
                   <Input
-                    placeholder="Enter label name"
+                    placeholder="Enter folder name"
                     value={newLabelName}
                     onChange={(e) => setNewLabelName(e.target.value)}
                     className="w-full"
@@ -2898,16 +3647,16 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                     onCheckedChange={(checked) => setNestUnder(!!checked)}
                   />
                   <label htmlFor="nest-under-create" className="text-sm text-gray-600">
-                    Nest label under
+                    Nest folder under
                   </label>
                 </div>
 
                 {nestUnder && (
                   <div className="space-y-2">
-                    <label className="text-sm text-gray-600">Parent label</label>
+                    <label className="text-sm text-gray-600">Parent folder</label>
                     <Select value={parentLabel} onValueChange={setParentLabel}>
                       <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Choose parent label..." />
+                        <SelectValue placeholder="Choose parent folder..." />
                       </SelectTrigger>
                       <SelectContent className="max-h-64">
                         {filteredFilterLabels.map((label: any) => (
@@ -2927,7 +3676,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                     onCheckedChange={(checked) => setAutoFilterFuture(!!checked)}
                   />
                   <label htmlFor="auto-filter-future" className="text-sm text-gray-600">
-                    Also auto-label future emails from {cleanEmailAddress(email?.from?.email || '') || 'this sender'}
+                    Also auto-move future emails from {cleanEmailAddress(email?.from?.email || '') || 'this sender'}
                   </label>
                 </div>
               </div>

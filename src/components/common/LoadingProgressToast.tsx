@@ -14,7 +14,7 @@ const ENABLE_LOADING_TOAST = false;
 const ORDER: LoadingProgressSource[] = ['inbox', 'labels', 'counters'];
 const TITLES: Record<LoadingProgressSource, string> = {
   inbox: 'Inbox emails (10s)',
-  labels: 'Labels (10s)',
+  labels: 'Folders (10s)',
   counters: 'Counters (30s)'
 };
 

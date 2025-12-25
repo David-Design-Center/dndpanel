@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
-import { X, Paperclip, CheckCircle, Plus, SendHorizontal, Maximize2, Minimize2 } from 'lucide-react';
+import { X, Paperclip, Plus, SendHorizontal, Maximize2, Minimize2 } from 'lucide-react';
 import { sendEmail, getThreadEmails, clearEmailCache, saveDraft, deleteDraft } from '../services/emailService';
 import { emailRepository } from '../services/emailRepository';
 // Customer orders (type 'Customer Order') are already included in invoices query; here we fetch supplier orders from 'orders' table
@@ -20,6 +20,7 @@ import { formatDistanceToNow, parseISO, format } from 'date-fns';
 import { useProfile } from '../contexts/ProfileContext';
 import { useContacts } from '../contexts/ContactsContext';
 import { useCompose } from '../contexts/ComposeContext';
+import { useToast } from '../components/ui/use-toast';
 
 // Utility functions for text/HTML conversion
 const convertPlainTextToHtml = (text: string): string => {
@@ -48,6 +49,7 @@ function Compose() {
   const { currentProfile } = useProfile();
   const { searchContacts, setShouldLoadContacts } = useContacts();
   const { closeCompose, draftId: contextDraftId, isExpanded, toggleExpand } = useCompose();
+  const { toast } = useToast();
   const [searchParams] = useSearchParams();
   const [toRecipients, setToRecipients] = useState<string[]>([]);
   const [toInput, setToInput] = useState('');
@@ -75,10 +77,6 @@ function Compose() {
   const [threadEmails, setThreadEmails] = useState<Email[]>([]);
   const [threadLoading, setThreadLoading] = useState(false);
   const [currentThreadId, setCurrentThreadId] = useState<string | undefined>(undefined);
-  
-  // Success message states
-  const [showSuccessMessage, setShowSuccessMessage] = useState(false);
-  const [successRecipient, setSuccessRecipient] = useState('');
   
   // Draft auto-save states
   const [currentDraftId, setCurrentDraftId] = useState<string | undefined>(undefined);
@@ -210,6 +208,20 @@ function Compose() {
       loadDraftFromGmail(contextDraftId);
     }
   }, [contextDraftId]);
+
+  // Initialize signature for new emails (not replies, drafts, or forwards)
+  useEffect(() => {
+    // Only add signature if:
+    // 1. User has a signature
+    // 2. This is a brand new compose (no location.state and no draft being loaded)
+    // 3. Body is currently empty
+    const isNewCompose = !location.state && !contextDraftId && !searchParams.get('draftId');
+    
+    if (isNewCompose && currentProfile?.signature && !newBodyHtml) {
+      console.log('✍️ Initializing new email with signature');
+      setNewBodyHtml('<br><br>' + currentProfile.signature);
+    }
+  }, [currentProfile?.signature, location.state, contextDraftId, searchParams]);
 
   // Load draft from URL query parameter
   useEffect(() => {
@@ -546,34 +558,7 @@ function Compose() {
         }
       }
       
-      // Add signature if available
-      // Rules:
-      // 1. Never add for existing drafts (they already have signature from first save)
-      // 2. Add for new emails (no currentDraftId)
-      // 3. Add for replies (isReply = true) only if not already present
-      
-      if (currentProfile?.signature) {
-        // Check if signature is already in the content (more robust check)
-        const signatureText = currentProfile.signature.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
-        const bodyText = finalBodyHtml.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
-        const signatureExists = bodyText.includes(signatureText);
-        
-        // Only add signature if:
-        // - Not already present AND
-        // - (No draft ID yet OR is a reply)
-        const shouldAddSignature = !signatureExists && (!currentDraftId || isReply);
-        
-        if (shouldAddSignature) {
-          if (finalBodyHtml) {
-            finalBodyHtml += '<br><br>' + currentProfile.signature;
-          } else {
-            finalBodyHtml = currentProfile.signature;
-          }
-          console.log('✍️ Signature added to draft');
-        } else if (signatureExists) {
-          console.log('✍️ Signature already present, skipping');
-        }
-      }
+      // Signature is now added at compose initialization, not at save/send time
       
       // Fallback if no content
       if (!finalBodyHtml) {
@@ -769,28 +754,7 @@ function Compose() {
         }
       }
       
-      // Add signature if available
-      // When sending: signature should already be in the body (added during draft save)
-      // But check and add if missing (for direct sends without draft)
-      
-      if (currentProfile?.signature) {
-        // Check if signature is already in the content (robust check)
-        const signatureText = currentProfile.signature.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
-        const bodyText = finalBodyHtml.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
-        const signatureExists = bodyText.includes(signatureText);
-        
-        // Only add if not already present
-        if (!signatureExists) {
-          if (finalBodyHtml) {
-            finalBodyHtml += '<br><br>' + currentProfile.signature;
-          } else {
-            finalBodyHtml = currentProfile.signature;
-          }
-          console.log('✍️ Signature added to outgoing email');
-        } else {
-          console.log('✍️ Signature already present in email');
-        }
-      }
+      // Signature is now added at compose initialization, not at save/send time
       
       // Fallback if no content
       if (!finalBodyHtml) {
@@ -839,9 +803,11 @@ function Compose() {
       // Clear email cache to ensure fresh data when returning to thread
       clearEmailCache();
       
-      // Show success message
-      setSuccessRecipient(combinedTo);
-      setShowSuccessMessage(true);
+      // Show success toast
+      toast({ 
+        title: 'Email sent',
+        duration: 3000
+      });
       
       // Close compose window immediately
       closeCompose();
@@ -866,22 +832,24 @@ function Compose() {
       if (isThreadReply && !isDraftEmail) {
         // Navigate immediately to thread with refresh state
         setTimeout(() => {
-          setShowSuccessMessage(false);
           navigate(navigationDestination, { 
             state: { refresh: true } 
           });
         }, 500); // Shorter delay for thread replies
       } else {
-        // For new emails or draft sends, wait 2 seconds
+        // For new emails or draft sends, navigate after brief delay
         setTimeout(() => {
-          setShowSuccessMessage(false);
           navigate(navigationDestination);
-        }, 2000);
+        }, 1000);
       }
       
     } catch (error) {
       console.error('Error sending email:', error);
-      alert('Failed to send email. Please try again.');
+      toast({ 
+        title: 'Failed to send email', 
+        description: 'Please try again',
+        variant: 'destructive'
+      });
       setIsSending(false);
     }
   };
@@ -1303,22 +1271,6 @@ function Compose() {
 
   return (
     <>
-      {/* Success Message */}
-      {showSuccessMessage && (
-        <div className="fixed top-4 right-4 z-50 bg-green-500 text-white px-6 py-4 rounded-lg shadow-lg flex items-center animate-fade-in">
-          <CheckCircle size={24} className="mr-3" />
-          <div>
-            <p className="font-semibold">
-              {currentThreadId ? 'Reply sent successfully!' : 'Email sent successfully!'}
-            </p>
-            <p className="text-sm opacity-90">Sent to: {successRecipient}</p>
-            {currentThreadId && (
-              <p className="text-sm opacity-90">Returning to conversation...</p>
-            )}
-          </div>
-        </div>
-      )}
-
       <div className={`fixed z-50 flex flex-col transition-all duration-300 ease-in-out ${isExpanded ? 'inset-4' : 'bottom-4 right-4 w-[600px]'}`}>
         {/* Main Compose Window - Gmail-style popup */}
         <div 

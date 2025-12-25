@@ -190,7 +190,7 @@ export function EmailItemContextMenu({
                 <input
                   ref={labelSearchRef}
                   type="text"
-                  placeholder="Search labels..."
+                  placeholder="Search folders..."
                   value={labelSearchQuery}
                   onChange={(e) => setLabelSearchQuery(e.target.value)}
                   className="w-full pl-7 pr-2 py-1.5 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none"
@@ -217,10 +217,10 @@ export function EmailItemContextMenu({
                 ))
               ) : labelSearchQuery ? (
                 <div className="px-3 py-2 text-xs text-gray-500">
-                  No labels found for "{labelSearchQuery}"
+                  No folders found for "{labelSearchQuery}"
                 </div>
               ) : (
-                <div className="px-3 py-2 text-xs text-gray-500">No labels available</div>
+                <div className="px-3 py-2 text-xs text-gray-500">No folders available</div>
               )}
               
               {/* Create new label CTA */}
@@ -234,7 +234,7 @@ export function EmailItemContextMenu({
                       onClose();
                     }}
                   >
-                    Create label "{labelSearchQuery.trim()}"
+                    Create folder "{labelSearchQuery.trim()}"
                   </button>
                 </div>
               )}

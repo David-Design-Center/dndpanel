@@ -102,7 +102,7 @@ export function MoveEmailDialog({
         }
       } catch (error) {
         console.error('Failed to create filter:', error);
-        toast.error(`Failed to create filter. Emails were still moved to ${folderDisplayName}.`);
+        toast.error(`Failed to create rule. Emails were still moved to ${folderDisplayName}.`);
       } finally {
         setIsCreatingFilter(false);
       }

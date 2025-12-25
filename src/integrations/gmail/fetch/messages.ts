@@ -409,10 +409,14 @@ export const fetchGmailMessageById = async (id: string): Promise<Email | undefin
         console.log('ℹ️ No inline attachments found');
       }
       
-      // Extract real attachments (exclude inline images)
+      // Extract real attachments (exclude inline images ONLY if actually referenced in body)
       console.log('🔍 Searching for real attachments...');
-      const inlineCids = inlineAttachments.map(a => a.cid);
-      const extractedAttachments = extractAttachments(payload, inlineCids);
+      // Only filter out inline images that are actually referenced in the email body with cid:
+      const referencedInlineCids = inlineAttachments
+        .filter(a => body.includes(`cid:${a.cid}`))
+        .map(a => a.cid);
+      console.log(`🖼️ CIDs actually referenced in body: ${referencedInlineCids.length} of ${inlineAttachments.length}`);
+      const extractedAttachments = extractAttachments(payload, referencedInlineCids);
       
       // Convert to Email attachment format
       const attachments: NonNullable<Email['attachments']> = extractedAttachments.map(att => ({

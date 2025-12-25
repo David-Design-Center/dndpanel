@@ -61,26 +61,26 @@ export function CreateLabelModal({
     
     try {
       await addLabel(fullName);
-      toast.success(`Label "${fullName}" created`);
+      toast.success(`Folder "${fullName}" created`);
 
       // Auto-filter feature: create a Gmail filter if checkbox was checked
       if (autoFilterFuture) {
         const sender = cleanEmailAddress(email.from?.email || '');
         if (!sender) {
-          toast.error('Cannot create auto-filter: missing sender email');
+          toast.error('Cannot create auto-rule: missing sender email');
           onClose();
           return;
         }
         
         // 🔧 SELF-FILTER BUG FIX: Skip filter if sender is self
         if (isSenderSelf) {
-          toast.warning('Auto-filter skipped: Cannot create filter for your own email address.');
+          toast.warning('Auto-rule skipped: Cannot create rule for your own email address.');
           onClose();
           return;
         }
 
         try {
-          toast.message('Creating auto-filter rule...');
+          toast.message('Creating auto-rule...');
           
           const labelsList = await fetchGmailLabels();
           const gmailLabelName = `INBOX/${fullName}`;
@@ -89,7 +89,7 @@ export function CreateLabelModal({
             .find(l => l.name === gmailLabelName || l.name === fullName);
 
           if (!match?.id) {
-            toast.error('Label created but auto-filter failed: could not find label in Gmail');
+            toast.error('Folder created but auto-rule failed: could not find folder in Gmail');
             onClose();
             return;
           }
@@ -102,16 +102,16 @@ export function CreateLabelModal({
             }
           );
 
-          toast.success(`Auto-filter created! Future emails from ${sender} will be moved to "${fullName}"`);
+          toast.success(`Auto-rule created! Future emails from ${sender} will be moved to "${fullName}"`);
         } catch (filterErr) {
           console.error('Failed to create auto-filter:', filterErr);
-          toast.error('Label created, but auto-filter creation failed.');
+          toast.error('Folder created, but auto-rule creation failed.');
         }
       }
       
       onClose();
     } catch (err) {
-      toast.error('Failed to create label');
+      toast.error('Failed to create folder');
     }
   };
 
@@ -126,7 +126,7 @@ export function CreateLabelModal({
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-200">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-900">New label</h2>
+            <h2 className="text-lg font-semibold text-gray-900">New folder</h2>
             <button
               onClick={onClose}
               className="p-1 hover:bg-gray-100 rounded transition-colors"
@@ -140,9 +140,9 @@ export function CreateLabelModal({
         <div className="px-6 py-4">
           <div className="space-y-4">
             <div className="space-y-2">
-              <label className="text-sm text-gray-600">Label name</label>
+              <label className="text-sm text-gray-600">Folder name</label>
               <Input
-                placeholder="Enter label name"
+                placeholder="Enter folder name"
                 value={newLabelName}
                 onChange={(e) => setNewLabelName(e.target.value)}
                 className="w-full"
@@ -157,16 +157,16 @@ export function CreateLabelModal({
                 onCheckedChange={(checked) => setNestUnder(!!checked)}
               />
               <label htmlFor="nest-under-create" className="text-sm text-gray-600">
-                Nest label under
+                Nest folder under
               </label>
             </div>
 
             {nestUnder && (
               <div className="space-y-2">
-                <label className="text-sm text-gray-600">Parent label</label>
+                <label className="text-sm text-gray-600">Parent folder</label>
                 <Select value={parentLabel} onValueChange={setParentLabel}>
                   <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Choose parent label..." />
+                    <SelectValue placeholder="Choose parent folder..." />
                   </SelectTrigger>
                   <SelectContent className="max-h-64">
                     {filteredLabels.map((label: any) => (
@@ -186,7 +186,7 @@ export function CreateLabelModal({
                 onCheckedChange={(checked) => setAutoFilterFuture(!!checked)}
               />
               <label htmlFor="auto-filter-future" className="text-sm text-gray-600">
-                Also auto-label future emails from {cleanEmailAddress(email.from?.email) || 'this sender'}
+                Also auto-move future emails from {cleanEmailAddress(email.from?.email) || 'this sender'}
               </label>
             </div>
           </div>

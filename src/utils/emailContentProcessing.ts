@@ -9,60 +9,169 @@ export interface ProcessedEmailContent {
 }
 
 /**
- * Strip common quoted text patterns and separators
+ * Strip common quoted text patterns and separators (Gmail, Outlook, etc.)
+ * Preserves forwarded content (intentional context) while removing reply history
  */
 export const stripQuotedText = (htmlContent: string): { cleanBody: string; quotedContent?: string } => {
   if (!htmlContent) return { cleanBody: '' };
 
-  // Create a temporary div to parse HTML
-  const tempDiv = document.createElement('div');
-  tempDiv.innerHTML = htmlContent;
+  // For very large messages (>50KB), use regex-based approach for performance
+  if (htmlContent.length > 50000) {
+    return stripQuotedTextLarge(htmlContent);
+  }
 
-  // Remove common quoted text elements
-  const quotedSelectors = [
-    '.gmail_quote',
-    'blockquote[type="cite"]',
-    '.gmail_extra',
-    '.yahoo_quoted',
-    '.moz-cite-prefix',
-    '.OutlookMessageHeader'
-  ];
+  // DOM-based approach for smaller messages (more accurate)
+  try {
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = htmlContent;
 
-  let quotedContent = '';
-  quotedSelectors.forEach(selector => {
-    const elements = tempDiv.querySelectorAll(selector);
-    elements.forEach(el => {
-      quotedContent += el.outerHTML + '\n';
-      el.remove();
+    let quotedContent = '';
+
+    // 1. Remove Gmail quote containers
+    const quotedSelectors = [
+      '.gmail_quote',
+      'blockquote[type="cite"]',
+      '.gmail_extra',
+      '.yahoo_quoted',
+      '.moz-cite-prefix',
+      'blockquote',
+      '[class*="quote"]'
+    ];
+
+    quotedSelectors.forEach(selector => {
+      const elements = tempDiv.querySelectorAll(selector);
+      elements.forEach(el => {
+        quotedContent += el.outerHTML + '\n';
+        el.remove();
+      });
     });
-  });
 
-  // Remove text-based quoted content patterns
-  let cleanText = tempDiv.innerHTML;
-  
-  // Common reply separators
-  const replyPatterns = [
-    /On .+? wrote:/gim,
-    /From:.+?Sent:.+?To:.+?Subject:/gims,
-    /-----Original Message-----.*$/gims,
-    /________________________________.*$/gims,
-    /\n>.*$/gim, // Lines starting with >
-    /^\s*>.*$/gim // Lines starting with > (with whitespace)
-  ];
+    // 2. Remove Outlook-style quoted sections (border-top divs)
+    const outlookQuotes = tempDiv.querySelectorAll('div[style*="border-top"]');
+    outlookQuotes.forEach(div => {
+      const style = div.getAttribute('style') || '';
+      // Check for Outlook's gray border pattern
+      if (style.includes('#E1E1E1') || style.includes('#CCCCCC')) {
+        quotedContent += div.outerHTML + '\n';
+        div.remove();
+      }
+    });
 
-  replyPatterns.forEach(pattern => {
-    const matches = cleanText.match(pattern);
-    if (matches) {
-      quotedContent += matches.join('\n') + '\n';
-      cleanText = cleanText.replace(pattern, '');
+    // 3. Remove email header blocks (From:, Sent:, To:, Subject:)
+    // But NOT forward headers (preserve those)
+    let cleanHtml = tempDiv.innerHTML;
+    
+    // Detect forward vs reply: forwards have "---------- Forwarded message ---------"
+    const isForward = /Forwarded message/i.test(cleanHtml);
+    
+    if (!isForward) {
+      // Safe to strip reply headers
+      // Multilingual support: English, Spanish, German, French, Italian, Portuguese
+      const headerPattern = /(De:|From:|Enviada:|Sent:|Para:|To:|Assunto:|Subject:|Cc:|Data:|Date:|Von:|An:|Betreff:|Gesendet:|Objet:|Envoyé:|Da:|A:|Oggetto:|Inviato:)\s*[^<\n]*(<br[^>]*>|\n)/gi;
+      const headerMatches = cleanHtml.match(headerPattern);
+      if (headerMatches) {
+        quotedContent += headerMatches.join('\n') + '\n';
+        cleanHtml = cleanHtml.replace(headerPattern, '');
+      }
+
+      // Remove "On ... wrote:" patterns
+      const onWrotePattern = /On\s+[^<]*wrote:\s*<br[^>]*>/gi;
+      const onWroteMatches = cleanHtml.match(onWrotePattern);
+      if (onWroteMatches) {
+        quotedContent += onWroteMatches.join('\n') + '\n';
+        cleanHtml = cleanHtml.replace(onWrotePattern, '');
+      }
+
+      // Remove Outlook "-----Original Message-----"
+      const originalMsgPattern = /-----Original Message-----[\s\S]*?(?=<div|<p|$)/gi;
+      const originalMsgMatches = cleanHtml.match(originalMsgPattern);
+      if (originalMsgMatches) {
+        quotedContent += originalMsgMatches.join('\n') + '\n';
+        cleanHtml = cleanHtml.replace(originalMsgPattern, '');
+      }
     }
-  });
 
-  return {
-    cleanBody: cleanText.trim(),
-    quotedContent: quotedContent.trim() || undefined
-  };
+    tempDiv.innerHTML = cleanHtml;
+
+    const result = tempDiv.innerHTML.trim();
+    // Only return cleaned version if we actually removed something substantial
+    if (result.length > 20) {
+      return {
+        cleanBody: result,
+        quotedContent: quotedContent.trim() || undefined
+      };
+    }
+  } catch (error) {
+    console.warn('❌ Error stripping quoted content:', error);
+  }
+
+  // Fallback: return original if cleaning failed or result too short
+  return { cleanBody: htmlContent, quotedContent: undefined };
 };
+
+/**
+ * Regex-based quote stripping for large messages (>50KB)
+ * Less accurate but much faster for performance
+ */
+function stripQuotedTextLarge(htmlContent: string): { cleanBody: string; quotedContent?: string } {
+  try {
+    let cleaned = htmlContent;
+    let quotedContent = '';
+
+    // Detect forward vs reply
+    const isForward = /Forwarded message/i.test(cleaned);
+
+    // Remove Gmail quotes
+    const gmailQuotePattern = /<div class="gmail_quote"[\s\S]*?<\/div>/gi;
+    const gmailMatches = cleaned.match(gmailQuotePattern);
+    if (gmailMatches) {
+      quotedContent += gmailMatches.join('\n') + '\n';
+      cleaned = cleaned.replace(gmailQuotePattern, '');
+    }
+
+    // Remove blockquotes
+    const blockquotePattern = /<blockquote[\s\S]*?<\/blockquote>/gi;
+    const blockquoteMatches = cleaned.match(blockquotePattern);
+    if (blockquoteMatches) {
+      quotedContent += blockquoteMatches.join('\n') + '\n';
+      cleaned = cleaned.replace(blockquotePattern, '');
+    }
+
+    // Remove elements with "quote" in class
+    const quoteClassPattern = /<div[^>]*class="[^"]*quote[^"]*"[\s\S]*?<\/div>/gi;
+    const quoteClassMatches = cleaned.match(quoteClassPattern);
+    if (quoteClassMatches) {
+      quotedContent += quoteClassMatches.join('\n') + '\n';
+      cleaned = cleaned.replace(quoteClassPattern, '');
+    }
+
+    if (!isForward) {
+      // Remove "On ... wrote:" patterns
+      const onWrotePattern = /On\s+[^<]*wrote:\s*<br[^>]*>/gi;
+      const onWroteMatches = cleaned.match(onWrotePattern);
+      if (onWroteMatches) {
+        quotedContent += onWroteMatches.join('\n') + '\n';
+        cleaned = cleaned.replace(onWrotePattern, '');
+      }
+
+      // Remove email headers (multilingual)
+      const headerPattern = /(De:|From:|Enviada:|Sent:|Para:|To:|Assunto:|Subject:|Cc:|Data:|Date:|Von:|An:|Betreff:|Gesendet:|Objet:|Envoyé:|Da:|A:|Oggetto:|Inviato:)[^<\n]*(<br[^>]*>|\n)/gi;
+      const headerMatches = cleaned.match(headerPattern);
+      if (headerMatches) {
+        quotedContent += headerMatches.join('\n') + '\n';
+        cleaned = cleaned.replace(headerPattern, '');
+      }
+    }
+
+    return {
+      cleanBody: cleaned.trim().length > 20 ? cleaned : htmlContent,
+      quotedContent: quotedContent.trim() || undefined
+    };
+  } catch (error) {
+    console.warn('❌ Error with regex-based quote stripping:', error);
+    return { cleanBody: htmlContent, quotedContent: undefined };
+  }
+}
 
 /**
  * Detect and extract security banners and caution messages

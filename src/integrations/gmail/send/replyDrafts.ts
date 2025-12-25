@@ -5,6 +5,8 @@
 
 interface ReplyDraftPayload {
   to?: string;
+  cc?: string;
+  bcc?: string;
   body: string;
   mode: 'reply' | 'replyAll' | 'forward';
   threadId?: string;
@@ -54,6 +56,16 @@ export const createReplyDraft = async (
     // Add To field (for all modes - reply, replyAll, and forward)
     if (payload.to) {
       emailLines.push(`To: ${payload.to}`);
+    }
+
+    // Add CC field
+    if (payload.cc) {
+      emailLines.push(`Cc: ${payload.cc}`);
+    }
+
+    // Add BCC field
+    if (payload.bcc) {
+      emailLines.push(`Bcc: ${payload.bcc}`);
     }
 
     // Add References and In-Reply-To headers for threading
@@ -132,6 +144,16 @@ export const updateReplyDraft = async (
     // Add To field (for all modes - reply, replyAll, and forward)
     if (payload.to) {
       emailLines.push(`To: ${payload.to}`);
+    }
+
+    // Add CC field
+    if (payload.cc) {
+      emailLines.push(`Cc: ${payload.cc}`);
+    }
+
+    // Add BCC field
+    if (payload.bcc) {
+      emailLines.push(`Bcc: ${payload.bcc}`);
     }
 
     // Add References and In-Reply-To headers for threading

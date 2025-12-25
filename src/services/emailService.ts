@@ -1106,7 +1106,9 @@ export const getAttachmentDownloadUrl = async (
 export const sendReply = async (
   originalEmail: Email,
   replyContent: string,
-  replyToAll: boolean = false
+  replyToAll: boolean = false,
+  additionalCc?: string,
+  bcc?: string
 ): Promise<{success: boolean; threadId?: string}> => {
   try {
     // Get current user's profile
@@ -1123,18 +1125,25 @@ export const sendReply = async (
 
     // Determine recipients
     const toRecipients = [originalEmail.from];
-    let ccRecipients: string = '';
+    const ccList: string[] = [];
     
     if (replyToAll && originalEmail.to && originalEmail.to.length > 0) {
       // For reply all, add original TO recipients to CC (excluding the current user)
-      const additionalCc = originalEmail.to
+      const additionalCcFromReplyAll = originalEmail.to
         .filter(recipient => recipient.email !== userProfile.email && recipient.email !== originalEmail.from.email)
         .map(recipient => recipient.email);
       
-      if (additionalCc.length > 0) {
-        ccRecipients = additionalCc.join(',');
-      }
+      ccList.push(...additionalCcFromReplyAll);
     }
+    
+    // Add any additional CC recipients from user input
+    if (additionalCc) {
+      const userCcEmails = additionalCc.split(',').map(e => e.trim()).filter(Boolean);
+      ccList.push(...userCcEmails);
+    }
+    
+    // Remove duplicates
+    const ccRecipients = [...new Set(ccList)].join(',');
 
     // Create the reply email object
     const replyEmail: Omit<Email, 'id' | 'date' | 'isRead' | 'preview'> = {
@@ -1154,7 +1163,7 @@ export const sendReply = async (
     };
 
     // Send the reply using the existing sendEmail function
-    return await sendEmail(replyEmail, undefined, originalEmail.threadId, ccRecipients);
+    return await sendEmail(replyEmail, undefined, originalEmail.threadId, ccRecipients, bcc);
     
   } catch (error) {
     console.error('Error sending reply:', error);
@@ -1164,23 +1173,27 @@ export const sendReply = async (
 
 export const sendReplyAll = async (
   originalEmail: Email,
-  replyContent: string
+  replyContent: string,
+  additionalCc?: string,
+  bcc?: string
 ): Promise<{success: boolean; threadId?: string}> => {
-  return await sendReply(originalEmail, replyContent, true);
+  return await sendReply(originalEmail, replyContent, true, additionalCc, bcc);
 };
 
 export const sendEmail = async (
   email: Omit<Email, 'id' | 'date' | 'isRead' | 'preview'>, 
   attachments?: Array<{ name: string; mimeType: string; data: string; cid?: string }>,
   conversationThreadId?: string,
-  ccRecipients?: string
+  ccRecipients?: string,
+  bccRecipients?: string
 ): Promise<{success: boolean; threadId?: string}> => {
   try {
     // Try to send via Gmail
     const to = email.to.map(recipient => recipient.email).join(',');
     // Use provided CC recipients or empty string
     const cc = ccRecipients || "";
-    const result = await sendGmailMessage(to, cc, email.subject, email.body, attachments, conversationThreadId);
+    const bcc = bccRecipients || "";
+    const result = await sendGmailMessage(to, cc, email.subject, email.body, attachments, conversationThreadId, bcc);
     
     if (result.success) {
       // Invalidate the list cache to ensure the sent email appears on next refresh

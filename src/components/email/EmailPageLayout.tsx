@@ -32,6 +32,7 @@ import { useLayoutState } from '../../contexts/LayoutStateContext';
 import { toast } from 'sonner';
 // Import custom hooks
 import { usePagination, useEmailFetch, useEmailSelection, useEmailFilters, useEmailCounts, useTabManagement } from './EmailPageLayout/hooks';
+import { sortEmailsByDate } from './EmailPageLayout/utils';
 import { Table, TableBody } from '@/components/ui/table';
 
 type EmailPageType = 'inbox' | 'unread' | 'sent' | 'drafts' | 'trash';
@@ -821,9 +822,9 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   // Always use paginated emails now (split view disabled)
   const filteredEmails = paginatedEmails.length > 0 ? paginatedEmails : getCurrentEmails();
   
-  // For infinite scroll list view, use paginatedEmails directly
+  // For infinite scroll list view, sort paginatedEmails by date (newest first)
   // ✅ Always use paginatedEmails for list view (layoutMode hardcoded to 'list')
-  const emailsToDisplay = paginatedEmails;
+  const emailsToDisplay = sortEmailsByDate(paginatedEmails);
   
   // Apply Unread/Starred/Attachments chips as client-side filters
   const applyChipFilters = (items: Email[]): Email[] => {

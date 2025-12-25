@@ -550,8 +550,8 @@ function FoldersColumn({
         await deleteLabel(label.id);
 
         toast({
-          title: "Label Deleted",
-          description: `Successfully deleted label "${label.displayName}"${
+          title: "Folder Deleted",
+          description: `Successfully deleted folder "${label.displayName}"${
             !label.isLeaf && label.children?.length ? " and its sub-labels" : ""
           }`,
         });
@@ -559,7 +559,7 @@ function FoldersColumn({
         console.error("Failed to delete label:", error);
         toast({
           title: "Error",
-          description: "Failed to delete label. Please try again.",
+          description: "Failed to delete folder. Please try again.",
           variant: "destructive",
         });
       }
@@ -629,14 +629,14 @@ function FoldersColumn({
                 >
                   <DropdownMenuItem onClick={() => handleOpenFilters(node)}>
                     <Filter size={14} className="mr-2" />
-                    Filters
+                    Rules
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={() => handleDeleteLabel(node)}
                     className="text-red-600 focus:text-red-600"
                   >
                     <Trash2 size={14} className="mr-2" />
-                    Delete Label
+                    Delete Folder
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -722,8 +722,8 @@ function FoldersColumn({
       await addLabel(labelName);
 
       toast({
-        title: "Label Created",
-        description: `Successfully created label "${newLabelName}"`,
+        title: "Folder Created",
+        description: `Successfully created folder "${newLabelName}"`,
       });
 
       // Reset form
@@ -735,7 +735,7 @@ function FoldersColumn({
       console.error("Failed to create label:", error);
       toast({
         title: "Error",
-        description: "Failed to create label. Please try again.",
+        description: "Failed to create folder. Please try again.",
         variant: "destructive",
       });
     }
@@ -791,14 +791,14 @@ function FoldersColumn({
     try {
       await refreshLabels(true); // Force refresh to bypass cache
       toast({
-        title: "Labels Refreshed",
-        description: "Successfully refreshed all labels",
+        title: "Folders Refreshed",
+        description: "Successfully refreshed all folders",
       });
     } catch (error) {
       console.error("Failed to refresh labels:", error);
       toast({
         title: "Error",
-        description: "Failed to refresh labels. Please try again.",
+        description: "Failed to refresh folders. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -1035,7 +1035,7 @@ function FoldersColumn({
                             </button>
                           </TooltipTrigger>
                           <TooltipContent side="bottom" className="text-xs">
-                            <p>Refresh labels</p>
+                            <p>Refresh folders</p>
                             <p className="text-gray-400 mt-1">
                               Last updated:{" "}
                               {formatLastUpdated(labelsLastUpdated)}
@@ -1060,15 +1060,15 @@ function FoldersColumn({
                         </DialogTrigger>
                         <DialogContent className="sm:max-w-[425px]">
                           <DialogHeader>
-                            <DialogTitle>New label</DialogTitle>
+                            <DialogTitle>New folder</DialogTitle>
                           </DialogHeader>
                           <div className="space-y-4 py-4">
                             <div className="space-y-2">
                               <label className="text-sm text-gray-600">
-                                Please enter a new label name:
+                                Please enter a new folder name:
                               </label>
                               <Input
-                                placeholder="Enter label name"
+                                placeholder="Enter folder name"
                                 value={newLabelName}
                                 onChange={(e) =>
                                   setNewLabelName(e.target.value)
@@ -1090,7 +1090,7 @@ function FoldersColumn({
                                 htmlFor="nest-under"
                                 className="text-sm text-gray-600"
                               >
-                                Nest label under:
+                                Nest folder under:
                               </label>
                             </div>
 
@@ -1100,7 +1100,7 @@ function FoldersColumn({
                                 onValueChange={setParentLabel}
                               >
                                 <SelectTrigger className="w-full">
-                                  <SelectValue placeholder="Choose parent label..." />
+                                  <SelectValue placeholder="Choose parent folder..." />
                                 </SelectTrigger>
                                 <SelectContent>
                                   {filteredTree.map((label) => (

@@ -78,7 +78,8 @@ export const sendGmailMessage = async (
   subject: string,
   body: string,
   attachments?: Array<{ name: string; mimeType: string; data: string; cid?: string }>,
-  conversationThreadId?: string
+  conversationThreadId?: string,
+  bcc?: string
 ): Promise<{ success: boolean; threadId?: string }> => {
   try {
     if (!isGmailSignedIn()) {
@@ -140,6 +141,7 @@ export const sendGmailMessage = async (
         'MIME-Version: 1.0',
         `To: ${to}`,
         cc ? `Cc: ${cc}` : '',
+        bcc ? `Bcc: ${bcc}` : '',
         `Subject: ${subject}`,
         `Content-Type: multipart/mixed; boundary="${mainBoundary}"`
       ].filter(Boolean);
@@ -212,6 +214,7 @@ export const sendGmailMessage = async (
         'MIME-Version: 1.0',
         `To: ${to}`,
         cc ? `Cc: ${cc}` : '',
+        bcc ? `Bcc: ${bcc}` : '',
         `Subject: ${subject}`,
         `Content-Type: multipart/related; boundary="${relatedBoundary}"`
       ].filter(Boolean);
@@ -262,6 +265,7 @@ export const sendGmailMessage = async (
         'MIME-Version: 1.0',
         `To: ${to}`,
         cc ? `Cc: ${cc}` : '',
+        bcc ? `Bcc: ${bcc}` : '',
         `Subject: ${subject}`,
         `Content-Type: multipart/mixed; boundary="${mainBoundary}"`
       ].filter(Boolean);
@@ -310,6 +314,7 @@ export const sendGmailMessage = async (
         'MIME-Version: 1.0',
         `To: ${to}`,
         cc ? `Cc: ${cc}` : '',
+        bcc ? `Bcc: ${bcc}` : '',
         `Subject: ${subject}`,
         `Content-Type: multipart/alternative; boundary="${alternativeBoundary}"`
       ].filter(Boolean);
@@ -385,7 +390,8 @@ export const saveGmailDraft = async (
   subject: string,
   body: string,
   attachments?: Array<{ name: string; mimeType: string; data: string; cid?: string }>,
-  draftId?: string
+  draftId?: string,
+  bcc?: string
 ): Promise<{ success: boolean; draftId?: string }> => {
   try {
     if (!isGmailSignedIn()) {
@@ -425,6 +431,7 @@ export const saveGmailDraft = async (
         'MIME-Version: 1.0',
         `To: ${to}`,
         cc ? `Cc: ${cc}` : '',
+        bcc ? `Bcc: ${bcc}` : '',
         `Subject: ${subject}`,
         `Content-Type: multipart/mixed; boundary="${mainBoundary}"`
       ].filter(Boolean);
@@ -492,6 +499,7 @@ export const saveGmailDraft = async (
         'MIME-Version: 1.0',
         `To: ${to}`,
         cc ? `Cc: ${cc}` : '',
+        bcc ? `Bcc: ${bcc}` : '',
         `Subject: ${subject}`,
         `Content-Type: multipart/related; boundary="${relatedBoundary}"`
       ].filter(Boolean);
@@ -540,6 +548,7 @@ export const saveGmailDraft = async (
         'MIME-Version: 1.0',
         `To: ${to}`,
         cc ? `Cc: ${cc}` : '',
+        bcc ? `Bcc: ${bcc}` : '',
         `Subject: ${subject}`,
         `Content-Type: multipart/mixed; boundary="${mainBoundary}"`
       ].filter(Boolean);
@@ -586,6 +595,7 @@ export const saveGmailDraft = async (
         'MIME-Version: 1.0',
         `To: ${to}`,
         cc ? `Cc: ${cc}` : '',
+        bcc ? `Bcc: ${bcc}` : '',
         `Subject: ${subject}`,
         `Content-Type: multipart/alternative; boundary="${alternativeBoundary}"`
       ].filter(Boolean);

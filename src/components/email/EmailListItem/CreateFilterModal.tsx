@@ -43,7 +43,7 @@ export function CreateFilterModal({
     
     // 🔧 SELF-FILTER BUG FIX: Prevent creating filter for own email
     if (sender.toLowerCase() === currentUserEmail) {
-      toast.error('Cannot create filter for your own email address. This would affect all your sent emails.');
+      toast.error('Cannot create rule for your own email address. This would affect all your sent emails.');
       return;
     }
     if (!selectedFilterLabel) {
@@ -155,7 +155,7 @@ export function CreateFilterModal({
                     </button>
                   ))
                 ) : (
-                  <div className="px-3 py-3 text-sm text-gray-500">No labels found</div>
+                  <div className="px-3 py-3 text-sm text-gray-500">No folders found</div>
                 )}
               </div>
             </div>

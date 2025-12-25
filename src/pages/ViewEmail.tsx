@@ -888,10 +888,10 @@ function ViewEmail() {
       
       // Close the dropdown and show a confirmation message
       setLabelDropdownOpen(false);
-      alert('Label applied successfully');
+      alert('Folder applied successfully');
     } catch (error) {
       console.error('Error applying label:', error);
-      alert('Failed to apply label. Please try again.');
+      alert('Failed to apply folder. Please try again.');
     } finally {
       setIsApplyingLabel(null);
     }
@@ -1294,7 +1294,7 @@ ${threadMessage.body}
           <div className="relative">
             <button 
               className="p-2 rounded-lg hover:bg-gray-100 flex items-center transition-colors"
-              title="Add Label"
+              title="Add Folder"
               onClick={() => setLabelDropdownOpen(!labelDropdownOpen)}
             >
               <Tag size={16} className="mr-1" />

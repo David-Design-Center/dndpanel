@@ -92,7 +92,7 @@ const FilterItem = memo(({
     if (criteria.subject) return `subject:(${criteria.subject})`;
     if (criteria.query) return `${criteria.query}`;
     if (criteria.hasAttachment) return 'has:attachment';
-    return 'Filter rule';
+    return 'Rule';
   };
 
   const getFilterAction = (filter: any) => {
@@ -104,8 +104,8 @@ const FilterItem = memo(({
     if (action.markAsRead) actions.push('Mark as read');
     if (action.markAsSpam) actions.push('Mark as spam');
     if (action.markAsImportant) actions.push('Mark as important');
-    if (action.addLabelIds?.length) actions.push(`Add labels`);
-    if (action.removeLabelIds?.length) actions.push(`Remove labels`);
+    if (action.addLabelIds?.length) actions.push(`Add folders`);
+    if (action.removeLabelIds?.length) actions.push(`Remove folders`);
     if (action.forward) actions.push(`Forward to ${action.forward}`);
     if (action.neverSpam) actions.push('Never mark as spam');
     return actions.length > 0 ? `Do this: ${actions.join(', ')}` : 'No action';
@@ -361,7 +361,7 @@ function SettingsFilters() {
   }, [filters]);
 
   const deleteFilter = useCallback(async (filterId: string) => {
-    if (!confirm('Are you sure you want to delete this filter?')) {
+    if (!confirm('Are you sure you want to delete this rule?')) {
       return;
     }
     
@@ -370,7 +370,7 @@ function SettingsFilters() {
       setError(null);
       await deleteGmailFilter(filterId);
       
-      setSuccess('Filter deleted successfully!');
+      setSuccess('Rule deleted successfully!');
       setTimeout(() => setSuccess(null), 3000);
       
       // Reload filters
@@ -378,7 +378,7 @@ function SettingsFilters() {
       
     } catch (err) {
       console.error('Error deleting filter:', err);
-      setError('Failed to delete filter. Please try again.');
+      setError('Failed to delete rule. Please try again.');
     } finally {
       setIsDeleting(null);
     }
@@ -394,7 +394,7 @@ function SettingsFilters() {
                        formData.criteria.hasAttachment;
     
     if (!hasCriteria) {
-      errors.criteria = 'At least one filter criteria must be specified';
+      errors.criteria = 'At least one rule criteria must be specified';
     }
     
     // At least one action should be specified
@@ -402,7 +402,7 @@ function SettingsFilters() {
                      formData.action.delete;
     
     if (!hasAction) {
-      errors.action = 'At least one filter action must be specified';
+      errors.action = 'At least one rule action must be specified';
     }
     
     // Include current validation errors from debounced validation
@@ -433,7 +433,7 @@ function SettingsFilters() {
       
       await createGmailFilter(criteria, action);
       
-      setSuccess('Filter created successfully!');
+      setSuccess('Rule created successfully!');
       setTimeout(() => setSuccess(null), 3000);
       
       // Reset form and reload filters
@@ -452,7 +452,7 @@ function SettingsFilters() {
       
     } catch (err) {
       console.error('Error creating filter:', err);
-      setError('Failed to create filter. Please try again.');
+      setError('Failed to create rule. Please try again.');
     } finally {
       setIsCreating(false);
     }
@@ -511,7 +511,7 @@ function SettingsFilters() {
     const selectedCount = selectedFilters.size;
     if (selectedCount === 0) return;
     
-    if (!confirm(`Are you sure you want to delete ${selectedCount} filter${selectedCount > 1 ? 's' : ''}?`)) {
+    if (!confirm(`Are you sure you want to delete ${selectedCount} rule${selectedCount > 1 ? 's' : ''}?`)) {
       return;
     }
     
@@ -524,7 +524,7 @@ function SettingsFilters() {
         Array.from(selectedFilters).map(filterId => deleteGmailFilter(filterId))
       );
       
-      setSuccess(`${selectedCount} filter${selectedCount > 1 ? 's' : ''} deleted successfully!`);
+      setSuccess(`${selectedCount} rule${selectedCount > 1 ? 's' : ''} deleted successfully!`);
       setTimeout(() => setSuccess(null), 3000);
       
       // Clear selection and reload filters
@@ -533,7 +533,7 @@ function SettingsFilters() {
       
     } catch (err) {
       console.error('Error deleting filters:', err);
-      setError('Failed to delete some filters. Please try again.');
+      setError('Failed to delete some rules. Please try again.');
     } finally {
       setIsDeleting(null);
     }
@@ -568,7 +568,7 @@ function SettingsFilters() {
         <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
           <div className="flex items-center justify-between">
             <span className="text-blue-700 text-sm">
-              {selectedFilters.size} filter{selectedFilters.size > 1 ? 's' : ''} selected
+              {selectedFilters.size} rule{selectedFilters.size > 1 ? 's' : ''} selected
             </span>
             <div className="flex items-center space-x-2">
               <Button
@@ -594,7 +594,7 @@ function SettingsFilters() {
                 ) : (
                   <>
                     <Trash2 className="w-4 h-4 mr-2" />
-                    Delete {selectedFilters.size > 1 ? selectedFilters.size : 'filter'}
+                    Delete {selectedFilters.size > 1 ? selectedFilters.size : 'rule'}
                   </>
                 )}
               </Button>
@@ -767,15 +767,15 @@ function SettingsFilters() {
       <Sheet open={editStep === 'criteria'} onOpenChange={(open) => !open && setEditStep(null)}>
         <SheetContent className="w-[600px] sm:w-[540px]">
           <SheetHeader>
-            <SheetTitle>Edit Filter</SheetTitle>
+            <SheetTitle>Edit Rule</SheetTitle>
             <SheetDescription>
-              Update the criteria and actions for your Gmail filter
+              Update the criteria and actions for your Gmail rule
             </SheetDescription>
           </SheetHeader>
           <div className="space-y-8 py-6">
             {/* Filter Criteria */}
             <div>
-              <h3 className="text-sm font-semibold mb-4">Filter Criteria</h3>
+              <h3 className="text-sm font-semibold mb-4">Rule Criteria</h3>
               <div className="space-y-4">
                 <div>
                   <Label htmlFor="edit-from">From</Label>
@@ -799,7 +799,7 @@ function SettingsFilters() {
 
             {/* Filter Actions */}
             <div>
-              <h3 className="text-sm font-semibold mb-4">Filter Actions</h3>
+              <h3 className="text-sm font-semibold mb-4">Rule Actions</h3>
               <div className="space-y-4">
                 {/* Add Labels */}
                 <LabelSelector
@@ -839,7 +839,7 @@ function SettingsFilters() {
                 setEditStep(null);
               }}
             >
-              Update Filter
+              Update Rule
             </Button>
           </SheetFooter>
         </SheetContent>

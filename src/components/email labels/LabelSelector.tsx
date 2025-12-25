@@ -39,7 +39,7 @@ const LabelSelector = memo(({
 
   return (
     <div>
-      <Label>{type === 'add' ? 'Add Labels' : 'Remove Labels'}</Label>
+      <Label>{type === 'add' ? 'Add Folders' : 'Remove Folders'}</Label>
       
       <div className="relative" style={{ zIndex: 9999 }}>
         <Popover open={open} onOpenChange={setOpen}>
@@ -52,7 +52,7 @@ const LabelSelector = memo(({
               disabled={disabled}
             >
               <span className="text-gray-500 text-sm">
-                {`Select label to ${type}`}
+                {`Select folder to ${type}`}
               </span>
               <ChevronsUpDown className="ml-2 h-5 w-5 shrink-0 opacity-50" />
             </Button>
@@ -66,7 +66,7 @@ const LabelSelector = memo(({
             <LabelTreeSelector
               availableLabels={availableLabels}
               onSelect={handleSelect}
-              searchPlaceholder={`Search labels to ${type}...`}
+              searchPlaceholder={`Search folders to ${type}...`}
             />
           </PopoverContent>
         </Popover>
