@@ -751,15 +751,31 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     setSending(true);
     try {
       // Prepare CC/BCC strings
-      const ccString = ccRecipients.filter(e => e.trim()).join(',');
+      const userCc = ccRecipients.filter(e => e.trim()).join(',');
       const bccString = bccRecipients.filter(e => e.trim()).join(',');
       
-      if (replyMode === 'reply') {
-        await sendReply(email, replyContent, false, ccString, bccString);
-        toast({ title: 'Email sent' });
-      } else if (replyMode === 'replyAll') {
-        await sendReplyAll(email, replyContent, ccString, bccString);
-        toast({ title: 'Email sent' });
+      if (replyMode === 'reply' || replyMode === 'replyAll') {
+        // 🔧 Get correct reply recipients (never reply to yourself)
+        const { to: autoTo, cc: autoCc } = getReplyRecipients(replyToMessage, replyMode);
+        
+        if (!autoTo) {
+          sonnerToast.error('Cannot send: No valid recipients');
+          setSending(false);
+          return;
+        }
+        
+        // Merge auto-detected CC with user-added CC
+        const finalCc = [autoCc, userCc].filter(Boolean).join(',');
+        
+        if (replyMode === 'reply') {
+          // Use replyToMessage instead of email
+          await sendReply(replyToMessage || email, replyContent, false, finalCc, bccString);
+          toast({ title: 'Email sent' });
+        } else {
+          // Use replyToMessage instead of email
+          await sendReplyAll(replyToMessage || email, replyContent, finalCc, bccString);
+          toast({ title: 'Email sent' });
+        }
       } else if (replyMode === 'forward' && forwardTo.trim()) {
         const subject = email.subject.startsWith('Fwd: ') ? email.subject : `Fwd: ${email.subject}`;
         await sendEmail({
@@ -769,7 +785,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           body: replyContent,
           threadId: email.threadId,
           internalDate: null
-        }, undefined, undefined, ccString, bccString);
+        }, undefined, undefined, userCc, bccString);
         toast({ title: 'Email sent' });
       }
 
@@ -1912,7 +1928,106 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     );
   }
 
+  // 🔧 Helper: Normalize email address for comparison
+  const normalizeEmail = (emailStr: string): string => {
+    if (!emailStr) return '';
+    // Remove angle brackets and lowercase
+    return emailStr.replace(/[<>]/g, '').trim().toLowerCase();
+  };
+
+  // 🔧 Helper: Find the correct message to reply to (never reply to yourself)
+  const getReplyToMessage = (): Email | null => {
+    if (!currentProfile?.userEmail) return latestMessage;
+    
+    const currentUserEmail = normalizeEmail(currentProfile.userEmail);
+    const latestFromEmail = normalizeEmail(latestMessage.from.email);
+    
+    // Check if latest message is from current user
+    const isLatestFromMe = latestFromEmail === currentUserEmail;
+    
+    if (isLatestFromMe && threadMessages.length > 1) {
+      // Find the most recent message NOT from current user
+      for (let i = threadMessages.length - 2; i >= 0; i--) {
+        const msg = threadMessages[i];
+        const msgFromEmail = normalizeEmail(msg.from.email);
+        if (msgFromEmail !== currentUserEmail) {
+          console.log('📧 Latest message is from me, replying to previous sender:', msg.from.email);
+          return msg;
+        }
+      }
+      // Edge case: All messages are from current user
+      console.warn('⚠️ All messages in thread are from current user');
+      return null;
+    }
+    
+    return latestMessage;
+  };
+
+  // 🔧 Helper: Get reply recipients with self-exclusion and deduplication
+  const getReplyRecipients = (message: Email | null, mode: 'reply' | 'replyAll'): { to: string; cc: string } => {
+    if (!message || !currentProfile?.userEmail) return { to: '', cc: '' };
+    
+    const currentUserEmail = normalizeEmail(currentProfile.userEmail);
+    
+    if (mode === 'reply') {
+      // Reply: Only to sender
+      const senderEmail = normalizeEmail(message.from.email);
+      if (senderEmail === currentUserEmail) {
+        console.warn('⚠️ Cannot reply to yourself');
+        return { to: '', cc: '' };
+      }
+      return { to: message.from.email, cc: '' };
+    }
+    
+    // Reply All: Sender + all To + all CC, excluding current user
+    const allRecipients: Array<{ email: string; name: string }> = [];
+    
+    // Add sender
+    allRecipients.push(message.from);
+    
+    // Add all To recipients
+    if (message.to && message.to.length > 0) {
+      allRecipients.push(...message.to);
+    }
+    
+    // Add all CC recipients
+    if (message.cc && message.cc.length > 0) {
+      allRecipients.push(...message.cc);
+    }
+    
+    // Filter out current user and deduplicate
+    const seen = new Set<string>();
+    const filtered: Array<{ email: string; name: string }> = [];
+    
+    for (const recipient of allRecipients) {
+      const normalizedEmail = normalizeEmail(recipient.email);
+      
+      // Skip current user
+      if (normalizedEmail === currentUserEmail) continue;
+      
+      // Skip duplicates
+      if (seen.has(normalizedEmail)) continue;
+      
+      seen.add(normalizedEmail);
+      filtered.push(recipient);
+    }
+    
+    if (filtered.length === 0) {
+      console.warn('⚠️ No recipients after filtering current user');
+      return { to: '', cc: '' };
+    }
+    
+    // Gmail style: Original sender is primary recipient, everyone else goes to CC
+    const primaryRecipient = filtered[0].email;
+    const ccRecipients = filtered.slice(1).map(r => r.email).join(',');
+    
+    console.log('📧 Reply All recipients:', { to: primaryRecipient, cc: ccRecipients });
+    
+    return { to: primaryRecipient, cc: ccRecipients };
+  };
+
   const latestMessage = threadMessages[threadMessages.length - 1] || email;
+  const replyToMessage = getReplyToMessage();
   const { time, relative } = formatEmailTime(latestMessage.date);
 
   // Debug: Log render state
@@ -2686,21 +2801,39 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
               <div className="flex items-center gap-2">
                 <span className="text-gray-500 w-12">To:</span>
                 <span className="text-gray-800">
-                  {replyMode === 'forward' 
-                    ? (forwardTo || <span className="text-gray-400 italic">Enter recipient...</span>)
-                    : (latestMessage?.from?.email || email?.from?.email || 'recipient')}
+                  {(() => {
+                    if (replyMode === 'forward') {
+                      return forwardTo || 'Enter recipient...';
+                    }
+                    
+                    // Get filtered recipients
+                    const { to } = getReplyRecipients(replyToMessage, replyMode);
+                    
+                    // 🐛 Debug logging
+                    console.log('📧 Reply To field:', {
+                      replyMode,
+                      to,
+                      replyToMessage: replyToMessage?.from,
+                      latestMessage: latestMessage?.from
+                    });
+                    
+                    return to || 'No valid recipients';
+                  })()}
                 </span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-gray-500 w-12">Date:</span>
                 <span className="text-gray-800">{format(new Date(), 'MMM d, yyyy, h:mm a')}</span>
               </div>
-              {replyMode === 'replyAll' && latestMessage?.cc && latestMessage.cc.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-500 w-12">CC:</span>
-                  <span className="text-gray-800 truncate">{latestMessage.cc.map(c => c.email).join(', ')}</span>
-                </div>
-              )}
+              {replyMode === 'replyAll' && (() => {
+                const { cc } = getReplyRecipients(replyToMessage, 'replyAll');
+                return cc ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500 w-12">CC:</span>
+                    <span className="text-gray-800 truncate">{cc}</span>
+                  </div>
+                ) : null;
+              })()}
               
               {/* CC/BCC Toggle buttons */}
               {(!showCc || !showBcc) && (
@@ -3414,6 +3547,11 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         <div className="px-4 py-1.5 border-t border-gray-200 flex items-center gap-2 bg-white flex-shrink-0">
           <button
             onClick={() => {
+              // Check if we have valid recipients before opening composer
+              if (!replyToMessage) {
+                sonnerToast.error('Cannot reply: All messages in this thread are from you');
+                return;
+              }
               setReplyMode('reply');
               setShowReplyComposer(true);
             }}
@@ -3424,6 +3562,11 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           </button>
           <button
             onClick={() => {
+              // Check if we have valid recipients before opening composer
+              if (!replyToMessage) {
+                sonnerToast.error('Cannot reply: All messages in this thread are from you');
+                return;
+              }
               setReplyMode('replyAll');
               setShowReplyComposer(true);
             }}
