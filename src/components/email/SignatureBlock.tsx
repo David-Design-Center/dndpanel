@@ -1,21 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
+import { sanitizeAndProcessLinks } from '../../utils/sanitize';
 
-// Utility function to process HTML and make links open in new tabs
+// Utility function to process HTML and make links open in new tabs - NOW WITH SANITIZATION
 const processLinksInHtml = (html: string): string => {
-  const tempDiv = document.createElement('div');
-  tempDiv.innerHTML = html;
-  
-  const links = tempDiv.querySelectorAll('a');
-  links.forEach(link => {
-    const href = link.getAttribute('href');
-    if (href && href.trim() !== '' && href !== '#') {
-      link.setAttribute('target', '_blank');
-      link.setAttribute('rel', 'noopener noreferrer');
-    }
-  });
-  
-  return tempDiv.innerHTML;
+  return sanitizeAndProcessLinks(html);
 };
 
 interface SignatureBlockProps {

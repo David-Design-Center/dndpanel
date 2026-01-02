@@ -3,6 +3,7 @@ import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { X, Paperclip, Plus, SendHorizontal, Maximize2, Minimize2 } from 'lucide-react';
 import { sendEmail, getThreadEmails, clearEmailCache, saveDraft, deleteDraft } from '../services/emailService';
 import { emailRepository } from '../services/emailRepository';
+import { sanitizeEmailHtml } from '../utils/sanitize';
 // Customer orders (type 'Customer Order') are already included in invoices query; here we fetch supplier orders from 'orders' table
 import { supabase } from '../lib/supabase';
 // Use the same print components pipeline to ensure consistent preview as Invoice/Orders tabs
@@ -1920,7 +1921,7 @@ function Compose() {
                     <div className="p-4">
                       <div 
                         className="prose max-w-none text-sm email-body-content"
-                        dangerouslySetInnerHTML={{ __html: email.body }}
+                        dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(email.body) }}
                       />
                       
                       {/* Enhanced Attachment Display */}

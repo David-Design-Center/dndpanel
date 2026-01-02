@@ -1,10 +1,21 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { importPKCS8, SignJWT } from "https://deno.land/x/jose@v4.15.0/index.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type"
-};
+const ALLOWED_ORIGINS = [
+  "https://order.dnddesigncenter.com",
+  "http://localhost:5173",
+];
+
+function getCorsHeaders(req: Request) {
+  const origin = req.headers.get("origin") || "";
+  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  
+  return {
+    "Access-Control-Allow-Origin": allowedOrigin,
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+  };
+}
 
 const SCOPES = [
   // Gmail - Full access (most important for email operations)
@@ -48,7 +59,7 @@ const SCOPES = [
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", {
-      headers: corsHeaders
+      headers: getCorsHeaders(req)
     });
   }
 
@@ -62,7 +73,7 @@ serve(async (req) => {
       }), {
         status: 400,
         headers: {
-          ...corsHeaders,
+          ...getCorsHeaders(req),
           "Content-Type": "application/json"
         }
       });
@@ -119,7 +130,7 @@ serve(async (req) => {
     }), {
       status: 200,
       headers: {
-        ...corsHeaders,
+        ...getCorsHeaders(req),
         "Content-Type": "application/json"
       }
     });
@@ -131,7 +142,7 @@ serve(async (req) => {
     }), {
       status: 500,
       headers: {
-        ...corsHeaders,
+        ...getCorsHeaders(req),
         "Content-Type": "application/json"
       }
     });

@@ -8,6 +8,7 @@ import EmailIframe from './EmailIframe';
 import { processEmailContent, makeRowSnippet } from '../../../utils/emailContentProcessing';
 import { getAttachmentDownloadUrl } from '../../../services/emailService';
 import { useAuth } from '../../../contexts/AuthContext';
+import { sanitizeSignature } from '../../../utils/sanitize';
 
 interface MessageCardProps {
   message: Email;
@@ -402,7 +403,7 @@ export const OutlookMessageCard: React.FC<MessageCardProps> = ({
           <div className="mt-3 pt-2 border-t border-gray-100">
             <div className="text-xs text-gray-600">
               {processedContent.signatures.map((signature, index) => (
-                <div key={index} dangerouslySetInnerHTML={{ __html: signature }} />
+                <div key={index} dangerouslySetInnerHTML={{ __html: sanitizeSignature(signature) }} />
               ))}
             </div>
           </div>

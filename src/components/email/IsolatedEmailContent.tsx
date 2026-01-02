@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { sanitizeEmailHtml } from '../../utils/sanitize';
 
 interface IsolatedEmailContentProps {
   htmlContent: string;
@@ -47,8 +48,8 @@ function IsolatedEmailContent({ htmlContent, className = '' }: IsolatedEmailCont
       overflow-wrap: break-word !important;
     `;
 
-    // Sanitize and set the HTML content
-    const sanitizedHtml = sanitizeForIsolation(htmlContent);
+    // Sanitize and set the HTML content using DOMPurify
+    const sanitizedHtml = sanitizeEmailHtml(htmlContent);
     isolatedContainer.innerHTML = sanitizedHtml;
 
     // Add click handler for links
@@ -123,70 +124,33 @@ function IsolatedEmailContent({ htmlContent, className = '' }: IsolatedEmailCont
   );
 }
 
-// Enhanced sanitization for complete isolation
-function sanitizeForIsolation(html: string): string {
-  if (!html) return '';
+// Post-process HTML for layout isolation (runs AFTER DOMPurify sanitization)
+// This handles safe styling adjustments, not security
+function postProcessForIsolation(element: Element): void {
+  // Handle images safely
+  const images = element.querySelectorAll('img');
+  images.forEach(img => {
+    (img as HTMLElement).style.maxWidth = '100%';
+    (img as HTMLElement).style.height = 'auto';
+  });
 
-  try {
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = html;
+  // Handle tables safely
+  const tables = element.querySelectorAll('table');
+  tables.forEach(table => {
+    (table as HTMLElement).style.maxWidth = '100%';
+    (table as HTMLElement).style.tableLayout = 'auto';
+    (table as HTMLElement).style.wordBreak = 'break-word';
+  });
 
-    // Remove all dangerous elements and attributes
-    const dangerousElements = tempDiv.querySelectorAll('script, style, link, meta, title, head, html, body, iframe, object, embed, applet, form, input, button, select, textarea');
-    dangerousElements.forEach(el => el.remove());
-
-    // Remove all event handlers and dangerous attributes
-    const allElements = tempDiv.querySelectorAll('*');
-    allElements.forEach(el => {
-      // Remove event handlers
-      Array.from(el.attributes).forEach(attr => {
-        if (attr.name.startsWith('on') || 
-            attr.name === 'style' ||
-            attr.name === 'class' ||
-            attr.name === 'id') {
-          el.removeAttribute(attr.name);
-        }
-      });
-
-      // Remove inline styles that could affect layout
-      el.removeAttribute('style');
-      el.removeAttribute('class');
-      el.removeAttribute('id');
-    });
-
-    // Handle images safely
-    const images = tempDiv.querySelectorAll('img');
-    images.forEach(img => {
-      img.style.maxWidth = '100%';
-      img.style.height = 'auto';
-      img.style.display = 'block';
-      img.style.margin = '10px 0';
-    });
-
-    // Handle tables safely
-    const tables = tempDiv.querySelectorAll('table');
-    tables.forEach(table => {
-      table.style.maxWidth = '100%';
-      table.style.tableLayout = 'auto';
-      table.style.wordBreak = 'break-word';
-      table.style.borderCollapse = 'collapse';
-    });
-
-    // Handle links safely - make them open in new tabs
-    const links = tempDiv.querySelectorAll('a');
-    links.forEach(link => {
-      const href = link.getAttribute('href');
-      if (href && href.trim() !== '' && href !== '#') {
-        link.setAttribute('target', '_blank');
-        link.setAttribute('rel', 'noopener noreferrer');
-      }
-    });
-
-    return tempDiv.innerHTML;
-  } catch (error) {
-    console.warn('Error sanitizing email content for isolation:', error);
-    return '';
-  }
+  // Handle links safely - make them open in new tabs
+  const links = element.querySelectorAll('a');
+  links.forEach(link => {
+    const href = link.getAttribute('href');
+    if (href && href.trim() !== '' && href !== '#') {
+      link.setAttribute('target', '_blank');
+      link.setAttribute('rel', 'noopener noreferrer');
+    }
+  });
 }
 
 export default IsolatedEmailContent;
