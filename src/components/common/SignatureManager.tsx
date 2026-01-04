@@ -3,61 +3,92 @@ import { useProfile } from '../../contexts/ProfileContext';
 import { useAuth } from '../../contexts/AuthContext';
 import RichTextEditor from './RichTextEditor';
 import { Button } from '../ui/button';
-import { AlertCircle } from 'lucide-react';
-
-// Default signatures
+import { AlertCircle, RefreshCw, Check, X } from 'lucide-react';
+import { 
+  fetchGmailSignature, 
+  updateGmailSignature 
+} from '../../services/gmailSignatureService';
+import { useToast } from '../ui/use-toast';
 
 function SignatureManager() {
-  const { currentProfile, updateProfileSignature } = useProfile();
+  const { currentProfile } = useProfile();
   const { isGmailSignedIn } = useAuth();
+  const { toast } = useToast();
   const [signature, setSignature] = useState<string>('');
   const [isSaving, setIsSaving] = useState(false);
-  const [] = useState(false);
-  const [success, setSuccess] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [gmailSyncStatus, setGmailSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
 
-  // Load current profile signature when profile changes
+  // Auto-load signature from Gmail on mount
   useEffect(() => {
-    if (currentProfile) {
-      setSignature(currentProfile.signature || '');
+    if (currentProfile?.userEmail && isGmailSignedIn) {
+      loadSignatureFromGmail();
+    } else {
+      setIsLoading(false);
     }
-  }, [currentProfile]);
+  }, [currentProfile?.userEmail, isGmailSignedIn]);
 
-  // Reset signature to profile's saved signature
+  // Load signature directly from Gmail
+  const loadSignatureFromGmail = async () => {
+    if (!currentProfile?.userEmail) return;
+    
+    try {
+      setIsLoading(true);
+      setError(null);
+      
+      console.log('📝 Loading signature from Gmail for:', currentProfile.userEmail);
+      const gmailSig = await fetchGmailSignature(currentProfile.userEmail);
+      
+      setSignature(gmailSig || '');
+      setGmailSyncStatus('synced');
+      console.log('✅ Loaded signature from Gmail, length:', gmailSig?.length || 0);
+      
+    } catch (err) {
+      console.error('❌ Error loading Gmail signature:', err);
+      setError('Failed to load signature from Gmail. Please try again.');
+      setGmailSyncStatus('error');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-  // Reset to default signature for current profile
-
-  // Save signature to database
+  // Save signature to Gmail only
   const handleSave = async () => {
-    if (!currentProfile) {
-      setError('No profile selected');
+    if (!currentProfile?.userEmail) {
+      setError('No email configured for this profile');
       return;
     }
 
     try {
       setIsSaving(true);
+      setGmailSyncStatus('syncing');
       setError(null);
-      setSuccess(null);
       
-      console.log('SignatureManager: Attempting to save signature for profile:', currentProfile.name, currentProfile.id);
-      console.log('SignatureManager: Signature content length:', signature.length);
+      console.log('📝 Saving signature to Gmail for:', currentProfile.userEmail);
+      console.log('📝 Signature length:', signature.length);
       
-      // Test if we can read the profile first
-      console.log('SignatureManager: Testing profile read access...');
+      await updateGmailSignature(currentProfile.userEmail, signature);
       
-      const success = await updateProfileSignature(currentProfile.id, signature);
+      setGmailSyncStatus('synced');
+      console.log('✅ Saved signature to Gmail');
       
-      if (success) {
-        setSuccess('Signature saved successfully!');
-        console.log('SignatureManager: Signature saved successfully');
-        setTimeout(() => setSuccess(null), 3000);
-      } else {
-        throw new Error('Failed to save signature - updateProfileSignature returned false');
-      }
+      toast({
+        title: "Signature saved",
+        description: "Your signature has been saved to Gmail.",
+      });
+      
     } catch (err) {
-      console.error('SignatureManager: Error saving signature:', err);
+      console.error('❌ Error saving signature to Gmail:', err);
+      setGmailSyncStatus('error');
       const errorMessage = err instanceof Error ? err.message : 'Failed to save signature. Please try again.';
       setError(errorMessage);
+      
+      toast({
+        title: "Save failed",
+        description: errorMessage,
+        variant: "destructive",
+      });
     } finally {
       setIsSaving(false);
     }
@@ -82,29 +113,38 @@ function SignatureManager() {
     );
   }
 
-  return (
-    <div className="bg-white p-6 rounded-lg shadow-sm">
-      <div className="flex justify-between items-center">
-        <div>
+  if (!currentProfile.userEmail) {
+    return (
+      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-center gap-3">
+        <AlertCircle className="h-5 w-5 text-yellow-600 flex-shrink-0" />
+        <div className="text-sm text-yellow-800">
+          This profile doesn't have an email address configured.
         </div>
       </div>
+    );
+  }
 
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="bg-white p-6 rounded-lg shadow-sm">
+        <div className="flex items-center justify-center py-12">
+          <RefreshCw className="h-6 w-6 animate-spin text-blue-600 mr-3" />
+          <span className="text-gray-600">Loading signature from Gmail...</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white p-6 rounded-lg shadow-sm">
       {error && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-600">
           {error}
         </div>
       )}
 
-      {success && (
-        <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-md text-sm text-green-600">
-          {success}
-        </div>
-      )}
-
       <div className="mb-6">
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Edit Signature
-        </label>
         <div className="rounded-lg overflow-hidden">
           <RichTextEditor
             value={signature}
@@ -123,13 +163,11 @@ function SignatureManager() {
         >
           {isSaving ? (
             <>
-              <div className="animate-spin h-4 w-4 mr-2 border-2 border-b-transparent border-white rounded-full"></div>
+              <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
               Saving...
             </>
           ) : (
-            <>
-              Save
-            </>
+            'Save to Gmail'
           )}
         </Button>
       </div> 

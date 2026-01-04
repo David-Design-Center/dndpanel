@@ -17,6 +17,7 @@ import { useCompose } from '@/contexts/ComposeContext';
 import { useEmailDnd } from '@/contexts/EmailDndContext';
 import { useLabel } from '@/contexts/LabelContext';
 import EmailListItem from './EmailListItem';
+import SelectAllBanner from './SelectAllBanner';
 import MoveToFolderDialog from './MoveToFolderDialog';
 import ThreeColumnLayout from '../layout/ThreeColumnLayout';
 import { Email } from '../../types';
@@ -26,6 +27,7 @@ import {
   deleteEmail,
   clearEmailCache
 } from '../../services/emailService';
+import { fetchThreadIdsForLabel } from '../../integrations/gapiService';
 import { emailRepository } from '../../services/emailRepository';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLayoutState } from '../../contexts/LayoutStateContext';
@@ -48,7 +50,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   const { isGmailSignedIn, loading: authLoading, isGmailInitializing } = useAuth();
   const { selectEmail, setSystemFolderFilterHandler, selectedEmailId, clearSelection: clearViewSelection } = useLayoutState();
   const { openCompose } = useCompose();
-  const { refreshLabels, incrementLabelUnreadCount } = useLabel();
+  const { refreshLabels, incrementLabelUnreadCount, labels } = useLabel();
 
   // Ref to preserve scroll position during state updates
   const emailListRef = useRef<HTMLDivElement>(null);
@@ -226,6 +228,56 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     trashCount
   } = emailCountsHook;
   
+  // ========== EXTENDED SELECTION CONTEXT ==========
+  // Compute currentQuery and totalInFolder for bulk "Select All" feature
+  const currentLabelForSelection = useMemo(() => {
+    // If viewing a custom label folder
+    if (labelIdParam) {
+      return labels.find(l => l.id === labelIdParam);
+    }
+    // Map pageType/activeTab to system label
+    const systemLabelMap: Record<string, string> = {
+      'inbox': 'INBOX',
+      'sent': 'SENT',
+      'drafts': 'DRAFT',
+      'trash': 'TRASH',
+      'unread': 'UNREAD',
+      'spam': 'SPAM',
+      'starred': 'STARRED',
+      'important': 'IMPORTANT'
+    };
+    const labelId = systemLabelMap[pageType] || systemLabelMap[activeTab];
+    if (labelId) {
+      return labels.find(l => l.id === labelId);
+    }
+    return null;
+  }, [labels, labelIdParam, pageType, activeTab]);
+
+  const currentQuery = useMemo(() => {
+    // Build Gmail query for fetching message IDs
+    if (labelIdParam) {
+      return `label:${labelIdParam}`;
+    }
+    if (labelName) {
+      return `label:${labelName.replace(/\s+/g, '-')}`;
+    }
+    const queryMap: Record<string, string> = {
+      'inbox': 'in:inbox',
+      'sent': 'in:sent',
+      'drafts': 'in:drafts',
+      'trash': 'in:trash',
+      'spam': 'in:spam',
+      'starred': 'is:starred',
+      'important': 'is:important',
+      'unread': 'is:unread'
+    };
+    // Prioritize activeTab for system folders (trash, sent, drafts, etc.)
+    // because pageType might be 'inbox' while viewing a tab like trash
+    return queryMap[activeTab] || queryMap[pageType] || 'in:inbox';
+  }, [labelIdParam, labelName, pageType, activeTab]);
+
+  const totalInFolder = currentLabelForSelection?.messagesTotal ?? 0;
+
   // ========== EMAIL SELECTION (Extracted to useEmailSelection hook) ==========
   const emailSelection = useEmailSelection({
     pageType,
@@ -242,7 +294,10 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     incrementLabelUnreadCount,
     selectedEmailId,
     clearViewSelection,
-    navigate
+    navigate,
+    // 🆕 Extended selection support for "Select All in Folder" feature
+    currentQuery,
+    totalInFolder
   });
   
   // Destructure for backwards compatibility
@@ -256,7 +311,11 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     handleMarkReadSelected,
     handleMarkUnreadSelected,
     handleMoveSelected,
-    clearSelection
+    clearSelection,
+    // Extended selection support
+    isLoadingMoreSelection,
+    hasMoreToSelect,
+    handleLoadMoreForSelection
   } = emailSelection;
   
   // ========== TAB MANAGEMENT (Extracted to useTabManagement hook) ==========
@@ -728,6 +787,12 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       window.removeEventListener('clear-email-selection', handleClearSelection);
     };
   }, [setPaginatedEmails, setAllTabEmails, setSelectedEmails]);
+
+  // Clear selection when switching folders/pages to avoid stale selections
+  useEffect(() => {
+    console.log('📂 Folder changed, clearing selection');
+    clearSelection();
+  }, [pageType, labelName, labelIdParam]);
 
   // Pagination settings & state for toolbar chevrons
   const PAGE_SIZE = 25;
@@ -1317,36 +1382,36 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
           {(!isSplitInbox || inboxViewMode === 'split') && (
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-1">
-                {/* Select All Button */}
+                {/* Select All Button - selects ALL loaded emails, not just visible page */}
               <button
                 onClick={() => {
                   setSelectedEmails(prev => {
                     const next = new Set(prev);
                     
                     if (isSplitInbox) {
-                      // ✅ Split view: only select/deselect VISIBLE emails (first 25 from each section)
-                      const visibleUnread = splitUnread.slice(0, 25);
-                      const visibleRead = splitRead.slice(0, 25);
+                      // ✅ Split view: select/deselect ALL loaded emails
+                      const allLoadedEmails = [...splitUnread, ...splitRead];
                       
-                      const allVisibleSelected = 
-                        (visibleUnread.length === 0 || visibleUnread.every(e => next.has(e.id))) &&
-                        (visibleRead.length === 0 || visibleRead.every(e => next.has(e.id)));
+                      const allLoadedSelected = allLoadedEmails.length > 0 && 
+                        allLoadedEmails.every(e => next.has(e.id));
                       
-                      if (allVisibleSelected) {
-                        // Deselect all visible
-                        visibleUnread.forEach(email => next.delete(email.id));
-                        visibleRead.forEach(email => next.delete(email.id));
+                      if (allLoadedSelected) {
+                        // Deselect all loaded
+                        allLoadedEmails.forEach(email => next.delete(email.id));
                       } else {
-                        // Select all visible
-                        visibleUnread.forEach(email => next.add(email.id));
-                        visibleRead.forEach(email => next.add(email.id));
+                        // Select all loaded
+                        allLoadedEmails.forEach(email => next.add(email.id));
                       }
                     } else {
-                      // Regular view, select/deselect visible page
-                      if (allVisibleSelected) {
-                        visibleEmails.forEach(email => next.delete(email.id));
+                      // Regular view: select/deselect ALL loaded emails
+                      const allLoadedEmails = paginatedEmails || [];
+                      const allLoadedSelected = allLoadedEmails.length > 0 && 
+                        allLoadedEmails.every(e => next.has(e.id));
+                      
+                      if (allLoadedSelected) {
+                        allLoadedEmails.forEach(email => next.delete(email.id));
                       } else {
-                        visibleEmails.forEach(email => next.add(email.id));
+                        allLoadedEmails.forEach(email => next.add(email.id));
                       }
                     }
                     return next;
@@ -1358,11 +1423,10 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                   ref={selectAllCheckboxRef}
                   type="checkbox"
                   checked={isSplitInbox ? 
-                    // Check if all VISIBLE emails in both sections are selected
-                    (splitUnread.slice(0, 25).length > 0 || splitRead.slice(0, 25).length > 0) &&
-                    splitUnread.slice(0, 25).every(e => selectedEmails.has(e.id)) && 
-                    splitRead.slice(0, 25).every(e => selectedEmails.has(e.id))
-                    : allVisibleSelected}
+                    // Check if all LOADED emails are selected
+                    ([...splitUnread, ...splitRead].length > 0) &&
+                    [...splitUnread, ...splitRead].every(e => selectedEmails.has(e.id))
+                    : ((paginatedEmails?.length || 0) > 0 && paginatedEmails?.every(e => selectedEmails.has(e.id)))}
                   readOnly
                   className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 pointer-events-none w-3 h-3"
                 />
@@ -1372,11 +1436,58 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
               <button
                 onClick={handleDeleteSelected}
                 disabled={selectedEmails.size === 0}
-                className="flex items-center gap-1 px-2 py-1 text-xs text-gray-700 hover:bg-gray-100 rounded disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className={`flex items-center gap-1 px-2 py-1 text-xs rounded disabled:opacity-40 disabled:cursor-not-allowed transition-colors ${
+                  activeTab === 'trash' 
+                    ? 'text-red-600 hover:bg-red-50' 
+                    : 'text-gray-700 hover:bg-gray-100'
+                }`}
               >
                 <Trash2 size={12} />
-                <span>Delete</span>
+                <span>{activeTab === 'trash' ? 'Delete Permanently' : 'Delete'}</span>
               </button>
+              
+              {/* Empty Trash button - only in trash tab */}
+              {activeTab === 'trash' && (paginatedEmails?.length || 0) > 0 && (
+                <button
+                  onClick={async () => {
+                    if (window.confirm(`This will permanently delete up to 1000 emails from trash. This action cannot be undone. Continue?`)) {
+                      const loadingToastId = toast.loading('Fetching emails from trash...');
+                      try {
+                        // Fetch up to 500 message IDs from trash (batchDelete supports up to 1000)
+                        const { threadIds: messageIds } = await fetchThreadIdsForLabel('in:trash', 500);
+                        
+                        if (messageIds.length === 0) {
+                          toast.dismiss(loadingToastId);
+                          toast.info('Trash is already empty!');
+                          return;
+                        }
+                        
+                        toast.loading(`Permanently deleting ${messageIds.length} emails...`, { id: loadingToastId });
+                        
+                        // Use batchDelete for efficient bulk deletion (single API call)
+                        await (window.gapi.client.gmail.users.messages as any).batchDelete({
+                          userId: 'me',
+                          resource: { ids: messageIds }
+                        });
+                        
+                        toast.dismiss(loadingToastId);
+                        toast.success(`Permanently deleted ${messageIds.length} emails from trash!`);
+                        clearEmailCache();
+                        await handleRefresh();
+                      } catch (error) {
+                        console.error('Error emptying trash:', error);
+                        toast.dismiss(loadingToastId);
+                        toast.error('Failed to empty trash. Please try again.');
+                      }
+                    }
+                  }}
+                  className="flex items-center gap-1 px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded transition-colors"
+                  title="Permanently delete up to 1000 emails from trash"
+                >
+                  <Trash2 size={12} />
+                  <span>Empty Trash</span>
+                </button>
+              )}
               
               <button
                 onClick={() => setShowMoveDialog(true)}
@@ -1444,6 +1555,28 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
             </div>
           </div>
           )}
+          
+          {/* Select All Banner - shows when all loaded emails are selected */}
+          {(() => {
+            const loadedCount = isSplitInbox 
+              ? splitUnread.length + splitRead.length
+              : (paginatedEmails?.length || 0);
+            // Smart detection: nextPageToken being truthy means Gmail has more pages
+            const hasMoreToFetch = !!nextPageToken;
+            
+            return (
+              <SelectAllBanner
+                selectedCount={selectedEmails.size}
+                visibleCount={loadedCount}
+                totalInFolder={totalInFolder}
+                folderName={labelName || (pageType === 'inbox' ? 'Inbox' : pageType.charAt(0).toUpperCase() + pageType.slice(1))}
+                hasMoreToLoad={hasMoreToFetch}
+                isLoadingMore={isLoadingMoreSelection}
+                onLoadMore={handleLoadMoreForSelection}
+                onClearSelection={clearSelection}
+              />
+            );
+          })()}
         </div>
 
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -1491,7 +1624,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                 )}
                 <div className="flex items-center gap-3">
                   {/* Empty Trash button - only in trash tab */}
-                  {pageType === 'trash' && filteredEmails.length > 0 && (
+                  {(pageType === 'trash' || activeTab === 'trash') && filteredEmails.length > 0 && (
                     <button
                       onClick={async () => {
                         if (window.confirm(`Are you sure you want to permanently delete all ${filteredEmails.length} email${filteredEmails.length > 1 ? 's' : ''} from trash? This action cannot be undone.`)) {

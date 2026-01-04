@@ -405,7 +405,6 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
       `width: ${sizeConfig.value === 'full' ? '100%' : sizeConfig.width}`,
       'height: auto',
       'display: inline-block',
-      'border-radius: 4px',
       'box-sizing: border-box',
       'border: none',
       // Add styles that ensure proper rendering in email clients

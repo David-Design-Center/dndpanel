@@ -1781,6 +1781,56 @@ export const applyGmailLabels = async (
 };
 
 /**
+ * Fetch message IDs for a label/folder (lightweight, no message content)
+ * Used for "Select All in Folder" feature - fetches only message IDs for bulk operations
+ * 
+ * @param query - Gmail search query (e.g., 'in:inbox', 'label:LABEL_ID', 'in:trash')
+ * @param maxResults - Maximum number of message IDs to fetch (default 200, max 500)
+ * @param pageToken - Pagination token for fetching next batch
+ * @returns Object with messageIds array (named threadIds for compat) and nextPageToken
+ * 
+ * ⚠️ NOTE: Limited to 250 at a time to avoid server overload
+ * ⚠️ NOTE: Returns MESSAGE IDs (not thread IDs) to match selectedEmails Set
+ */
+export const fetchThreadIdsForLabel = async (
+  query: string,
+  maxResults: number = 200,
+  pageToken?: string
+): Promise<{ threadIds: string[]; nextPageToken: string | null }> => {
+  if (!isGmailSignedIn()) {
+    throw new Error('Gmail not signed in');
+  }
+
+  // Cap at 250 to avoid server overload
+  const cappedMaxResults = Math.min(maxResults, 250);
+
+  try {
+    // Use messages.list to get message IDs (selectedEmails uses message IDs, not thread IDs)
+    const messagesApi = window.gapi.client.gmail.users.messages;
+    const response = await messagesApi.list({
+      userId: 'me',
+      q: query,
+      maxResults: cappedMaxResults,
+      pageToken: pageToken || undefined,
+    });
+
+    const messages = response.result?.messages || [];
+    const messageIds = messages.map((m: any) => m.id);
+    const nextToken = response.result?.nextPageToken || null;
+
+    console.log(`📋 Fetched ${messageIds.length} message IDs for query "${query}"`);
+
+    return {
+      threadIds: messageIds, // Named threadIds for backwards compat, but these are message IDs
+      nextPageToken: nextToken,
+    };
+  } catch (error) {
+    console.error('❌ Error fetching message IDs:', error);
+    throw error;
+  }
+};
+
+/**
  * Batch apply labels to multiple Gmail messages at once
  * Uses Gmail's batchModify API - supports up to 1000 message IDs per request
  * ⚠️ DELEGATED TO: src/integrations/gmail/operations/labels.ts

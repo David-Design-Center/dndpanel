@@ -3,16 +3,20 @@
  * 
  * Manages email selection state and bulk actions:
  * - Individual email selection/deselection
- * - Bulk delete
- * - Bulk mark as read/unread
+ * - Extended selection (load more thread IDs for bulk operations)
+ * - Bulk delete with progress
+ * - Bulk mark as read/unread with progress
  * - Selection clearing
+ * 
+ * ⚠️ NOTE: Extended selection limited to 250 at a time to avoid server overload
  * 
  * Extracted from EmailPageLayout.tsx to reduce complexity.
  */
 
 import { useState, useCallback } from 'react';
 import { Email } from '@/types';
-import { deleteEmail, markAsRead, markAsUnread, batchApplyLabelsToEmails } from '@/services/emailService';
+import { batchApplyLabelsToEmails } from '@/services/emailService';
+import { fetchThreadIdsForLabel } from '@/integrations/gapiService';
 import { toast } from 'sonner';
 
 export interface UseEmailSelectionOptions {
@@ -31,6 +35,9 @@ export interface UseEmailSelectionOptions {
   selectedEmailId: string | null; // Currently viewed email ID
   clearViewSelection: () => void; // Clear the email view panel
   navigate: (path: string) => void;
+  // Extended selection support
+  currentQuery?: string; // Gmail query for current view (e.g., 'in:inbox', 'label:LABEL_ID')
+  totalInFolder?: number; // Total emails in current folder from label.messagesTotal
 }
 
 export interface UseEmailSelectionReturn {
@@ -44,6 +51,10 @@ export interface UseEmailSelectionReturn {
   handleMarkUnreadSelected: () => Promise<void>;
   handleMoveSelected: (labelId: string, labelName: string) => Promise<void>;
   clearSelection: () => void;
+  // Extended selection support
+  isLoadingMoreSelection: boolean;
+  hasMoreToSelect: boolean;
+  handleLoadMoreForSelection: () => Promise<void>;
 }
 
 export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSelectionReturn {
@@ -62,12 +73,20 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
     incrementLabelUnreadCount,
     selectedEmailId,
     clearViewSelection,
-    navigate
+    navigate,
+    // Extended selection support
+    currentQuery,
+    totalInFolder = 0
   } = options;
 
   // Selection state
   const [selectedEmails, setSelectedEmails] = useState<Set<string>>(new Set());
   const [sectionSelectedEmails, setSectionSelectedEmails] = useState<Set<string>>(new Set());
+  
+  // Extended selection state (for "Select All in Folder" feature)
+  const [isLoadingMoreSelection, setIsLoadingMoreSelection] = useState(false);
+  const [extendedSelectionNextToken, setExtendedSelectionNextToken] = useState<string | null>(null);
+  const [hasMoreToSelect, setHasMoreToSelect] = useState(true);
 
   /**
    * Toggle selection of a single email
@@ -113,8 +132,8 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
     const isViewingDeletedEmail = selectedEmailId && emailIds.includes(selectedEmailId);
 
     try {
-      // Delete all selected emails
-      await Promise.all(emailIds.map(emailId => deleteEmail(emailId)));
+      // Use batchModify API - single API call to move all to trash
+      await batchApplyLabelsToEmails(emailIds, ['TRASH'], ['INBOX']);
 
       // Remove from local state
       if (pageType === 'inbox' && !labelName) {
@@ -203,7 +222,7 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
   }, [selectedEmails, emails, paginatedEmails, allTabEmails, pageType, labelName, labelIdParam, setAllTabEmails, setCategoryEmails, setEmails, setPaginatedEmails, incrementLabelUnreadCount, selectedEmailId, clearViewSelection, navigate]);
 
   /**
-   * Mark all selected emails as read
+   * Mark all selected emails as read (using batch API)
    */
   const handleMarkReadSelected = useCallback(async () => {
     if (selectedEmails.size === 0) return;
@@ -213,8 +232,8 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
     const loadingToastId = toast.loading(`Marking ${emailCount} email${emailCount > 1 ? 's' : ''} as read...`);
 
     try {
-      // Mark all selected emails as read
-      await Promise.all(emailIds.map(emailId => markAsRead(emailId)));
+      // Use batchModify API - single API call instead of N individual calls
+      await batchApplyLabelsToEmails(emailIds, [], ['UNREAD']);
 
       // Update local state
       const updateEmailsReadStatus = (emails: Email[]) => 
@@ -260,6 +279,9 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
       } else {
         setEmails(prevEmails => updateEmailsReadStatus(prevEmails));
       }
+      
+      // Always update paginatedEmails for immediate UI feedback
+      setPaginatedEmails(prev => updateEmailsReadStatus(prev));
 
       // Clear selection
       setSelectedEmails(new Set());
@@ -283,7 +305,7 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
   }, [selectedEmails, pageType, labelName, setAllTabEmails, setCategoryEmails, setEmails]);
 
   /**
-   * Mark all selected emails as unread
+   * Mark all selected emails as unread (using batch API)
    */
   const handleMarkUnreadSelected = useCallback(async () => {
     if (selectedEmails.size === 0) return;
@@ -293,8 +315,8 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
     const loadingToastId = toast.loading(`Marking ${emailCount} email${emailCount > 1 ? 's' : ''} as unread...`);
 
     try {
-      // Mark all selected emails as unread
-      await Promise.all(emailIds.map(emailId => markAsUnread(emailId)));
+      // Use batchModify API - single API call instead of N individual calls
+      await batchApplyLabelsToEmails(emailIds, ['UNREAD'], []);
 
       // Update local state
       const updateEmailsUnreadStatus = (emails: Email[]) => 
@@ -343,6 +365,9 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
       } else {
         setEmails(prevEmails => updateEmailsUnreadStatus(prevEmails));
       }
+      
+      // Always update paginatedEmails for immediate UI feedback
+      setPaginatedEmails(prev => updateEmailsUnreadStatus(prev));
 
       // Clear selection
       setSelectedEmails(new Set());
@@ -495,12 +520,83 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
   }, [selectedEmails, pageType, labelName, labelIdParam, emails, allTabEmails, setAllTabEmails, setCategoryEmails, setEmails]);
 
   /**
-   * Clear all selections
+   * Clear all selections and reset extended selection state
    */
   const clearSelection = useCallback(() => {
     setSelectedEmails(new Set());
     setSectionSelectedEmails(new Set());
+    setExtendedSelectionNextToken(null);
+    setHasMoreToSelect(true);
   }, []);
+
+  /**
+   * Load more thread IDs for extended selection
+   * ⚠️ NOTE: Limited to 200 per load to avoid server overload (max 250 selected at once)
+   */
+  const handleLoadMoreForSelection = useCallback(async () => {
+    if (!currentQuery || isLoadingMoreSelection) return;
+    
+    // Check if we've already hit the 250 limit
+    if (selectedEmails.size >= 250) {
+      toast.info('Maximum selection reached', {
+        description: 'You can select up to 250 emails at a time to avoid server overload.',
+        duration: 4000,
+      });
+      setHasMoreToSelect(false);
+      return;
+    }
+
+    try {
+      setIsLoadingMoreSelection(true);
+      
+      // Calculate how many more we can load (cap at 200, but don't exceed 250 total)
+      const remainingCapacity = 250 - selectedEmails.size;
+      const batchSize = Math.min(200, remainingCapacity);
+      
+      console.log(`📋 Loading ${batchSize} more thread IDs for selection...`);
+      
+      const { threadIds, nextPageToken } = await fetchThreadIdsForLabel(
+        currentQuery,
+        batchSize,
+        extendedSelectionNextToken || undefined
+      );
+      
+      if (threadIds.length === 0) {
+        setHasMoreToSelect(false);
+        toast.info('No more emails to select', {
+          duration: 3000,
+        });
+        return;
+      }
+      
+      // Add to selection
+      setSelectedEmails(prev => {
+        const next = new Set(prev);
+        threadIds.forEach(id => next.add(id));
+        return next;
+      });
+      
+      // Update pagination state
+      setExtendedSelectionNextToken(nextPageToken);
+      
+      // Check if we've reached limits
+      const newTotal = selectedEmails.size + threadIds.length;
+      if (!nextPageToken || newTotal >= 250 || newTotal >= totalInFolder) {
+        setHasMoreToSelect(false);
+      }
+      
+      console.log(`✅ Added ${threadIds.length} thread IDs. Total selected: ${newTotal}`);
+      
+    } catch (error) {
+      console.error('❌ Error loading more thread IDs:', error);
+      toast.error('Failed to load more emails', {
+        description: 'Please try again.',
+        duration: 4000,
+      });
+    } finally {
+      setIsLoadingMoreSelection(false);
+    }
+  }, [currentQuery, isLoadingMoreSelection, selectedEmails.size, extendedSelectionNextToken, totalInFolder]);
 
   return {
     selectedEmails,
@@ -512,6 +608,10 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
     handleMarkReadSelected,
     handleMarkUnreadSelected,
     handleMoveSelected,
-    clearSelection
+    clearSelection,
+    // Extended selection support
+    isLoadingMoreSelection,
+    hasMoreToSelect,
+    handleLoadMoreForSelection,
   };
 }

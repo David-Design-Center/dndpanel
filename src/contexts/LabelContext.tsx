@@ -688,15 +688,15 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
   // This ensures we always have the exact Gmail API value
   // MOVED HERE: After refreshLabels is defined to avoid hoisting issues
   useEffect(() => {
-    const handleDraftCreated = async () => {
-      // Refresh labels to get exact count from Gmail API
-      await refreshLabels(true);
-    };
+const handleDraftCreated = async () => {
+  // Refresh only system labels (DRAFT, INBOX, etc.) - preserve custom folder counters
+  await refreshLabels(true, true);
+};
 
     const handleDraftDeleted = async () => {
-      // Refresh labels to get exact count from Gmail API
-      await refreshLabels(true);
-    };
+  // Refresh only system labels (DRAFT, INBOX, etc.) - preserve custom folder counters
+  await refreshLabels(true, true);
+};
 
     window.addEventListener("draft-created", handleDraftCreated);
     window.addEventListener("email-deleted", handleDraftDeleted);
