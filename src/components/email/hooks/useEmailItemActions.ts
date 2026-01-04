@@ -5,14 +5,13 @@ import {
   markAsUnread, 
   markAsImportant, 
   markAsUnimportant, 
-  deleteDraft, 
   deleteEmail, 
   applyLabelsToEmail, 
   markAsStarred, 
   markAsUnstarred 
 } from '@/services/emailService';
 import { toast } from 'sonner';
-import { emitLabelUpdateEvent } from '@/utils/labelUpdateEvents';
+import { updateCountersForMarkRead, updateCountersForMarkUnread } from '@/utils/counterUpdateUtils';
 
 interface UseEmailItemActionsProps {
   email: Email;
@@ -41,13 +40,19 @@ export function useEmailItemActions({
     const updatedEmail = { ...email, isRead: newReadStatus };
     onEmailUpdate?.(updatedEmail);
     
-    // Emit immediate event for folder unread counter updates
-    if (email.labelIds && email.labelIds.length > 0) {
-      emitLabelUpdateEvent({
-        labelIds: email.labelIds,
-        action: newReadStatus ? 'mark-read' : 'mark-unread',
+    // 📊 Update counters using unified system
+    if (newReadStatus) {
+      updateCountersForMarkRead({
+        labelIds: email.labelIds || ['INBOX'],
+        wasUnread: !email.isRead,
         threadId: email.threadId,
-        messageId: email.id
+        messageId: email.id,
+      });
+    } else {
+      updateCountersForMarkUnread({
+        labelIds: email.labelIds || ['INBOX'],
+        threadId: email.threadId,
+        messageId: email.id,
       });
     }
 
@@ -65,13 +70,21 @@ export function useEmailItemActions({
         const revertedEmail = { ...email, isRead: email.isRead };
         onEmailUpdate?.(revertedEmail);
         
-        // Emit revert event
-        if (email.labelIds && email.labelIds.length > 0) {
-          emitLabelUpdateEvent({
-            labelIds: email.labelIds,
-            action: email.isRead ? 'mark-read' : 'mark-unread',
+        // 📊 Revert counter changes
+        if (newReadStatus) {
+          // We marked as read, now revert to unread
+          updateCountersForMarkUnread({
+            labelIds: email.labelIds || ['INBOX'],
             threadId: email.threadId,
-            messageId: email.id
+            messageId: email.id,
+          });
+        } else {
+          // We marked as unread, now revert to read
+          updateCountersForMarkRead({
+            labelIds: email.labelIds || ['INBOX'],
+            wasUnread: true,
+            threadId: email.threadId,
+            messageId: email.id,
           });
         }
       })

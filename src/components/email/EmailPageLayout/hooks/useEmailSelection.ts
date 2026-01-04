@@ -18,6 +18,13 @@ import { Email } from '@/types';
 import { batchApplyLabelsToEmails } from '@/services/emailService';
 import { fetchThreadIdsForLabel } from '@/integrations/gapiService';
 import { toast } from 'sonner';
+import { 
+  updateCountersForBulkTrash, 
+  updateCountersForBulkMarkRead, 
+  updateCountersForBulkMarkUnread,
+  updateCountersForBulkMove,
+  BulkEmail 
+} from '@/utils/counterUpdateUtils';
 
 export interface UseEmailSelectionOptions {
   pageType: 'inbox' | 'unread' | 'sent' | 'drafts' | 'trash';
@@ -113,7 +120,6 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
     const emailCount = emailIds.length;
     const loadingToastId = toast.loading(`Deleting ${emailCount} email${emailCount > 1 ? 's' : ''}...`);
 
-    // 🔧 BULK DELETE FIX (Dec 2025): Count unread emails BEFORE deletion for counter update
     // Search in all possible email sources to find the emails being deleted
     const allEmailSources = [
       ...emails,
@@ -124,11 +130,19 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
     // Dedupe by ID to avoid counting same email twice
     const emailMap = new Map(allEmailSources.map(e => [e.id, e]));
     const emailsToDelete = emailIds.map(id => emailMap.get(id)).filter(Boolean) as Email[];
-    const unreadCount = emailsToDelete.filter(e => !e.isRead).length;
     
-    console.log(`🗑️ BULK DELETE: ${emailIds.length} emails, ${unreadCount} unread`);
+    console.log(`🗑️ BULK DELETE: ${emailIds.length} emails`);
     
-    // 🔧 BULK DELETE FIX (Dec 2025): Check if currently viewing any of the deleted emails
+    // 📊 Update counters using unified system
+    const bulkEmails: BulkEmail[] = emailsToDelete.map(e => ({
+      id: e.id,
+      threadId: e.threadId,
+      isRead: e.isRead,
+      labelIds: e.labelIds,
+    }));
+    updateCountersForBulkTrash(bulkEmails);
+    
+    // Check if currently viewing any of the deleted emails
     const isViewingDeletedEmail = selectedEmailId && emailIds.includes(selectedEmailId);
 
     try {
@@ -177,26 +191,13 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
         );
       }
 
-      // 🔧 BULK DELETE FIX (Dec 2025): Also update paginatedEmails for immediate UI feedback
+      // Also update paginatedEmails for immediate UI feedback
       setPaginatedEmails(prev => prev.filter(email => !emailIds.includes(email.id)));
 
       // Clear selection
       setSelectedEmails(new Set());
 
-      // 🔧 BULK DELETE FIX (Dec 2025): Update unread counter
-      if (unreadCount > 0) {
-        if (labelIdParam) {
-          // Viewing a custom folder - decrement that folder's counter
-          incrementLabelUnreadCount(labelIdParam, -unreadCount);
-        } else {
-          // Viewing inbox - decrement INBOX counter
-          incrementLabelUnreadCount('INBOX', -unreadCount);
-        }
-        // Also increment TRASH counter (emails moved to trash)
-        incrementLabelUnreadCount('TRASH', unreadCount);
-      }
-
-      // 🔧 BULK DELETE FIX (Dec 2025): Close ViewEmail if deleted email was being viewed
+      // Close ViewEmail if deleted email was being viewed
       if (isViewingDeletedEmail) {
         clearViewSelection();
         navigate('/inbox');
@@ -219,7 +220,7 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
         id: loadingToastId
       });
     }
-  }, [selectedEmails, emails, paginatedEmails, allTabEmails, pageType, labelName, labelIdParam, setAllTabEmails, setCategoryEmails, setEmails, setPaginatedEmails, incrementLabelUnreadCount, selectedEmailId, clearViewSelection, navigate]);
+  }, [selectedEmails, emails, paginatedEmails, allTabEmails, pageType, labelName, setAllTabEmails, setCategoryEmails, setEmails, setPaginatedEmails, selectedEmailId, clearViewSelection, navigate]);
 
   /**
    * Mark all selected emails as read (using batch API)
@@ -230,6 +231,25 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
     const emailIds = Array.from(selectedEmails);
     const emailCount = emailIds.length;
     const loadingToastId = toast.loading(`Marking ${emailCount} email${emailCount > 1 ? 's' : ''} as read...`);
+
+    // Get email objects for counter updates
+    const allEmailSources = [
+      ...emails,
+      ...paginatedEmails,
+      ...(allTabEmails.all || []),
+      ...(allTabEmails.unread || [])
+    ];
+    const emailMap = new Map(allEmailSources.map(e => [e.id, e]));
+    const emailsToUpdate = emailIds.map(id => emailMap.get(id)).filter(Boolean) as Email[];
+    
+    // 📊 Update counters using unified system
+    const bulkEmails: BulkEmail[] = emailsToUpdate.map(e => ({
+      id: e.id,
+      threadId: e.threadId,
+      isRead: e.isRead,
+      labelIds: e.labelIds,
+    }));
+    updateCountersForBulkMarkRead(bulkEmails);
 
     try {
       // Use batchModify API - single API call instead of N individual calls
@@ -302,7 +322,7 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
         id: loadingToastId
       });
     }
-  }, [selectedEmails, pageType, labelName, setAllTabEmails, setCategoryEmails, setEmails]);
+  }, [selectedEmails, emails, paginatedEmails, allTabEmails, pageType, labelName, setAllTabEmails, setCategoryEmails, setEmails, setPaginatedEmails]);
 
   /**
    * Mark all selected emails as unread (using batch API)
@@ -313,6 +333,25 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
     const emailIds = Array.from(selectedEmails);
     const emailCount = emailIds.length;
     const loadingToastId = toast.loading(`Marking ${emailCount} email${emailCount > 1 ? 's' : ''} as unread...`);
+
+    // Get email objects for counter updates
+    const allEmailSources = [
+      ...emails,
+      ...paginatedEmails,
+      ...(allTabEmails.all || []),
+      ...(allTabEmails.unread || [])
+    ];
+    const emailMap = new Map(allEmailSources.map(e => [e.id, e]));
+    const emailsToUpdate = emailIds.map(id => emailMap.get(id)).filter(Boolean) as Email[];
+    
+    // 📊 Update counters using unified system
+    const bulkEmails: BulkEmail[] = emailsToUpdate.map(e => ({
+      id: e.id,
+      threadId: e.threadId,
+      isRead: e.isRead,
+      labelIds: e.labelIds,
+    }));
+    updateCountersForBulkMarkUnread(bulkEmails);
 
     try {
       // Use batchModify API - single API call instead of N individual calls
@@ -388,7 +427,7 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
         id: loadingToastId
       });
     }
-  }, [selectedEmails, pageType, labelName, setAllTabEmails, setCategoryEmails, setEmails]);
+  }, [selectedEmails, emails, paginatedEmails, allTabEmails, pageType, labelName, setAllTabEmails, setCategoryEmails, setEmails, setPaginatedEmails]);
 
   /**
    * Move all selected emails to a folder/label
@@ -405,6 +444,25 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
         ? `Moving ${emailCount} email${emailCount > 1 ? 's' : ''} back to Inbox...`
         : `Moving ${emailCount} email${emailCount > 1 ? 's' : ''} to ${targetLabelName}...`
     );
+
+    // Get email objects for counter updates
+    const allEmailSources = [
+      ...emails,
+      ...paginatedEmails,
+      ...(allTabEmails.all || []),
+      ...(allTabEmails.unread || [])
+    ];
+    const emailMap = new Map(allEmailSources.map(e => [e.id, e]));
+    const emailsToMove = emailIds.map(id => emailMap.get(id)).filter(Boolean) as Email[];
+    
+    // 📊 Update counters using unified system
+    const bulkEmails: BulkEmail[] = emailsToMove.map(e => ({
+      id: e.id,
+      threadId: e.threadId,
+      isRead: e.isRead,
+      labelIds: e.labelIds,
+    }));
+    updateCountersForBulkMove(bulkEmails, labelId);
 
     try {
       // System labels that should NOT be removed when moving
@@ -504,9 +562,6 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
         }
       );
 
-      // Trigger label counts refresh
-      window.dispatchEvent(new CustomEvent('labels-need-refresh'));
-
     } catch (error) {
       console.error('Error moving emails:', error);
       
@@ -517,7 +572,7 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
         id: loadingToastId
       });
     }
-  }, [selectedEmails, pageType, labelName, labelIdParam, emails, allTabEmails, setAllTabEmails, setCategoryEmails, setEmails]);
+  }, [selectedEmails, pageType, labelName, labelIdParam, emails, paginatedEmails, allTabEmails, setAllTabEmails, setCategoryEmails, setEmails]);
 
   /**
    * Clear all selections and reset extended selection state

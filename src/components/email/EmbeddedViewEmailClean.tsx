@@ -48,6 +48,13 @@ import {
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
 import { stripQuotedText } from '../../utils/emailContentProcessing';
+import { 
+  updateCountersForTrash, 
+  updateCountersForSpam, 
+  updateCountersForMove, 
+  updateCountersForMarkRead, 
+  updateCountersForMarkUnread 
+} from '../../utils/counterUpdateUtils';
 
 interface EmbeddedViewEmailProps {
   emailId: string;
@@ -248,6 +255,23 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const { toast } = useToast();
   const [searchParams] = useSearchParams();
   const draftIdParam = searchParams.get('draft'); // Check for draft query param
+  
+  // 📁 Extract folder context from URL to preserve when navigating back
+  const labelNameParam = searchParams.get('labelName');
+  const labelQueryParam = searchParams.get('labelQuery');
+  const labelIdParam = searchParams.get('labelId');
+  
+  // Helper to build URL back to email list, preserving folder context if present
+  const getBackToListUrl = (): string => {
+    if (labelNameParam) {
+      const params = new URLSearchParams();
+      params.set('labelName', labelNameParam);
+      if (labelQueryParam) params.set('labelQuery', labelQueryParam);
+      if (labelIdParam) params.set('labelId', labelIdParam);
+      return `/inbox?${params.toString()}`;
+    }
+    return '/inbox';
+  };
 
   // 🎯 CONSOLIDATED DRAFT LOAD FUNCTION - Single async action prevents race conditions
   const loadDraftCompletely = async (messageId: string): Promise<boolean> => {
@@ -442,7 +466,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         if (isDraftEmail && email) {
           sonnerToast.error('Draft no longer exists');
           clearSelection();
-          navigate('/inbox');
+          navigate(getBackToListUrl());
           onEmailDelete?.(email.id);
         }
       }
@@ -843,9 +867,17 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     
     console.log(`🗑️ Moving email ${email.id} to trash`);
     
+    // 📊 Update counters (decrement source labels if was unread)
+    updateCountersForTrash({
+      labelIds: email.labelIds || ['INBOX'],
+      wasUnread: !email.isRead,
+      threadId: email.threadId,
+      messageId: email.id,
+    });
+    
     // ⚡ INSTANT: Navigate away immediately (user expects to leave this view)
     clearSelection();
-    navigate('/inbox');
+    navigate(getBackToListUrl());
     
     // ⚡ INSTANT: Notify parent immediately to remove from list
     onEmailDelete?.(email.id);
@@ -871,9 +903,17 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     
     console.log(`🚫 Marking email ${email.id} as spam`);
     
+    // 📊 Update counters (decrement source labels if was unread)
+    updateCountersForSpam({
+      labelIds: email.labelIds || ['INBOX'],
+      wasUnread: !email.isRead,
+      threadId: email.threadId,
+      messageId: email.id,
+    });
+    
     // ⚡ INSTANT: Navigate away immediately (user expects to leave this view)
     clearSelection();
-    navigate('/inbox');
+    navigate(getBackToListUrl());
     
     // ⚡ INSTANT: Notify parent immediately to remove from list
     onEmailDelete?.(email.id);
@@ -898,6 +938,15 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     
     const isMovingToInbox = labelId === 'INBOX';
     console.log(`📁 Moving email ${email.id} to ${isMovingToInbox ? 'Inbox' : `folder: ${labelName}`}`);
+    
+    // 📊 Update counters (decrement source, increment destination if was unread)
+    updateCountersForMove({
+      labelIds: email.labelIds || ['INBOX'],
+      wasUnread: !email.isRead,
+      toLabelId: labelId,
+      threadId: email.threadId,
+      messageId: email.id,
+    });
     
     try {
       // Get current user labels to remove (exclude system labels)
@@ -926,13 +975,10 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       
       // Navigate away
       clearSelection();
-      navigate('/inbox');
+      navigate(getBackToListUrl());
       
       // Trigger inbox refetch to update the list (don't use onEmailDelete - that deletes the email!)
       window.dispatchEvent(new CustomEvent('inbox-refetch-required'));
-      
-      // Trigger label counts refresh
-      window.dispatchEvent(new CustomEvent('labels-need-refresh'));
       
       toast({ 
         title: isMovingToInbox 
@@ -956,6 +1002,24 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     const newReadStatus = !email.isRead;
     
     console.log(`🔄 Toggling read status: ${email.isRead} → ${newReadStatus}`);
+    
+    // 📊 Update counters immediately
+    if (newReadStatus) {
+      // Marking as read → decrement
+      updateCountersForMarkRead({
+        labelIds: email.labelIds || ['INBOX'],
+        wasUnread: !email.isRead,
+        threadId: email.threadId,
+        messageId: email.id,
+      });
+    } else {
+      // Marking as unread → increment
+      updateCountersForMarkUnread({
+        labelIds: email.labelIds || ['INBOX'],
+        threadId: email.threadId,
+        messageId: email.id,
+      });
+    }
     
     // ⚡ INSTANT: Update local state immediately (optimistic update)
     const updatedEmail = {
@@ -1918,7 +1982,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         <button
           onClick={() => {
             clearSelection();
-            navigate('/inbox');
+            navigate(getBackToListUrl());
           }}
           className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded text-sm"
         >
@@ -2048,10 +2112,10 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           <button
             onClick={() => {
               clearSelection();
-              navigate('/inbox');
+              navigate(getBackToListUrl());
             }}
             className="p-2 hover:bg-gray-100 rounded-full transition-colors"
-            title="Back to inbox"
+            title="Back to list"
           >
             <X size={20} className="text-gray-700" />
           </button>
@@ -3160,9 +3224,9 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                         if (isDraftEmail) {
                           // Case: Viewing draft from Drafts folder
                           // Draft already deleted from Gmail - just navigate away
-                          console.log('🔄 Discarded draft from Drafts folder, navigating to /inbox');
+                          console.log('🔄 Discarded draft from Drafts folder, navigating back to list');
                           clearSelection();
-                          navigate('/inbox');
+                          navigate(getBackToListUrl());
                           // DON'T call onEmailDelete - draft already deleted, would cause 404
                           // List removal happens via 'email-deleted' event listener
                         } else {

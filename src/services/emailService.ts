@@ -339,6 +339,24 @@ export const clearEmailCache = (): void => {
 };
 
 /**
+ * Invalidate just the email list cache (both memory and localStorage)
+ * Used when email state changes (read/unread, trash, labels) to ensure fresh data on next fetch
+ */
+const invalidateEmailListCache = (reason: string): void => {
+  // Clear in-memory list cache
+  if (emailCache.list) {
+    emailCache.list = undefined;
+  }
+  
+  // Clear all localStorage list caches (they can have different queries)
+  const keys = Object.keys(localStorage);
+  const listCacheKeys = keys.filter(key => key.startsWith(`${CACHE_KEY_PREFIX}list_`));
+  listCacheKeys.forEach(key => localStorage.removeItem(key));
+  
+  console.log(`📦 Email list cache invalidated: ${reason} (cleared ${listCacheKeys.length} localStorage entries)`);
+};
+
+/**
  * Clear email cache for profile switch
  */
 export const clearEmailCacheForProfileSwitch = (newProfileId: string): void => {
@@ -1262,10 +1280,7 @@ export const markEmailAsTrash = async (messageId: string): Promise<void> => {
     await markGmailMessageAsTrash(messageId);
     
     // Invalidate the email list cache to ensure the change is reflected immediately
-    if (emailCache.list) {
-      emailCache.list.timestamp = 0;
-      console.log('Email list cache invalidated after trash operation');
-    }
+    invalidateEmailListCache('trash operation');
     
     // Remove from details cache if it exists
     if (emailCache.details[messageId]) {
@@ -1372,11 +1387,8 @@ export const applyLabelsToEmail = async (
     // Call the Gmail API to apply labels to the message
     await applyGmailLabels(messageId, addLabelIds, removeLabelIds);
     
-    // Invalidate all caches to ensure the change is reflected immediately
-    if (emailCache.list) {
-      emailCache.list.timestamp = 0;
-      console.log('Email list cache invalidated after label update');
-    }
+    // Invalidate email list cache to ensure the change is reflected immediately
+    invalidateEmailListCache('label update');
     
     // Remove from details cache if it exists
     if (emailCache.details[messageId]) {
@@ -1429,11 +1441,8 @@ export const batchApplyLabelsToEmails = async (
     // Call the batch Gmail API
     await batchApplyGmailLabels(messageIds, addLabelIds, removeLabelIds);
     
-    // Invalidate caches
-    if (emailCache.list) {
-      emailCache.list.timestamp = 0;
-      console.log('Email list cache invalidated after batch label update');
-    }
+    // Invalidate email list cache (both memory + localStorage)
+    invalidateEmailListCache('batch label update');
     
     // Remove from details cache
     messageIds.forEach(id => {

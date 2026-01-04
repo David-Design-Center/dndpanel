@@ -297,13 +297,28 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
 
   const hydrateUserLabelCounts = useCallback(
     (baseLabels: GmailLabel[], cacheKey: string) => {
-      if (!isGmailSignedIn || !isGmailApiReady) return;
-      if (!baseLabels?.length) return;
+      console.log('🏷️ hydrateUserLabelCounts called', { 
+        labelsCount: baseLabels?.length, 
+        cacheKey,
+        isGmailSignedIn,
+        isGmailApiReady 
+      });
+      
+      if (!isGmailSignedIn || !isGmailApiReady) {
+        console.log('🏷️ hydrate skipped: Gmail not ready');
+        return;
+      }
+      if (!baseLabels?.length) {
+        console.log('🏷️ hydrate skipped: no labels');
+        return;
+      }
       if (
         typeof window === "undefined" ||
         !(window as any)?.gapi?.client?.gmail?.users?.labels?.get
-      )
+      ) {
+        console.log('🏷️ hydrate skipped: gapi not available');
         return;
+      }
 
       const labelsNeedingDetails = baseLabels.filter((label) => {
         if (!label.id) return false;
@@ -313,6 +328,8 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
           label.type === "system" || SYSTEM_LABEL_IDS.has(idUpper);
         return !isSystem;
       });
+
+      console.log('🏷️ Labels needing hydration:', labelsNeedingDetails.length);
 
       if (labelsNeedingDetails.length === 0) return;
 
@@ -648,12 +665,17 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
         setLabelsLastUpdated(now);
 
         // Skip hydrating user labels when systemOnly is true (preserve custom label state)
+        console.log('🏷️ refreshLabels hydration check:', { systemOnly, hasDetailedCounters, labelsCount: gmailLabels.length });
         if (!systemOnly) {
           if (!hasDetailedCounters) {
+            console.log('🏷️ Calling hydrateUserLabelCounts...');
             hydrateUserLabelCounts(gmailLabels, cacheKey);
           } else {
+            console.log('🏷️ Labels already have detailed counters, marking as hydrated');
             markLabelsHydrated(gmailLabels.map((label) => label.id));
           }
+        } else {
+          console.log('🏷️ Skipping hydration due to systemOnly=true');
         }
         finishProgress("success");
       } catch (err) {

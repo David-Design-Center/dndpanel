@@ -32,6 +32,7 @@ import { emailRepository } from '../../services/emailRepository';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLayoutState } from '../../contexts/LayoutStateContext';
 import { toast } from 'sonner';
+import { updateCountersForTrash } from '../../utils/counterUpdateUtils';
 // Import custom hooks
 import { usePagination, useEmailFetch, useEmailSelection, useEmailFilters, useEmailCounts, useTabManagement } from './EmailPageLayout/hooks';
 import { sortEmailsByDate } from './EmailPageLayout/utils';
@@ -1138,20 +1139,32 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
 
   const handleEmailDelete = async (emailId: string) => {
     try {
-      // Get the email details for the toast before deletion
+      // Get the email details for counter updates and toast before deletion
       let emailSubject = 'Email';
+      let emailToDelete: Email | undefined;
+      
       if (pageType === 'inbox' && !labelName) {
         // Find the email in the current tab to get the subject
         const currentEmails = allTabEmails[activeTab];
-        const emailToDelete = currentEmails.find(email => email.id === emailId);
+        emailToDelete = currentEmails.find(email => email.id === emailId);
         if (emailToDelete) {
           emailSubject = emailToDelete.subject || 'Email';
         }
       } else {
-        const emailToDelete = emails.find(email => email.id === emailId);
+        emailToDelete = emails.find(email => email.id === emailId);
         if (emailToDelete) {
           emailSubject = emailToDelete.subject || 'Email';
         }
+      }
+      
+      // 📊 Update counters (decrement source labels if was unread)
+      if (emailToDelete) {
+        updateCountersForTrash({
+          labelIds: emailToDelete.labelIds || ['INBOX'],
+          wasUnread: !emailToDelete.isRead,
+          threadId: emailToDelete.threadId,
+          messageId: emailId,
+        });
       }
 
       // Delete the email via API

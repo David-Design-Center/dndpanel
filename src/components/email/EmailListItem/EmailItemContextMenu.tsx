@@ -1,9 +1,9 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { Tag, Filter, ChevronRight, Search, Settings, Plus, FolderInput } from 'lucide-react';
+import { Tag, Filter, ChevronRight, ChevronDown, Search, Settings, Plus, FolderInput, Folder } from 'lucide-react';
 import { useLabel } from '@/contexts/LabelContext';
 import { useNavigate } from 'react-router-dom';
-import { filterAndPrepareLabels, hasExactLabelMatch } from '../utils/labelFiltering';
+import { buildLabelTree, filterLabelTree, hasExactMatchInTree, NestedLabel } from '@/utils/labelTreeUtils';
 
 interface EmailItemContextMenuProps {
   position: { x: number; y: number; show: boolean };
@@ -31,9 +31,20 @@ export function EmailItemContextMenu({
   const labelSearchRef = useRef<HTMLInputElement>(null);
   const hideLabelTimerRef = useRef<number | null>(null);
 
-  // Filter labels
-  const filteredLabels = filterAndPrepareLabels(labels, labelSearchQuery);
-  const hasExactMatch = hasExactLabelMatch(filteredLabels, labelSearchQuery);
+  // Build hierarchical label tree
+  const labelTree = useMemo(() => buildLabelTree(labels), [labels]);
+  
+  // Filter tree by search query
+  const filteredTree = useMemo(() => 
+    filterLabelTree(labelTree, labelSearchQuery), 
+    [labelTree, labelSearchQuery]
+  );
+  
+  // Track expanded nodes
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
+  
+  // Check for exact match in tree
+  const hasExactMatch = hasExactMatchInTree(labelTree, labelSearchQuery);
 
   // Handle clicking outside
   useEffect(() => {
@@ -199,22 +210,27 @@ export function EmailItemContextMenu({
               </div>
             </div>
             
-            {/* Scrollable Labels List */}
+            {/* Scrollable Labels List - Hierarchical Tree */}
             <div className="flex-1 overflow-y-auto overscroll-contain pr-1" onWheelCapture={(e) => e.stopPropagation()}>
-              {filteredLabels.length > 0 ? (
-                filteredLabels.map(label => (
-                  <button
-                    key={label.id}
-                    className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50 flex items-center transition-colors"
-                    onClick={() => handleApplyLabelClick(label.id)}
-                    disabled={isApplyingLabel === label.id}
-                  >
-                    <div className="w-2 h-2 rounded-full mr-2 bg-blue-500 flex-shrink-0"></div>
-                    <span className="truncate">
-                      {isApplyingLabel === label.id ? 'Applying...' : label.displayName}
-                    </span>
-                  </button>
-                ))
+              {filteredTree.length > 0 ? (
+                <LabelTreeView
+                  nodes={filteredTree}
+                  depth={0}
+                  expandedNodes={expandedNodes}
+                  onToggleExpand={(nodeId) => {
+                    setExpandedNodes(prev => {
+                      const next = new Set(prev);
+                      if (next.has(nodeId)) {
+                        next.delete(nodeId);
+                      } else {
+                        next.add(nodeId);
+                      }
+                      return next;
+                    });
+                  }}
+                  onSelectLabel={handleApplyLabelClick}
+                  isApplyingLabel={isApplyingLabel}
+                />
               ) : labelSearchQuery ? (
                 <div className="px-3 py-2 text-xs text-gray-500">
                   No folders found for "{labelSearchQuery}"
@@ -283,5 +299,97 @@ export function EmailItemContextMenu({
       </div>
     </div>,
     document.body
+  );
+}
+// Recursive tree view component for hierarchical label display
+interface LabelTreeViewProps {
+  nodes: NestedLabel[];
+  depth: number;
+  expandedNodes: Set<string>;
+  onToggleExpand: (nodeId: string) => void;
+  onSelectLabel: (labelId: string) => void;
+  isApplyingLabel: string | null;
+}
+
+function LabelTreeView({
+  nodes,
+  depth,
+  expandedNodes,
+  onToggleExpand,
+  onSelectLabel,
+  isApplyingLabel,
+}: LabelTreeViewProps) {
+  return (
+    <>
+      {nodes.map((node) => {
+        const hasChildren = node.children.length > 0;
+        const isExpanded = expandedNodes.has(node.id);
+        const hasRealId = node.id && !node.id.startsWith('temp-');
+        const isApplying = isApplyingLabel === node.id;
+        
+        return (
+          <div key={node.id || node.fullPath}>
+            <div
+              className="flex items-center w-full hover:bg-gray-50 transition-colors group"
+              style={{ paddingLeft: `${8 + depth * 12}px` }}
+            >
+              {/* Expand/collapse button for nodes with children */}
+              {hasChildren ? (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleExpand(node.id);
+                  }}
+                  className="p-0.5 hover:bg-gray-200 rounded flex-shrink-0"
+                >
+                  {isExpanded ? (
+                    <ChevronDown size={12} className="text-gray-500" />
+                  ) : (
+                    <ChevronRight size={12} className="text-gray-500" />
+                  )}
+                </button>
+              ) : (
+                <div className="w-4" /> // Spacer for leaf alignment
+              )}
+              
+              {/* Icon: Folder for parents, Tag for leaves */}
+              <span className="flex-shrink-0 mr-1.5">
+                {node.isLeaf ? (
+                  <Tag size={12} className="text-green-500" />
+                ) : (
+                  <Folder size={12} className="text-yellow-500" />
+                )}
+              </span>
+              
+              {/* Label name - clickable to select */}
+              <button
+                className={`flex-1 py-1.5 text-left text-xs truncate ${
+                  hasRealId 
+                    ? 'text-gray-700 hover:text-gray-900' 
+                    : 'text-gray-400 cursor-default'
+                } ${node.isLeaf ? '' : 'font-medium'}`}
+                onClick={() => hasRealId && onSelectLabel(node.id)}
+                disabled={!hasRealId || isApplying}
+                title={hasRealId ? `Move to ${node.fullPath}` : 'Folder group (no label)'}
+              >
+                {isApplying ? 'Moving...' : node.displayName}
+              </button>
+            </div>
+            
+            {/* Render children if expanded */}
+            {hasChildren && isExpanded && (
+              <LabelTreeView
+                nodes={node.children}
+                depth={depth + 1}
+                expandedNodes={expandedNodes}
+                onToggleExpand={onToggleExpand}
+                onSelectLabel={onSelectLabel}
+                isApplyingLabel={isApplyingLabel}
+              />
+            )}
+          </div>
+        );
+      })}
+    </>
   );
 }

@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Reply, Trash, Paperclip, Tag, ChevronDown, Forward, Users, MoreHorizontal, Eye, Download } from 'lucide-react';
 import { formatDistanceToNow, parseISO, format } from 'date-fns';
 import { getAttachmentDownloadUrl, markEmailAsTrash, applyLabelsToEmail, deleteDraft, markAsRead } from '../services/emailService';
 import { optimizedEmailService } from '../services/optimizedEmailService';
-import { emitLabelUpdateEvent } from '../utils/labelUpdateEvents';
+import { updateCountersForTrash, updateCountersForMarkRead } from '../utils/counterUpdateUtils';
 import { Email } from '../types';
 import { useProfile } from '../contexts/ProfileContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -600,6 +600,24 @@ function ViewEmail() {
   const { user } = useAuth();
   const { labels } = useLabel();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
+  
+  // 📁 Extract folder context from URL to preserve when navigating back
+  const labelNameParam = searchParams.get('labelName');
+  const labelQueryParam = searchParams.get('labelQuery');
+  const labelIdParam = searchParams.get('labelId');
+  
+  // Helper to build URL back to email list, preserving folder context if present
+  const getBackToListUrl = (): string => {
+    if (labelNameParam) {
+      const params = new URLSearchParams();
+      params.set('labelName', labelNameParam);
+      if (labelQueryParam) params.set('labelQuery', labelQueryParam);
+      if (labelIdParam) params.set('labelId', labelIdParam);
+      return `/inbox?${params.toString()}`;
+    }
+    return '/inbox';
+  };
 
   // Debug logging for states
   useEffect(() => {
@@ -752,29 +770,19 @@ function ViewEmail() {
   // Mark email as read when it's viewed (optimistic update)
   useEffect(() => {
     if (email && !email.isRead) {
-      // Emit event for folder unread counter updates
-      if (email.labelIds && email.labelIds.length > 0) {
-        emitLabelUpdateEvent({
-          labelIds: email.labelIds,
-          action: 'mark-read',
-          threadId: email.threadId,
-          messageId: email.id
-        });
-      }
+      // 📊 Update counters (decrement unread count for email labels)
+      updateCountersForMarkRead({
+        labelIds: email.labelIds || ['INBOX'],
+        wasUnread: true,
+        threadId: email.threadId,
+        messageId: email.id,
+      });
       
       // Mark as read in the background, but don't wait for it
       markAsRead(email.id).catch(error => {
         console.error('Failed to mark email as read in ViewEmail:', error);
-        
-        // Emit revert event on failure
-        if (email.labelIds && email.labelIds.length > 0) {
-          emitLabelUpdateEvent({
-            labelIds: email.labelIds,
-            action: 'mark-unread',
-            threadId: email.threadId,
-            messageId: email.id
-          });
-        }
+        // Note: On failure, the counter will be slightly off until next refresh
+        // This is acceptable as API failures are rare
       });
     }
   }, [email?.id, email?.isRead]);
@@ -1173,9 +1181,17 @@ ${threadMessage.body}
         // Navigate back to drafts after successful deletion
         navigate('/drafts');
       } else {
+        // 📊 Update counters (decrement source labels if was unread)
+        updateCountersForTrash({
+          labelIds: email.labelIds || ['INBOX'],
+          wasUnread: !email.isRead,
+          threadId: email.threadId,
+          messageId: email.id,
+        });
+        
         await markEmailAsTrash(email.id);
-        // Navigate back to inbox after successful deletion
-        navigate('/inbox');
+        // Navigate back to list after successful deletion, preserving folder context
+        navigate(getBackToListUrl());
       }
     } catch (error) {
       console.error('Error deleting email:', error);
@@ -1198,10 +1214,10 @@ ${threadMessage.body}
       <div className="text-center py-8">
         <p className="text-gray-500">{error || 'Email not found'}</p>
         <button 
-          onClick={() => navigate('/inbox')}
+          onClick={() => navigate(getBackToListUrl())}
           className="mt-4 btn btn-secondary"
         >
-          Back to Inbox
+          Back to List
         </button>
       </div>
     );
@@ -1213,8 +1229,9 @@ ${threadMessage.body}
       <div className="slide-in max-w-3xl mx-auto px-2" style={{ isolation: 'isolate', contain: 'layout style' }}>
         <div className="flex items-center mb-2">
           <button 
-            onClick={() => navigate('/inbox')}
+            onClick={() => navigate(getBackToListUrl())}
             className="mr-1.5 p-1 rounded-full hover:bg-gray-200"
+            title="Back to list"
           >
             <ArrowLeft size={16} />
           </button>
@@ -1270,8 +1287,9 @@ ${threadMessage.body}
       <div className="max-w-4xl mx-auto px-6 py-6">
         <div className="flex items-center mb-6">
           <button 
-            onClick={() => navigate('/inbox')}
+            onClick={() => navigate(getBackToListUrl())}
             className="mr-4 p-2 rounded-lg hover:bg-gray-100 transition-colors"
+            title="Back to list"
           >
             <ArrowLeft size={18} />
           </button>

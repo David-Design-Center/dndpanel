@@ -163,13 +163,7 @@ let tokenRefreshInterval: NodeJS.Timeout | null = null;
  * ⚠️ DELEGATED TO: src/integrations/gmail/send/compose.ts
  */
 export const sendGmailMessage = async (
-  to: string,
-  cc: string,
-  subject: string,
-  body: string,
-  attachments?: Array<{ name: string; mimeType: string; data: string; cid?: string }>,
-  conversationThreadId?: string
-): Promise<{ success: boolean; threadId?: string }> => {
+to: string, cc: string, subject: string, body: string, attachments?: Array<{ name: string; mimeType: string; data: string; cid?: string; }>, conversationThreadId?: string, bcc?: string): Promise<{ success: boolean; threadId?: string }> => {
   return gmailSendMessage(to, cc, subject, body, attachments, conversationThreadId);
 };
 
