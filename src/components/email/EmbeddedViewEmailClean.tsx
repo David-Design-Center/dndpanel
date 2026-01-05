@@ -2381,439 +2381,9 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
       {/* Email Body - Scrollable */}
       <div className="flex-1 overflow-y-auto">
-        <div className="px-4 py-2">
-          {threadMessages.length > 1 ? (
-            <div className="space-y-1.5">
-              {[...threadMessages].reverse().map((message) => {
-                const isExpanded = expandedMessages.has(message.id);
-                const { fullDate, relative } = formatEmailTime(message.date);
-                
-                // Extract recipients for expanded view
-                const toEmails = message.to?.map(t => t.email).join(', ') || '';
-                const ccEmails = message.cc?.map(c => c.email).join(', ') || '';
-
-                return (
-                  <div
-                    key={message.id}
-                    className={`overflow-hidden transition-all ${
-                      isExpanded ? '' : ''
-                    }`}
-                  >
-                    {/* Collapsed Header */}
-                    <div className="w-full px-2 py-1.5 flex items-center gap-2 hover:bg-gray-50 transition-colors">
-                      <button
-                        onClick={() => toggleMessageExpansion(message.id)}
-                        className="flex items-start gap-2 flex-1 min-w-0 text-left"
-                      >
-                        <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0 mt-0.5 ${getSenderColor(message.from.email)}`}>
-                          {getInitials(message.from.name)}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium text-gray-900">{cleanDisplayName(message.from.name)}</span>
-                            {message.attachments && message.attachments.length > 0 && (
-                              <Paperclip size={12} className="text-gray-400" />
-                            )}
-                          </div>
-                          <div className="text-xs text-black mt-0.5 font-bold">
-                            {fullDate} ({relative})
-                          </div>
-                          {isExpanded && (
-                            <div className="text-xs text-gray-500 mt-1 space-y-0.5">
-                              {toEmails && (
-                                <div className="truncate">
-                                  <span className="text-gray-400">To:</span> {toEmails}
-                                </div>
-                              )}
-                              {ccEmails && (
-                                <div className="truncate">
-                                  <span className="text-gray-400">CC:</span> {ccEmails}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                          {!isExpanded && (
-                            <div className="text-xs text-gray-500 truncate mt-0.5">
-                              {message.preview ? message.preview.substring(0, 100) : 'No preview'}
-                            </div>
-                          )}
-                        </div>
-                      </button>
-                      
-                      {/* Action Icons */}
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleForwardSingle(message);
-                          }}
-                          className="p-1.5 hover:bg-gray-200 rounded transition-colors"
-                          title="Forward"
-                        >
-                          <Forward size={16} className="text-gray-600" />
-                        </button>
-                        {threadMessages.length > 1 && (
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <button
-                                onClick={(e) => e.stopPropagation()}
-                                className="p-1.5 hover:bg-gray-200 rounded transition-colors"
-                                title="Forward all"
-                              >
-                                <MoreVertical size={16} className="text-gray-600" />
-                              </button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" side="bottom" sideOffset={4} className="z-[10001]">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleForwardAll();
-                                }}
-                                className="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 transition-colors flex items-center gap-2"
-                              >
-                                <Forward size={14} />
-                                Forward entire thread ({threadMessages.length} messages)
-                              </button>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Expanded Body */}
-                    {isExpanded && (
-                      <div className="px-2 pb-2 pt-1.5">
-                        {renderMessageBody(message)}
-                        
-                        {/* Quoted Content Toggle - Gmail-style "..." */}
-                        {quotedContentMap.has(message.id) && (
-                          <div className="mt-3 pt-2">
-                            <button
-                              onClick={() => toggleQuotedContent(message.id)}
-                              className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-800 transition-colors"
-                            >
-                              {expandedQuotedContent.has(message.id) ? (
-                                <ChevronDown size={12} className="text-gray-500" />
-                              ) : (
-                                <ChevronRight size={12} className="text-gray-500" />
-                              )}
-                            </button>
-                            
-                            {expandedQuotedContent.has(message.id) && (
-                              <div className="mt-2 pl-3 border-l-2 border-gray-300">
-                                <div 
-                                  className="text-xs text-gray-600 opacity-75"
-                                  dangerouslySetInnerHTML={{ 
-                                    __html: DOMPurify.sanitize(quotedContentMap.get(message.id)!, {
-                                      ADD_TAGS: ['style', 'link'],
-                                      ADD_ATTR: ['target', 'style', 'class', 'href'],
-                                      ALLOW_DATA_ATTR: false,
-                                    })
-                                  }}
-                                />
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        
-                        {/* Attachments Section */}
-                        {message.attachments && message.attachments.length > 0 && (
-                          <div className="mt-3 pt-2 border-t border-gray-100">
-                            <div className="flex items-center gap-2 text-xs font-medium text-gray-700 mb-2">
-                              <Paperclip size={12} />
-                              <span>{message.attachments.length} Attachment{message.attachments.length > 1 ? 's' : ''}</span>
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              {message.attachments.map((att, idx) => {
-                                const ext = att.name.split('.').pop()?.toUpperCase() || 'FILE';
-                                const isImage = att.mimeType?.startsWith('image/');
-                                const isPdf = att.mimeType === 'application/pdf';
-                                const isDoc = att.mimeType?.includes('word') || att.mimeType?.includes('document');
-                                const isSpreadsheet = att.mimeType?.includes('spreadsheet') || att.mimeType?.includes('excel');
-                                const isPresentation = att.mimeType?.includes('presentation') || att.mimeType?.includes('powerpoint');
-                                const isZip = att.mimeType?.includes('zip') || att.mimeType?.includes('compressed');
-                                const isPreviewable = isImage || isPdf || 
-                                  att.mimeType?.startsWith('text/') ||
-                                  isDoc || isSpreadsheet;
-                                
-                                // Determine background color and icon
-                                let bgColor = 'bg-gray-100';
-                                let textColor = 'text-gray-700';
-                                let icon = ext;
-                                
-                                if (isPdf) {
-                                  bgColor = 'bg-red-50';
-                                  textColor = 'text-red-700';
-                                  icon = 'PDF';
-                                } else if (isDoc) {
-                                  bgColor = 'bg-blue-50';
-                                  textColor = 'text-blue-700';
-                                  icon = 'DOC';
-                                } else if (isSpreadsheet) {
-                                  bgColor = 'bg-green-50';
-                                  textColor = 'text-green-700';
-                                  icon = 'XLS';
-                                } else if (isPresentation) {
-                                  bgColor = 'bg-orange-50';
-                                  textColor = 'text-orange-700';
-                                  icon = 'PPT';
-                                } else if (isZip) {
-                                  bgColor = 'bg-purple-50';
-                                  textColor = 'text-purple-700';
-                                  icon = 'ZIP';
-                                }
-                                
-                                // Truncate filename to max 25 characters
-                                const truncatedName = att.name.length > 25 
-                                  ? att.name.substring(0, 22) + '...' 
-                                  : att.name;
-                                
-                                return (
-                                  <div
-                                    key={idx}
-                                    className="relative group w-24 h-24 flex-shrink-0"
-                                  >
-                                    {/* Thumbnail - Clickable for preview */}
-                                    <button
-                                      onClick={() => {
-                                        console.log(`🖱️ Clicked attachment: ${att.name}, isPdf: ${isPdf}, isPreviewable: ${isPreviewable}, attachmentId: ${att.attachmentId}`);
-                                        if (isPreviewable) {
-                                          handlePreviewAttachment(message.id, att.attachmentId!, att.name, att.mimeType!);
-                                        }
-                                      }}
-                                      className={`w-full h-full rounded-lg flex items-center justify-center overflow-hidden border border-gray-200 ${bgColor} ${isPreviewable ? 'cursor-pointer hover:opacity-90 hover:ring-2 hover:ring-blue-500' : 'cursor-default'}`}
-                                      title={isPreviewable ? `Click to preview ${att.name}` : att.name}
-                                    >
-                                      {isImage && att.attachmentId ? (
-                                        <img
-                                          src={`data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7`}
-                                          alt={att.name}
-                                          className="w-full h-full object-contain"
-                                          onLoad={async (e) => {
-                                            try {
-                                              const response = await window.gapi.client.gmail.users.messages.attachments.get({
-                                                userId: 'me',
-                                                messageId: message.id,
-                                                id: att.attachmentId!
-                                              });
-                                              if (response.result?.data) {
-                                                const base64Data = response.result.data.replace(/-/g, '+').replace(/_/g, '/');
-                                                const padding = '='.repeat((4 - base64Data.length % 4) % 4);
-                                                (e.target as HTMLImageElement).src = `data:${att.mimeType};base64,${base64Data}${padding}`;
-                                              }
-                                            } catch (err) {
-                                              console.error('Failed to load thumbnail:', err);
-                                            }
-                                          }}
-                                        />
-                                      ) : (
-                                        <div className="flex flex-col items-center justify-center gap-1">
-                                          <span className={`text-lg font-bold ${textColor}`}>{icon}</span>
-                                          {ext !== icon && (
-                                            <span className={`text-[8px] ${textColor} opacity-70`}>{ext}</span>
-                                          )}
-                                        </div>
-                                      )}
-                                    </button>
-                                    
-                                    {/* Hover overlay with filename and download */}
-                                    <div className="absolute inset-0 bg-black bg-opacity-75 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-2 pointer-events-none">
-                                      <div className="text-white text-[10px] text-center break-words w-full mb-1 px-1 line-clamp-2">
-                                        {truncatedName}
-                                      </div>
-                                      <div className="text-white text-[10px] mb-2">
-                                        {formatFileSize(att.size || 0)}
-                                      </div>
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleDownloadAttachment(message.id, att.attachmentId!, att.name);
-                                        }}
-                                        className="p-1.5 bg-white bg-opacity-20 hover:bg-opacity-30 rounded transition-colors pointer-events-auto"
-                                        title="Download"
-                                      >
-                                        <Download size={14} className="text-white" />
-                                      </button>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div>
-              {renderMessageBody(latestMessage)}
-              
-              {/* Quoted Content Toggle - Gmail-style "..." for single message */}
-              {quotedContentMap.has(latestMessage.id) && (
-                <div className="mt-3 pt-2 border-t border-gray-100">
-                  <button
-                    onClick={() => toggleQuotedContent(latestMessage.id)}
-                    className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-800 transition-colors"
-                  >
-                    {expandedQuotedContent.has(latestMessage.id) ? (
-                      <ChevronDown size={12} className="text-gray-500" />
-                    ) : (
-                      <ChevronRight size={12} className="text-gray-500" />
-                    )}
-                    <span className="font-medium">
-                      {expandedQuotedContent.has(latestMessage.id) ? 'Hide' : 'Show'} quoted text
-                    </span>
-                  </button>
-                  
-                  {expandedQuotedContent.has(latestMessage.id) && (
-                    <div className="mt-2 pl-3 border-l-2 border-gray-300">
-                      <div 
-                        className="text-xs text-gray-600 opacity-75"
-                        dangerouslySetInnerHTML={{ 
-                          __html: DOMPurify.sanitize(quotedContentMap.get(latestMessage.id)!, {
-                            ADD_TAGS: ['style', 'link'],
-                            ADD_ATTR: ['target', 'style', 'class', 'href'],
-                            ALLOW_DATA_ATTR: false,
-                          })
-                        }}
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
-              
-              {/* Attachments Section for single email */}
-              {latestMessage.attachments && latestMessage.attachments.length > 0 && (
-                <div className="mt-4 pt-3 border-t border-gray-100">
-                  <div className="flex items-center gap-2 text-xs font-medium text-gray-700 mb-2">
-                    <Paperclip size={12} />
-                    <span>{latestMessage.attachments.length} Attachment{latestMessage.attachments.length > 1 ? 's' : ''}</span>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {latestMessage.attachments.map((att, idx) => {
-                      const ext = att.name.split('.').pop()?.toUpperCase() || 'FILE';
-                      const isImage = att.mimeType?.startsWith('image/');
-                      const isPdf = att.mimeType === 'application/pdf';
-                      const isDoc = att.mimeType?.includes('word') || att.mimeType?.includes('document');
-                      const isSpreadsheet = att.mimeType?.includes('spreadsheet') || att.mimeType?.includes('excel');
-                      const isPresentation = att.mimeType?.includes('presentation') || att.mimeType?.includes('powerpoint');
-                      const isZip = att.mimeType?.includes('zip') || att.mimeType?.includes('compressed');
-                      const isPreviewable = isImage || isPdf || 
-                        att.mimeType?.startsWith('text/') ||
-                        isDoc || isSpreadsheet;
-                      
-                      // Determine background color and icon
-                      let bgColor = 'bg-gray-100';
-                      let textColor = 'text-gray-700';
-                      let icon = ext;
-                      
-                      if (isPdf) {
-                        bgColor = 'bg-red-50';
-                        textColor = 'text-red-700';
-                        icon = 'PDF';
-                      } else if (isDoc) {
-                        bgColor = 'bg-blue-50';
-                        textColor = 'text-blue-700';
-                        icon = 'DOC';
-                      } else if (isSpreadsheet) {
-                        bgColor = 'bg-green-50';
-                        textColor = 'text-green-700';
-                        icon = 'XLS';
-                      } else if (isPresentation) {
-                        bgColor = 'bg-orange-50';
-                        textColor = 'text-orange-700';
-                        icon = 'PPT';
-                      } else if (isZip) {
-                        bgColor = 'bg-purple-50';
-                        textColor = 'text-purple-700';
-                        icon = 'ZIP';
-                      }
-                      
-                      const truncatedName = att.name.length > 25 
-                        ? att.name.substring(0, 22) + '...' 
-                        : att.name;
-                      
-                      return (
-                        <div
-                          key={idx}
-                          className="relative group w-24 h-24 flex-shrink-0"
-                        >
-                          <button
-                            onClick={() => {
-                              console.log(`🖱️ Clicked attachment: ${att.name}, isPdf: ${isPdf}, isPreviewable: ${isPreviewable}, attachmentId: ${att.attachmentId}`);
-                              if (isPreviewable) {
-                                handlePreviewAttachment(latestMessage.id, att.attachmentId!, att.name, att.mimeType!);
-                              }
-                            }}
-                            className={`w-full h-full rounded-lg flex items-center justify-center overflow-hidden border border-gray-200 ${bgColor} ${isPreviewable ? 'cursor-pointer hover:opacity-90 hover:ring-2 hover:ring-blue-500' : 'cursor-default'}`}
-                            title={isPreviewable ? `Click to preview ${att.name}` : att.name}
-                          >
-                            {isImage && att.attachmentId ? (
-                              <img
-                                src={`data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7`}
-                                alt={att.name}
-                                className="w-full h-full object-contain"
-                                onLoad={async (e) => {
-                                  try {
-                                    const response = await window.gapi.client.gmail.users.messages.attachments.get({
-                                      userId: 'me',
-                                      messageId: latestMessage.id,
-                                      id: att.attachmentId!
-                                    });
-                                    if (response.result?.data) {
-                                      const base64Data = response.result.data.replace(/-/g, '+').replace(/_/g, '/');
-                                      const padding = '='.repeat((4 - base64Data.length % 4) % 4);
-                                      (e.target as HTMLImageElement).src = `data:${att.mimeType};base64,${base64Data}${padding}`;
-                                    }
-                                  } catch (err) {
-                                    console.error('Failed to load thumbnail:', err);
-                                  }
-                                }}
-                              />
-                            ) : (
-                              <div className="flex flex-col items-center justify-center gap-1">
-                                <span className={`text-lg font-bold ${textColor}`}>{icon}</span>
-                                {ext !== icon && (
-                                  <span className={`text-[8px] ${textColor} opacity-70`}>{ext}</span>
-                                )}
-                              </div>
-                            )}
-                          </button>
-                          
-                          <div className="absolute inset-0 bg-black bg-opacity-75 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-2 pointer-events-none">
-                            <div className="text-white text-[10px] text-center break-words w-full mb-1 px-1 line-clamp-2">
-                              {truncatedName}
-                            </div>
-                            <div className="text-white text-[10px] mb-2">
-                              {formatFileSize(att.size || 0)}
-                            </div>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDownloadAttachment(latestMessage.id, att.attachmentId!, att.name);
-                              }}
-                              className="p-1.5 bg-white bg-opacity-20 hover:bg-opacity-30 rounded transition-colors pointer-events-auto"
-                              title="Download"
-                            >
-                              <Download size={14} className="text-white" />
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-        
-        {/* Reply Composer - Clean, minimal design */}
+        {/* Reply Composer - Clean, minimal design - AT TOP */}
         {showReplyComposer && !isReplyExpanded && (
-          <div ref={replyComposerRef} className="mt-6 mb-20 px-4">
+          <div ref={replyComposerRef} className="mb-6 px-4 pt-4">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-3">
                 <h3 className="text-sm font-semibold text-gray-800">
@@ -3253,6 +2823,436 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
             </div>
           </div>
         )}
+
+        <div className="px-4 py-2">
+          {threadMessages.length > 1 ? (
+            <div className="space-y-1.5">
+              {[...threadMessages].reverse().map((message) => {
+                const isExpanded = expandedMessages.has(message.id);
+                const { fullDate, relative } = formatEmailTime(message.date);
+                
+                // Extract recipients for expanded view
+                const toEmails = message.to?.map(t => t.email).join(', ') || '';
+                const ccEmails = message.cc?.map(c => c.email).join(', ') || '';
+
+                return (
+                  <div
+                    key={message.id}
+                    className={`overflow-hidden transition-all ${
+                      isExpanded ? '' : ''
+                    }`}
+                  >
+                    {/* Collapsed Header */}
+                    <div className="w-full px-2 py-1.5 flex items-center gap-2 hover:bg-gray-50 transition-colors">
+                      <button
+                        onClick={() => toggleMessageExpansion(message.id)}
+                        className="flex items-start gap-2 flex-1 min-w-0 text-left"
+                      >
+                        <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0 mt-0.5 ${getSenderColor(message.from.email)}`}>
+                          {getInitials(message.from.name)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-gray-900">{cleanDisplayName(message.from.name)}</span>
+                            {message.attachments && message.attachments.length > 0 && (
+                              <Paperclip size={12} className="text-gray-400" />
+                            )}
+                          </div>
+                          <div className="text-xs text-black mt-0.5 font-bold">
+                            {fullDate} ({relative})
+                          </div>
+                          {isExpanded && (
+                            <div className="text-xs text-gray-500 mt-1 space-y-0.5">
+                              {toEmails && (
+                                <div className="truncate">
+                                  <span className="text-gray-400">To:</span> {toEmails}
+                                </div>
+                              )}
+                              {ccEmails && (
+                                <div className="truncate">
+                                  <span className="text-gray-400">CC:</span> {ccEmails}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {!isExpanded && (
+                            <div className="text-xs text-gray-500 truncate mt-0.5">
+                              {message.preview ? message.preview.substring(0, 100) : 'No preview'}
+                            </div>
+                          )}
+                        </div>
+                      </button>
+                      
+                      {/* Action Icons */}
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleForwardSingle(message);
+                          }}
+                          className="p-1.5 hover:bg-gray-200 rounded transition-colors"
+                          title="Forward"
+                        >
+                          <Forward size={16} className="text-gray-600" />
+                        </button>
+                        {threadMessages.length > 1 && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                onClick={(e) => e.stopPropagation()}
+                                className="p-1.5 hover:bg-gray-200 rounded transition-colors"
+                                title="Forward all"
+                              >
+                                <MoreVertical size={16} className="text-gray-600" />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" side="bottom" sideOffset={4} className="z-[10001]">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleForwardAll();
+                                }}
+                                className="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 transition-colors flex items-center gap-2"
+                              >
+                                <Forward size={14} />
+                                Forward entire thread ({threadMessages.length} messages)
+                              </button>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Expanded Body */}
+                    {isExpanded && (
+                      <div className="px-2 pb-2 pt-1.5">
+                        {renderMessageBody(message)}
+                        
+                        {/* Quoted Content Toggle - Gmail-style "..." */}
+                        {quotedContentMap.has(message.id) && (
+                          <div className="mt-3 pt-2">
+                            <button
+                              onClick={() => toggleQuotedContent(message.id)}
+                              className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-800 transition-colors"
+                            >
+                              {expandedQuotedContent.has(message.id) ? (
+                                <ChevronDown size={12} className="text-gray-500" />
+                              ) : (
+                                <ChevronRight size={12} className="text-gray-500" />
+                              )}
+                            </button>
+                            
+                            {expandedQuotedContent.has(message.id) && (
+                              <div className="mt-2 pl-3 border-l-2 border-gray-300">
+                                <div 
+                                  className="text-xs text-gray-600 opacity-75"
+                                  dangerouslySetInnerHTML={{ 
+                                    __html: DOMPurify.sanitize(quotedContentMap.get(message.id)!, {
+                                      ADD_TAGS: ['style', 'link'],
+                                      ADD_ATTR: ['target', 'style', 'class', 'href'],
+                                      ALLOW_DATA_ATTR: false,
+                                    })
+                                  }}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        
+                        {/* Attachments Section */}
+                        {message.attachments && message.attachments.length > 0 && (
+                          <div className="mt-3 pt-2 border-t border-gray-100">
+                            <div className="flex items-center gap-2 text-xs font-medium text-gray-700 mb-2">
+                              <Paperclip size={12} />
+                              <span>{message.attachments.length} Attachment{message.attachments.length > 1 ? 's' : ''}</span>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {message.attachments.map((att, idx) => {
+                                const ext = att.name.split('.').pop()?.toUpperCase() || 'FILE';
+                                const isImage = att.mimeType?.startsWith('image/');
+                                const isPdf = att.mimeType === 'application/pdf';
+                                const isDoc = att.mimeType?.includes('word') || att.mimeType?.includes('document');
+                                const isSpreadsheet = att.mimeType?.includes('spreadsheet') || att.mimeType?.includes('excel');
+                                const isPresentation = att.mimeType?.includes('presentation') || att.mimeType?.includes('powerpoint');
+                                const isZip = att.mimeType?.includes('zip') || att.mimeType?.includes('compressed');
+                                const isPreviewable = isImage || isPdf || 
+                                  att.mimeType?.startsWith('text/') ||
+                                  isDoc || isSpreadsheet;
+                                
+                                // Determine background color and icon
+                                let bgColor = 'bg-gray-100';
+                                let textColor = 'text-gray-700';
+                                let icon = ext;
+                                
+                                if (isPdf) {
+                                  bgColor = 'bg-red-50';
+                                  textColor = 'text-red-700';
+                                  icon = 'PDF';
+                                } else if (isDoc) {
+                                  bgColor = 'bg-blue-50';
+                                  textColor = 'text-blue-700';
+                                  icon = 'DOC';
+                                } else if (isSpreadsheet) {
+                                  bgColor = 'bg-green-50';
+                                  textColor = 'text-green-700';
+                                  icon = 'XLS';
+                                } else if (isPresentation) {
+                                  bgColor = 'bg-orange-50';
+                                  textColor = 'text-orange-700';
+                                  icon = 'PPT';
+                                } else if (isZip) {
+                                  bgColor = 'bg-purple-50';
+                                  textColor = 'text-purple-700';
+                                  icon = 'ZIP';
+                                }
+                                
+                                // Truncate filename to max 25 characters
+                                const truncatedName = att.name.length > 25 
+                                  ? att.name.substring(0, 22) + '...' 
+                                  : att.name;
+                                
+                                return (
+                                  <div
+                                    key={idx}
+                                    className="relative group w-24 h-24 flex-shrink-0"
+                                  >
+                                    {/* Thumbnail - Clickable for preview */}
+                                    <button
+                                      onClick={() => {
+                                        console.log(`🖱️ Clicked attachment: ${att.name}, isPdf: ${isPdf}, isPreviewable: ${isPreviewable}, attachmentId: ${att.attachmentId}`);
+                                        if (isPreviewable) {
+                                          handlePreviewAttachment(message.id, att.attachmentId!, att.name, att.mimeType!);
+                                        }
+                                      }}
+                                      className={`w-full h-full rounded-lg flex items-center justify-center overflow-hidden border border-gray-200 ${bgColor} ${isPreviewable ? 'cursor-pointer hover:opacity-90 hover:ring-2 hover:ring-blue-500' : 'cursor-default'}`}
+                                      title={isPreviewable ? `Click to preview ${att.name}` : att.name}
+                                    >
+                                      {isImage && att.attachmentId ? (
+                                        <img
+                                          src={`data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7`}
+                                          alt={att.name}
+                                          className="w-full h-full object-contain"
+                                          onLoad={async (e) => {
+                                            try {
+                                              const response = await window.gapi.client.gmail.users.messages.attachments.get({
+                                                userId: 'me',
+                                                messageId: message.id,
+                                                id: att.attachmentId!
+                                              });
+                                              if (response.result?.data) {
+                                                const base64Data = response.result.data.replace(/-/g, '+').replace(/_/g, '/');
+                                                const padding = '='.repeat((4 - base64Data.length % 4) % 4);
+                                                (e.target as HTMLImageElement).src = `data:${att.mimeType};base64,${base64Data}${padding}`;
+                                              }
+                                            } catch (err) {
+                                              console.error('Failed to load thumbnail:', err);
+                                            }
+                                          }}
+                                        />
+                                      ) : (
+                                        <div className="flex flex-col items-center justify-center gap-1">
+                                          <span className={`text-lg font-bold ${textColor}`}>{icon}</span>
+                                          {ext !== icon && (
+                                            <span className={`text-[8px] ${textColor} opacity-70`}>{ext}</span>
+                                          )}
+                                        </div>
+                                      )}
+                                    </button>
+                                    
+                                    {/* Hover overlay with filename and download */}
+                                    <div className="absolute inset-0 bg-black bg-opacity-75 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-2 pointer-events-none">
+                                      <div className="text-white text-[10px] text-center break-words w-full mb-1 px-1 line-clamp-2">
+                                        {truncatedName}
+                                      </div>
+                                      <div className="text-white text-[10px] mb-2">
+                                        {formatFileSize(att.size || 0)}
+                                      </div>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleDownloadAttachment(message.id, att.attachmentId!, att.name);
+                                        }}
+                                        className="p-1.5 bg-white bg-opacity-20 hover:bg-opacity-30 rounded transition-colors pointer-events-auto"
+                                        title="Download"
+                                      >
+                                        <Download size={14} className="text-white" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div>
+              {renderMessageBody(latestMessage)}
+              
+              {/* Quoted Content Toggle - Gmail-style "..." for single message */}
+              {quotedContentMap.has(latestMessage.id) && (
+                <div className="mt-3 pt-2 border-t border-gray-100">
+                  <button
+                    onClick={() => toggleQuotedContent(latestMessage.id)}
+                    className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-800 transition-colors"
+                  >
+                    {expandedQuotedContent.has(latestMessage.id) ? (
+                      <ChevronDown size={12} className="text-gray-500" />
+                    ) : (
+                      <ChevronRight size={12} className="text-gray-500" />
+                    )}
+                    <span className="font-medium">
+                      {expandedQuotedContent.has(latestMessage.id) ? 'Hide' : 'Show'} quoted text
+                    </span>
+                  </button>
+                  
+                  {expandedQuotedContent.has(latestMessage.id) && (
+                    <div className="mt-2 pl-3 border-l-2 border-gray-300">
+                      <div 
+                        className="text-xs text-gray-600 opacity-75"
+                        dangerouslySetInnerHTML={{ 
+                          __html: DOMPurify.sanitize(quotedContentMap.get(latestMessage.id)!, {
+                            ADD_TAGS: ['style', 'link'],
+                            ADD_ATTR: ['target', 'style', 'class', 'href'],
+                            ALLOW_DATA_ATTR: false,
+                          })
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+              
+              {/* Attachments Section for single email */}
+              {latestMessage.attachments && latestMessage.attachments.length > 0 && (
+                <div className="mt-4 pt-3 border-t border-gray-100">
+                  <div className="flex items-center gap-2 text-xs font-medium text-gray-700 mb-2">
+                    <Paperclip size={12} />
+                    <span>{latestMessage.attachments.length} Attachment{latestMessage.attachments.length > 1 ? 's' : ''}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {latestMessage.attachments.map((att, idx) => {
+                      const ext = att.name.split('.').pop()?.toUpperCase() || 'FILE';
+                      const isImage = att.mimeType?.startsWith('image/');
+                      const isPdf = att.mimeType === 'application/pdf';
+                      const isDoc = att.mimeType?.includes('word') || att.mimeType?.includes('document');
+                      const isSpreadsheet = att.mimeType?.includes('spreadsheet') || att.mimeType?.includes('excel');
+                      const isPresentation = att.mimeType?.includes('presentation') || att.mimeType?.includes('powerpoint');
+                      const isZip = att.mimeType?.includes('zip') || att.mimeType?.includes('compressed');
+                      const isPreviewable = isImage || isPdf || 
+                        att.mimeType?.startsWith('text/') ||
+                        isDoc || isSpreadsheet;
+                      
+                      // Determine background color and icon
+                      let bgColor = 'bg-gray-100';
+                      let textColor = 'text-gray-700';
+                      let icon = ext;
+                      
+                      if (isPdf) {
+                        bgColor = 'bg-red-50';
+                        textColor = 'text-red-700';
+                        icon = 'PDF';
+                      } else if (isDoc) {
+                        bgColor = 'bg-blue-50';
+                        textColor = 'text-blue-700';
+                        icon = 'DOC';
+                      } else if (isSpreadsheet) {
+                        bgColor = 'bg-green-50';
+                        textColor = 'text-green-700';
+                        icon = 'XLS';
+                      } else if (isPresentation) {
+                        bgColor = 'bg-orange-50';
+                        textColor = 'text-orange-700';
+                        icon = 'PPT';
+                      } else if (isZip) {
+                        bgColor = 'bg-purple-50';
+                        textColor = 'text-purple-700';
+                        icon = 'ZIP';
+                      }
+                      
+                      const truncatedName = att.name.length > 25 
+                        ? att.name.substring(0, 22) + '...' 
+                        : att.name;
+                      
+                      return (
+                        <div
+                          key={idx}
+                          className="relative group w-24 h-24 flex-shrink-0"
+                        >
+                          <button
+                            onClick={() => {
+                              console.log(`🖱️ Clicked attachment: ${att.name}, isPdf: ${isPdf}, isPreviewable: ${isPreviewable}, attachmentId: ${att.attachmentId}`);
+                              if (isPreviewable) {
+                                handlePreviewAttachment(latestMessage.id, att.attachmentId!, att.name, att.mimeType!);
+                              }
+                            }}
+                            className={`w-full h-full rounded-lg flex items-center justify-center overflow-hidden border border-gray-200 ${bgColor} ${isPreviewable ? 'cursor-pointer hover:opacity-90 hover:ring-2 hover:ring-blue-500' : 'cursor-default'}`}
+                            title={isPreviewable ? `Click to preview ${att.name}` : att.name}
+                          >
+                            {isImage && att.attachmentId ? (
+                              <img
+                                src={`data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7`}
+                                alt={att.name}
+                                className="w-full h-full object-contain"
+                                onLoad={async (e) => {
+                                  try {
+                                    const response = await window.gapi.client.gmail.users.messages.attachments.get({
+                                      userId: 'me',
+                                      messageId: latestMessage.id,
+                                      id: att.attachmentId!
+                                    });
+                                    if (response.result?.data) {
+                                      const base64Data = response.result.data.replace(/-/g, '+').replace(/_/g, '/');
+                                      const padding = '='.repeat((4 - base64Data.length % 4) % 4);
+                                      (e.target as HTMLImageElement).src = `data:${att.mimeType};base64,${base64Data}${padding}`;
+                                    }
+                                  } catch (err) {
+                                    console.error('Failed to load thumbnail:', err);
+                                  }
+                                }}
+                              />
+                            ) : (
+                              <div className="flex flex-col items-center justify-center gap-1">
+                                <span className={`text-lg font-bold ${textColor}`}>{icon}</span>
+                                {ext !== icon && (
+                                  <span className={`text-[8px] ${textColor} opacity-70`}>{ext}</span>
+                                )}
+                              </div>
+                            )}
+                          </button>
+                          
+                          <div className="absolute inset-0 bg-black bg-opacity-75 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-2 pointer-events-none">
+                            <div className="text-white text-[10px] text-center break-words w-full mb-1 px-1 line-clamp-2">
+                              {truncatedName}
+                            </div>
+                            <div className="text-white text-[10px] mb-2">
+                              {formatFileSize(att.size || 0)}
+                            </div>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDownloadAttachment(latestMessage.id, att.attachmentId!, att.name);
+                              }}
+                              className="p-1.5 bg-white bg-opacity-20 hover:bg-opacity-30 rounded transition-colors pointer-events-auto"
+                              title="Download"
+                            >
+                              <Download size={14} className="text-white" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Fullscreen Reply Composer */}
         {showReplyComposer && isReplyExpanded && createPortal(

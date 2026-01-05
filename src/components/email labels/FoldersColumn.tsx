@@ -294,8 +294,18 @@ function FoldersColumn({
         result.push(nestedLabel);
       }
 
-      // Sort by display name for consistent ordering
-      result.sort((a, b) => a.displayName.localeCompare(b.displayName));
+      // Sort: parent folders (with children) first, then leaf folders, A-Z within each group
+      result.sort((a, b) => {
+        const aIsParent = a.children.length > 0;
+        const bIsParent = b.children.length > 0;
+        
+        // Parents come before leaves
+        if (aIsParent && !bIsParent) return -1;
+        if (!aIsParent && bIsParent) return 1;
+        
+        // Within same category, sort A-Z
+        return a.displayName.localeCompare(b.displayName);
+      });
       return result;
     };
 
@@ -661,26 +671,19 @@ function FoldersColumn({
     });
   };
 
-  // Reorder filteredTree first so nodes with unread float to top, then convert
+  // Sort: parent folders first, then leaf folders, A-Z within each group
   const reorderedFilteredTree = useMemo(() => {
-    const unread: NestedLabel[] = [];
-    const read: NestedLabel[] = [];
-    for (const n of filteredTree) {
-      if ((n.messagesUnread || 0) > 0) unread.push(n);
-      else read.push(n);
-    }
-    unread.sort((a, b) => {
-      const aCount = a.messagesUnread || 0;
-      const bCount = b.messagesUnread || 0;
-      if (bCount !== aCount) return bCount - aCount; // higher unread first
-      return a.displayName
-        .toLowerCase()
-        .localeCompare(b.displayName.toLowerCase());
+    return [...filteredTree].sort((a, b) => {
+      const aIsParent = a.children.length > 0;
+      const bIsParent = b.children.length > 0;
+      
+      // Parents come before leaves
+      if (aIsParent && !bIsParent) return -1;
+      if (!aIsParent && bIsParent) return 1;
+      
+      // Within same category, sort A-Z
+      return a.displayName.localeCompare(b.displayName);
     });
-    read.sort((a, b) =>
-      a.displayName.toLowerCase().localeCompare(b.displayName.toLowerCase())
-    );
-    return [...unread, ...read];
   }, [filteredTree]);
 
   const treeNodes = useMemo(

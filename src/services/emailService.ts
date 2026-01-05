@@ -885,7 +885,7 @@ export const getEmailsByLabelIds = async (
           isImportant: targetMessage.labelIds?.includes('IMPORTANT'),
           isStarred: targetMessage.labelIds?.includes('STARRED'),
           date: format(new Date(dateHeader), "yyyy-MM-dd'T'HH:mm:ss"),
-          labelIds: targetMessage.labelIds || [],
+          labelIds: [...new Set(threadData.result.messages.flatMap((m: any) => m.labelIds || []))],
           attachments: undefined,
           threadId: thread.id,
           internalDate: targetMessage.internalDate
