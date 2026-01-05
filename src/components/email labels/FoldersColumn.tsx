@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -124,6 +124,7 @@ function FoldersColumn({
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
     new Set()
   );
+  const hasInitializedFoldersRef = useRef(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   // Highlight selected system folder (visual state only)
   // Default to 'inbox' so the Inbox button starts in an active/disabled state
@@ -433,9 +434,11 @@ function FoldersColumn({
 
   // (Removed explicit refresh effect to avoid duplicate rapid refresh loops; context handles initial load)
 
-  // Auto-expand all folders when labelTree changes
+  // Auto-expand all folders on initial load only (not on every labelTree change)
   useEffect(() => {
-    if (labelTree.length > 0) {
+    if (labelTree.length > 0 && !hasInitializedFoldersRef.current) {
+      hasInitializedFoldersRef.current = true;
+      
       const getAllFolderPaths = (nodes: NestedLabel[]): string[] => {
         const paths: string[] = [];
         nodes.forEach((node) => {
