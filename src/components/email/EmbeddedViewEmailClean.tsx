@@ -194,6 +194,9 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const failsafeSaveTimerRef = useRef<number | null>(null);
   const lastSaveTimeRef = useRef<number>(0);
   
+  // Track previous email ID to detect navigation between emails
+  const prevEmailIdRef = useRef<string | null>(null);
+  
   // Image cache for inline attachments (cid: references)
   const imageCache = useRef<Map<string, string>>(new Map());
   
@@ -480,11 +483,120 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   };
 
   // Fetch email and thread when emailId changes or draft param changes
-  // Don't reset composer state here - let fetchEmailAndThread() decide based on drafts
+  // Reset reply composer state when switching to a different email (not on initial mount)
   useEffect(() => {
     console.log('🔄 Component effect triggered - emailId:', emailId, 'draftIdParam:', draftIdParam, 'showReplyComposer:', showReplyComposer);
+    console.log('🔄 Previous emailId:', prevEmailIdRef.current);
+    
+    // Detect actual email change (not initial mount, and not same email)
+    const isEmailChange = prevEmailIdRef.current !== null && prevEmailIdRef.current !== emailId;
+    
+    if (isEmailChange) {
+      console.log('🔄 Email navigation detected - resetting reply state');
+      
+      // 1. Clear pending debounce/failsafe timers first
+      if (debounceSaveTimerRef.current) {
+        clearTimeout(debounceSaveTimerRef.current);
+        debounceSaveTimerRef.current = null;
+        console.log('🔄 Cleared debounce timer');
+      }
+      if (failsafeSaveTimerRef.current) {
+        clearTimeout(failsafeSaveTimerRef.current);
+        failsafeSaveTimerRef.current = null;
+        console.log('🔄 Cleared failsafe timer');
+      }
+      
+      // 2. Save dirty draft for previous email before resetting (auto-save before discard)
+      if (isDirtyRef.current && draftStateRef.current.showComposer) {
+        console.log('📝 Saving dirty draft before navigation...');
+        // Use refs to get current values and save synchronously
+        const currentContent = replyContentRef.current;
+        const currentForwardTo = forwardToRef.current;
+        const currentMode = replyModeRef.current;
+        const currentDraftId = draftStateRef.current.draftId;
+        
+        // Only save if there's actual content
+        const hasContent = currentMode === 'forward' 
+          ? currentForwardTo.trim() || currentContent.trim()
+          : currentContent.trim();
+        
+        if (hasContent && email) {
+          // Fire and forget async save for the previous email's draft
+          (async () => {
+            try {
+              const ccString = ccRecipients.filter(e => e.trim()).join(',');
+              const bccString = bccRecipients.filter(e => e.trim()).join(',');
+              
+              let recipientEmail = currentForwardTo;
+              if (currentMode === 'reply' || currentMode === 'replyAll') {
+                recipientEmail = email?.from?.email || '';
+              }
+              
+              const payload = {
+                to: recipientEmail,
+                body: currentContent,
+                mode: currentMode,
+                threadId: email?.threadId,
+                inReplyTo: email?.id,
+                cc: ccString || undefined,
+                bcc: bccString || undefined
+              };
+              
+              if (!currentDraftId) {
+                const response = await createReplyDraft(payload);
+                console.log('📝 Created draft on navigation:', response.id);
+                window.dispatchEvent(new CustomEvent('draft-created', { 
+                  detail: { draftId: response.id } 
+                }));
+              } else {
+                await updateReplyDraft(currentDraftId, payload, draftStateRef.current.version);
+                console.log('📝 Updated draft on navigation:', currentDraftId);
+              }
+            } catch (err) {
+              console.error('Failed to save draft on navigation:', err);
+            }
+          })();
+        }
+      }
+      
+      // 3. Reset all reply composer state for fresh start
+      updateDraftState({
+        status: 'idle',
+        showComposer: false,
+        mode: 'reply',
+        content: '',
+        forwardTo: '',
+        draftId: null,
+        messageId: null,
+        version: 0,
+        isDirty: false,
+        isSaving: false,
+        lastSavedAt: null,
+        lastHash: '',
+        error: null
+      });
+      
+      // Reset CC/BCC state
+      setCcRecipients([]);
+      setBccRecipients([]);
+      setCcInput('');
+      setBccInput('');
+      setShowCc(false);
+      setShowBcc(false);
+      
+      // Reset other view state
+      setIsReplyExpanded(false);
+      setForwardingMessage(null);
+      
+      console.log('✅ Reply state reset complete');
+    }
+    
+    // Update prev email ref for next comparison
+    prevEmailIdRef.current = emailId;
+    
     // Reset metadata dropdown when switching emails
     setShowMetadata(false);
+    
     if (emailId) {
       fetchEmailAndThread();
     }
