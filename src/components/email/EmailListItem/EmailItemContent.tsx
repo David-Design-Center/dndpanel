@@ -5,11 +5,11 @@ import { cleanEmailAddress } from '@/utils/emailFormatting';
 
 interface EmailItemContentProps {
   email: Email;
-  isSentEmail: boolean;
+  isSentFolder: boolean;
   hasDraftInThread?: boolean;
 }
 
-export function EmailItemContent({ email, isSentEmail, hasDraftInThread }: EmailItemContentProps) {
+export function EmailItemContent({ email, isSentFolder, hasDraftInThread }: EmailItemContentProps) {
   // Check if this is a draft email
   const isDraft = email.labelIds?.includes('DRAFT');
   
@@ -18,10 +18,21 @@ export function EmailItemContent({ email, isSentEmail, hasDraftInThread }: Email
     console.log(`📧 Email ${email.id} has hasDraftInThread:`, (email as any).hasDraftInThread, 'prop:', hasDraftInThread);
   }
   
+  // Get current user's email to detect if message is from me
+  const currentUserEmail = (
+    (window as any)._currentProfileEmail || 
+    localStorage.getItem('currentProfileUserEmail') || 
+    ''
+  ).toLowerCase().trim();
+  
+  // Check if the email's From is the current user (meaning I sent/replied last)
+  const fromEmail = (email.from?.email || '').toLowerCase().trim();
+  const isFromMe = currentUserEmail && fromEmail === currentUserEmail;
+  
   // Determine sender/recipient text
   const senderText = (() => {
-    // For drafts or sent emails, show TO (recipient)
-    if (isDraft || isSentEmail) {
+    // For drafts or when viewing Sent folder, show TO (recipient)
+    if (isDraft || isSentFolder) {
       const firstRecipient = email.to?.[0];
       if (firstRecipient?.name) {
         return cleanEncodingIssues(firstRecipient.name);
@@ -30,6 +41,18 @@ export function EmailItemContent({ email, isSentEmail, hasDraftInThread }: Email
         return cleanEmailAddress(firstRecipient.email);
       }
       return 'Unknown Recipient';
+    }
+    
+    // If FROM is me (I replied last), show TO (the counterparty) instead
+    if (isFromMe) {
+      const firstRecipient = email.to?.[0];
+      if (firstRecipient?.name) {
+        return cleanEncodingIssues(firstRecipient.name);
+      }
+      if (firstRecipient?.email) {
+        return cleanEmailAddress(firstRecipient.email);
+      }
+      // Fallback to FROM if no TO available
     }
     
     // For regular emails, show FROM (sender)

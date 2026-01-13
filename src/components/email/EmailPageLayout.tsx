@@ -98,7 +98,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   const labelName = urlParams.get('labelName');
   const labelQueryParam = urlParams.get('labelQuery');
   const labelIdParam = urlParams.get('labelId');
-  const effectiveLabelQuery = labelQueryParam || labelName || undefined;
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -179,7 +178,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     setHasMoreForTabs,
     emails,
     setEmails,
-    fetchLabelEmails,
     loadMoreForTab
   } = emailFetch;
   
@@ -315,7 +313,6 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     clearSelection,
     // Extended selection support
     isLoadingMoreSelection,
-    hasMoreToSelect,
     handleLoadMoreForSelection
   } = emailSelection;
   
@@ -972,13 +969,9 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   console.log('📧 Current state:', {
     activeTab,
     filteredEmailsLength: filteredEmails.length,
-    loading,
-    authLoading,
     isGmailInitializing,
     isGmailSignedIn,
-    hasEverLoaded,
     isSearching,
-    unreadCount,
     draftsCount,
     trashCount
   });
@@ -1730,6 +1723,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                                   onCreateFilter={handleCreateFilter}
                                   isSelected={selectedEmails.has(email.id)}
                                   onToggleSelect={handleToggleSelectEmail}
+                                  currentTab={activeTab}
                                   renderAsTableRow
                                 />
                               ))}
@@ -1776,6 +1770,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                                   onCreateFilter={handleCreateFilter}
                                   isSelected={selectedEmails.has(email.id)}
                                   onToggleSelect={handleToggleSelectEmail}
+                                  currentTab={activeTab}
                                   renderAsTableRow
                                 />
                               ))}
@@ -1936,6 +1931,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                                 }
                                 setSectionSelectedEmails(newSet);
                               }}
+                              currentTab={activeTab}
                               renderAsTableRow
                             />
                           ))}
@@ -2091,6 +2087,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                                 }
                                 setSectionSelectedEmails(newSet);
                               }}
+                              currentTab={activeTab}
                               renderAsTableRow
                             />
                           ))}
@@ -2128,6 +2125,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
                               isSelected={selectedEmails.has(email.id)}
                               onToggleSelect={handleToggleSelectEmail}
                               isDraft={activeTab === 'drafts' && !labelName}
+                              currentTab={activeTab}
                               renderAsTableRow
                             />
                           ))}

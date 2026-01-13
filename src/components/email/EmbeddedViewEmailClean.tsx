@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Reply, ReplyAll, Forward, Trash, MoreVertical, Star, Paperclip, Download, ChevronDown, ChevronRight, Mail, MailOpen, Flag, MailWarning, Filter, Search, Settings, Plus, Maximize2, Minimize2, FolderInput } from 'lucide-react';
+import { X, Reply, ReplyAll, Forward, Trash, MoreVertical, Star, Paperclip, Download, ChevronDown, ChevronRight, Mail, MailOpen, Flag, MailWarning, Filter, Search, Settings, Plus, Maximize2, Minimize2, FolderInput, Trash2 } from 'lucide-react';
 import { parseISO, format, formatDistanceToNow } from 'date-fns';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
@@ -2354,7 +2354,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                 >
                   <div className="flex items-center">
                     <Filter size={16} className="mr-3 text-gray-500" />
-                    Filter
+                    Rules
                   </div>
                   <ChevronRight size={14} className="text-gray-400" />
                 </button>
@@ -2450,6 +2450,52 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
             </div>
           </div>
 
+          {/* Reply Action Buttons - Always visible */}
+          <div className="flex items-center gap-1 mr-3">
+            <button
+              onClick={() => {
+                // Check if we have valid recipients before opening composer
+                if (!replyToMessage) {
+                  sonnerToast.error('Cannot reply: All messages in this thread are from you');
+                  return;
+                }
+                setReplyMode('reply');
+                setShowReplyComposer(true);
+              }}
+              className="p-1.5 hover:bg-gray-100 rounded transition-colors"
+              title="Reply"
+            >
+              <Reply size={22} className="text-gray-700" />
+            </button>
+            <button
+              onClick={() => {
+                // Check if we have valid recipients before opening composer
+                if (!replyToMessage) {
+                  sonnerToast.error('Cannot reply: All messages in this thread are from you');
+                  return;
+                }
+                setReplyMode('replyAll');
+                setShowReplyComposer(true);
+              }}
+              className="p-1.5 hover:bg-gray-100 rounded transition-colors"
+              title="Reply all"
+            >
+              <ReplyAll size={22} className="text-gray-700" />
+            </button>
+            <button
+              onClick={() => {
+                setForwardingMessage(latestMessage);
+                setForwardType('single');
+                setReplyMode('forward');
+                setShowReplyComposer(true);
+              }}
+              className="p-1.5 hover:bg-gray-100 rounded transition-colors"
+              title="Forward"
+            >
+              <Forward size={22} className="text-gray-700" />
+            </button>
+          </div>
+
           {/* Time */}
           <div className="text-xs text-gray-600 whitespace-nowrap ml-3">
             <div>{time}</div>
@@ -2528,14 +2574,41 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                   </span>
                 )}
               </div>
-              <button
-                type="button"
-                onClick={() => setIsReplyExpanded(true)}
-                className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded transition-colors"
-                title="Expand"
-              >
-                <Maximize2 size={16} />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Close composer without saving
+                    setShowReplyComposer(false);
+                    setReplyContent('');
+                    setForwardTo('');
+                    setReplyMode('reply');
+                    setCcRecipients([]);
+                    setBccRecipients([]);
+                    setCcInput('');
+                    setBccInput('');
+                    setShowCc(false);
+                    setShowBcc(false);
+                    // Clear refs
+                    replyContentRef.current = '';
+                    forwardToRef.current = '';
+                    setIsDirty(false);
+                    isDirtyRef.current = false;
+                  }}
+                  className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                  title="Discard and close"
+                >
+                  <Trash2 size={16} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsReplyExpanded(true)}
+                  className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded transition-colors"
+                  title="Expand"
+                >
+                  <Maximize2 size={16} />
+                </button>
+              </div>
             </div>
 
             {/* Email metadata fields */}
@@ -3000,6 +3073,38 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
+                            // Check if we have valid recipients before opening composer
+                            if (!replyToMessage) {
+                              sonnerToast.error('Cannot reply: All messages in this thread are from you');
+                              return;
+                            }
+                            setReplyMode('reply');
+                            setShowReplyComposer(true);
+                          }}
+                          className="p-1.5 hover:bg-gray-200 rounded transition-colors"
+                          title="Reply"
+                        >
+                          <Reply size={16} className="text-gray-600" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            // Check if we have valid recipients before opening composer
+                            if (!replyToMessage) {
+                              sonnerToast.error('Cannot reply: All messages in this thread are from you');
+                              return;
+                            }
+                            setReplyMode('replyAll');
+                            setShowReplyComposer(true);
+                          }}
+                          className="p-1.5 hover:bg-gray-200 rounded transition-colors"
+                          title="Reply all"
+                        >
+                          <ReplyAll size={16} className="text-gray-600" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
                             handleForwardSingle(message);
                           }}
                           className="p-1.5 hover:bg-gray-200 rounded transition-colors"
@@ -3007,31 +3112,6 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                         >
                           <Forward size={16} className="text-gray-600" />
                         </button>
-                        {threadMessages.length > 1 && (
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <button
-                                onClick={(e) => e.stopPropagation()}
-                                className="p-1.5 hover:bg-gray-200 rounded transition-colors"
-                                title="Forward all"
-                              >
-                                <MoreVertical size={16} className="text-gray-600" />
-                              </button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" side="bottom" sideOffset={4} className="z-[10001]">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleForwardAll();
-                                }}
-                                className="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 transition-colors flex items-center gap-2"
-                              >
-                                <Forward size={14} />
-                                Forward entire thread ({threadMessages.length} messages)
-                              </button>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        )}
                       </div>
                     </div>
 
@@ -3717,54 +3797,6 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           document.body
         )}
       </div>
-
-      {/* Action Bar - Hidden when replying */}
-      {!showReplyComposer && (
-        <div className="px-4 py-1.5 border-t border-gray-200 flex items-center gap-2 bg-white flex-shrink-0">
-          <button
-            onClick={() => {
-              // Check if we have valid recipients before opening composer
-              if (!replyToMessage) {
-                sonnerToast.error('Cannot reply: All messages in this thread are from you');
-                return;
-              }
-              setReplyMode('reply');
-              setShowReplyComposer(true);
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium transition-colors"
-          >
-            <Reply size={14} />
-            Reply
-          </button>
-          <button
-            onClick={() => {
-              // Check if we have valid recipients before opening composer
-              if (!replyToMessage) {
-                sonnerToast.error('Cannot reply: All messages in this thread are from you');
-                return;
-              }
-              setReplyMode('replyAll');
-              setShowReplyComposer(true);
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-700 rounded text-sm font-medium transition-colors border border-gray-300"
-          >
-            <ReplyAll size={14} />
-            Reply all
-          </button>
-          <button
-            onClick={() => {
-              setForwardingMessage(latestMessage);
-              setForwardType('single');
-              setReplyMode('forward');
-              setShowReplyComposer(true);
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-700 rounded text-sm font-medium transition-colors border border-gray-300"
-          >
-            <Forward size={14} />
-            Forward
-          </button>
-        </div>
-      )}
 
       <style>{`
         .email-body {
