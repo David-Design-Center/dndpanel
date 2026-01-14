@@ -23,6 +23,7 @@ import { shouldBlockDataFetches } from "../utils/authFlowUtils";
 import { emitLoadingProgress } from "@/utils/loadingProgress";
 import { getRolling24hCutoffUnixSeconds } from "../lib/utils";
 import { subscribeLabelUpdateEvent } from "../utils/labelUpdateEvents";
+import { supabase } from "../lib/supabase";
 
 interface LabelContextType {
   labels: GmailLabel[];
@@ -259,6 +260,46 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     },
     [isGmailSignedIn, isGmailApiReady, labels]
   );
+  // ✅ NEW: Load labels from Supabase instead of Gmail API
+  const loadLabelsFromSupabase = useCallback(async () => {
+    if (!currentProfile?.id) return [];
+
+    // 1. Get the account ID for the current profile
+    const { data: account } = await supabase
+      .from('gmail_accounts')
+      .select('id')
+      .eq('profile_id', currentProfile.id)
+      .single();
+
+    if (!account) return [];
+
+    // 2. Fetch labels for this account
+    const { data: labelsData, error } = await supabase
+      .from('gmail_labels')
+      .select('*')
+      .eq('gmail_account_id', account.id)
+      .order('type', { ascending: true }) // System first
+      .order('name', { ascending: true });
+
+    if (error) {
+      console.error('❌ Failed to load labels from Supabase:', error);
+      return [];
+    }
+
+    // Transform to GmailLabel format
+    return labelsData.map(l => ({
+      id: l.label_id,
+      name: l.name,
+      type: l.type as 'system' | 'user',
+      messagesTotal: l.messages_total,
+      messagesUnread: l.messages_unread,
+      threadsTotal: l.threads_total,
+      threadsUnread: l.threads_unread,
+      messageListVisibility: 'show',
+      labelListVisibility: 'labelShow',
+    })) as GmailLabel[];
+  }, [currentProfile]);
+
 
   // ✅ OPTIMIZED: Update counters automatically when labels change (no separate API calls)
   useEffect(() => {
@@ -268,6 +309,31 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     refreshRecentCounts({ force: true });
   }, [labels, isGmailSignedIn, isGmailApiReady, refreshRecentCounts]);
 
+  // Realtime Subscription
+  useEffect(() => {
+    if (!currentProfile?.id) return;
+
+    const channel = supabase
+      .channel('gmail_labels_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'gmail_labels',
+        },
+        () => {
+          console.log('🔄 Realtime label update received, reloading...');
+          loadLabelsFromSupabase().then(setLabelsInternal);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [currentProfile, loadLabelsFromSupabase]);
+
   // ✅ REMOVED: Optimistic adjustments - refresh labels instead to get exact Gmail API values
   // This ensures counters always match Gmail app exactly
 
@@ -275,6 +341,8 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
   // The inbox counter now comes directly from label.messagesUnread which matches Gmail app
 
   // Coalesced label fetching function
+
+
   const loadLabelsOnce = useCallback(async (): Promise<GmailLabel[]> => {
     // If already in-flight, return the same promise
     if (inFlightRequest.current) {
@@ -283,7 +351,20 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
 
     try {
       // Mark request as in-flight
-      inFlightRequest.current = fetchGmailLabels();
+      // inFlightRequest.current = fetchGmailLabels(); // OLD
+      inFlightRequest.current = loadLabelsFromSupabase().then(async labels => {
+        // Initial sync trigger if empty
+        if (labels.length === 0 && isGmailSignedIn && currentProfile?.id) {
+          console.log('⚠️ No labels in Supabase & Signed In. Triggering initial sync...');
+          await supabase.functions.invoke('gmail-sync', {
+            method: 'POST',
+            body: { profile_id: currentProfile.id }
+          });
+          return loadLabelsFromSupabase();
+        }
+        return labels;
+      });
+
       const gmailLabels = await inFlightRequest.current;
 
       lastLoadedAt.current = Date.now();
@@ -293,17 +374,17 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       // Clear in-flight marker
       inFlightRequest.current = null;
     }
-  }, []);
+  }, [loadLabelsFromSupabase, isGmailSignedIn]);
 
   const hydrateUserLabelCounts = useCallback(
     (baseLabels: GmailLabel[], cacheKey: string) => {
-      console.log('🏷️ hydrateUserLabelCounts called', { 
-        labelsCount: baseLabels?.length, 
+      console.log('🏷️ hydrateUserLabelCounts called', {
+        labelsCount: baseLabels?.length,
         cacheKey,
         isGmailSignedIn,
-        isGmailApiReady 
+        isGmailApiReady
       });
-      
+
       if (!isGmailSignedIn || !isGmailApiReady) {
         console.log('🏷️ hydrate skipped: Gmail not ready');
         return;
@@ -465,11 +546,11 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
 
           const currentUnread = label.messagesUnread ?? 0;
           const updatedUnread = Math.max(0, currentUnread + delta);
-          
+
           // Also update threadsUnread for INBOX (used by FoldersColumn display)
           const currentThreadsUnread = label.threadsUnread ?? 0;
           const updatedThreadsUnread = Math.max(0, currentThreadsUnread + delta);
-          
+
           if (updatedUnread === currentUnread && updatedThreadsUnread === currentThreadsUnread) {
             return label;
           }
@@ -532,193 +613,71 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     };
   }, [isGmailSignedIn]);
 
+  // ----------------------------------------------------------------------
+  // 2) Refresh / Hydrate Logic
+  // ----------------------------------------------------------------------
   const refreshLabels = useCallback(
     async (forceRefresh: boolean = false, systemOnly: boolean = false) => {
-      // Security check: Block all data fetches during auth flow
-      if (shouldBlockDataFetches(location.pathname)) {
+      // Security checks
+      if (shouldBlockDataFetches(location.pathname) || !authFlowCompleted || !currentProfile || !isDataLoadingAllowed) {
         return;
       }
 
-      // Double check with authFlowCompleted state
-      if (!authFlowCompleted) {
-        return;
-      }
-
-      // Ensure we have current profile and Gmail is ready
-      if (!currentProfile) {
-        return;
-      }
-
-      if (!isGmailSignedIn || !isGmailApiReady) {
-        return;
-      }
-
-      // Check security context
-      if (!isDataLoadingAllowed) {
-        return;
-      }
-
-      // When forcing refresh (and NOT systemOnly), clear hydrated labels so they get re-fetched with fresh counters
-      // When systemOnly is true, we preserve custom label state and only refresh system labels
-      if (forceRefresh && !systemOnly) {
-        resetHydratedLabels();
-        // Also clear any in-flight user label detail requests
-        userLabelDetailsInFlight.current = { cacheKey: null, promise: null };
-        // Clear local unread deltas - we're getting fresh data from API
-        clearLabelUnreadDeltas();
-        userLabelDetailsInFlight.current = { cacheKey: null, promise: null };
-      }
-
-      const startProgress = () => emitLoadingProgress("labels", "start");
-      const finishProgress = (status: "success" | "error") =>
-        emitLoadingProgress("labels", status);
-
-      // Check cache first to prevent unnecessary API calls (unless forceRefresh is true)
-      // Use profile userEmail + ID for cache key to ensure separation between different profiles
-      const cacheKey = `${currentProfile.id}-${
-        currentProfile.userEmail || "no-email"
-      }`;
-      const cached = labelsCache.current[cacheKey];
-      if (
-        !forceRefresh &&
-        cached &&
-        Date.now() - cached.timestamp < CACHE_DURATION
-      ) {
-        startProgress();
-        setLabels(cached.labels);
-        setLabelsLastUpdated(cached.timestamp);
-        if (cached.hydrated) {
-          markLabelsHydrated(cached.labels.map((label) => label.id));
-        } else {
-          const systemIds = cached.labels
-            .filter((label) => isSystemLabel(label))
-            .map((label) => label.id);
-          markLabelsHydrated(systemIds);
-          hydrateUserLabelCounts(cached.labels, cacheKey);
-        }
-        finishProgress("success");
-        return;
-      }
-
-      // ✅ OPTIMIZATION: Prevent duplicate label fetches with coalescing
-      // Skip if we already loaded recently (within 3 seconds) or if already loading
-      const timeSinceLastLoad = Date.now() - lastLoadedAt.current;
-      if (timeSinceLastLoad < 3000 && lastLoadedAt.current > 0) {
-        // Still restore from cache if labels state is empty (e.g., after remount)
-        if (labelsCountRef.current === 0 && cached) {
-          setLabels(cached.labels);
-          setLabelsLastUpdated(cached.timestamp);
-        }
-        return;
-      }
-
-      // If already in-flight, wait for it to complete
-      if (inFlightRequest.current) {
-        await inFlightRequest.current;
-        // Restore from cache after waiting if labels are empty
-        if (labelsCountRef.current === 0 && cached) {
-          setLabels(cached.labels);
-          setLabelsLastUpdated(cached.timestamp);
-        }
-        return;
-      }
-
-      try {
-        startProgress();
+      if (forceRefresh) {
+        console.log('🚀 Force Refresh requested - Triggering Backend Sync...');
         setLoadingLabels(true);
-        setError(null);
+        emitLoadingProgress("labels", "start");
 
-        const gmailLabels = await loadLabelsOnce();
-        const instantHydratedIds = gmailLabels
-          .filter((label) => isSystemLabel(label))
-          .map((label) => label.id);
-        markLabelsHydrated(instantHydratedIds);
-
-        // When systemOnly is true, merge fresh system labels with existing custom labels
-        if (systemOnly) {
-          setLabels(prev => {
-            // Keep existing custom labels (preserve their counters)
-            const existingCustomLabels = prev.filter(label => !isSystemLabel(label));
-            // Get fresh system labels
-            const freshSystemLabels = gmailLabels.filter(label => isSystemLabel(label));
-            // Merge: fresh system + existing custom
-            return [...freshSystemLabels, ...existingCustomLabels];
+        try {
+          console.log(`📤 invoking gmail-sync for profile: ${currentProfile.id}`);
+          const { error, data } = await supabase.functions.invoke('gmail-sync', {
+            method: 'POST',
+            body: JSON.stringify({ profile_id: currentProfile.id })
           });
-        } else {
-          setLabels(gmailLabels);
-        }
 
-        // Cache the result with the same key format
-        const now = Date.now();
-        const hasCustomLabels = gmailLabels.some(
-          (label) => !isSystemLabel(label)
-        );
-        const hasDetailedCounters = !hasCustomLabels;
+          if (data) console.log('📥 gmail-sync response:', data);
 
-        labelsCache.current[cacheKey] = {
-          labels: gmailLabels,
-          timestamp: now,
-          hydrated: hasDetailedCounters,
-        };
-
-        // Update last updated timestamp
-        setLabelsLastUpdated(now);
-
-        // Skip hydrating user labels when systemOnly is true (preserve custom label state)
-        console.log('🏷️ refreshLabels hydration check:', { systemOnly, hasDetailedCounters, labelsCount: gmailLabels.length });
-        if (!systemOnly) {
-          if (!hasDetailedCounters) {
-            console.log('🏷️ Calling hydrateUserLabelCounts...');
-            hydrateUserLabelCounts(gmailLabels, cacheKey);
+          if (error) {
+            console.error('❌ Backend Sync failed:', error);
+            setError('Failed to sync with Gmail');
+            emitLoadingProgress("labels", "error");
           } else {
-            console.log('🏷️ Labels already have detailed counters, marking as hydrated');
-            markLabelsHydrated(gmailLabels.map((label) => label.id));
+            console.log('✅ Backend Sync triggered successfully');
+            // Wait a bit for changes to propagate then reload
+            await sleep(1000);
+            const freshLabels = await loadLabelsOnce();
+            setLabelsInternal(freshLabels);
+            emitLoadingProgress("labels", "success");
           }
-        } else {
-          console.log('🏷️ Skipping hydration due to systemOnly=true');
+        } catch (e) {
+          console.error('❌ Backend Sync exception:', e);
+          emitLoadingProgress("labels", "error");
+        } finally {
+          setLoadingLabels(false);
         }
-        finishProgress("success");
-      } catch (err) {
-        console.error("Error fetching Gmail labels:", err);
-        const errorMessage =
-          err instanceof Error ? err.message : "Failed to fetch labels";
-        setError(errorMessage);
-        finishProgress("error");
-
-        // Don't clear existing labels on error, keep showing what we have
-        // This prevents the UI from going blank during rate limit errors
-      } finally {
-        setLoadingLabels(false);
+      } else {
+        // Standard reload from Supabase
+        const freshLabels = await loadLabelsOnce();
+        setLabelsInternal(freshLabels);
       }
     },
-    [
-      isGmailSignedIn,
-      isGmailApiReady,
-      currentProfile?.id,
-      currentProfile?.userEmail,
-      isDataLoadingAllowed,
-      authFlowCompleted,
-      hydrateUserLabelCounts,
-      markLabelsHydrated,
-      isSystemLabel,
-      resetHydratedLabels,
-      clearLabelUnreadDeltas,
-    ]
-  ); // Removed location.pathname to prevent unnecessary refreshes on navigation
+    [loadLabelsOnce, currentProfile, authFlowCompleted, isDataLoadingAllowed, location.pathname]
+  );
+
 
   // ✅ OPTIMIZED: Refresh labels (which updates counters) instead of manual increment/decrement
   // This ensures we always have the exact Gmail API value
   // MOVED HERE: After refreshLabels is defined to avoid hoisting issues
   useEffect(() => {
-const handleDraftCreated = async () => {
-  // Refresh only system labels (DRAFT, INBOX, etc.) - preserve custom folder counters
-  await refreshLabels(true, true);
-};
+    const handleDraftCreated = async () => {
+      // Refresh only system labels (DRAFT, INBOX, etc.) - preserve custom folder counters
+      await refreshLabels(true, true);
+    };
 
     const handleDraftDeleted = async () => {
-  // Refresh only system labels (DRAFT, INBOX, etc.) - preserve custom folder counters
-  await refreshLabels(true, true);
-};
+      // Refresh only system labels (DRAFT, INBOX, etc.) - preserve custom folder counters
+      await refreshLabels(true, true);
+    };
 
     window.addEventListener("draft-created", handleDraftCreated);
     window.addEventListener("email-deleted", handleDraftDeleted);
@@ -731,6 +690,7 @@ const handleDraftCreated = async () => {
 
   const clearLabelsCache = () => {
     labelsCache.current = {};
+    lastLoadedAt.current = 0; // ✅ Reset timestamp so next fetch is allowed immediately
     resetHydratedLabels();
     userLabelDetailsInFlight.current = { cacheKey: null, promise: null };
     setLabels([]);
@@ -959,11 +919,15 @@ const handleDraftCreated = async () => {
       if (
         currentProfile &&
         isGmailSignedIn &&
-        isGmailApiReady &&
-        inboxReadyRef.current
+        isGmailApiReady
       ) {
         refreshLabels();
       } else {
+        console.log('⚠️ LabelContext: Force refresh validation failed', {
+          hasProfile: !!currentProfile,
+          isSignedIn: isGmailSignedIn,
+          isApiReady: isGmailApiReady
+        });
       }
     };
 

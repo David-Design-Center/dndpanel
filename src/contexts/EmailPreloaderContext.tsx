@@ -1,11 +1,11 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Email } from '../types';
-import { 
-  getEmails, 
-  getUnreadEmails, 
-  getSentEmails, 
-  getDraftEmails, 
+import {
+  getEmails,
+  getUnreadEmails,
+  getSentEmails,
+  getDraftEmails,
   getTrashEmails,
   PaginatedEmailServiceResponse
 } from '../services/emailService';
@@ -81,8 +81,8 @@ export function EmailPreloaderProvider({ children }: { children: React.ReactNode
     try {
       const emailFunction = getEmailFunction(pageType);
       const emailsData = await emailFunction();
-      
-      const response: PaginatedEmailServiceResponse = Array.isArray(emailsData) 
+
+      const response: PaginatedEmailServiceResponse = Array.isArray(emailsData)
         ? { emails: emailsData, resultSizeEstimate: emailsData.length, nextPageToken: undefined }
         : emailsData;
 
@@ -111,12 +111,12 @@ export function EmailPreloaderProvider({ children }: { children: React.ReactNode
 
   const preloadAllPages = useCallback(async () => {
     if (!isGmailSignedIn || isPreloading) return; // Prevent duplicate preloading
-    
+
     setIsPreloading(true);
-    
+
     const pageTypes: EmailPageType[] = ['inbox', 'sent', 'drafts', 'trash', 'unread'];
     const [primaryPage, ...secondaryPages] = pageTypes;
-    
+
     try {
       console.log('📧 EmailPreloader: Loading inbox threads first');
       try {
@@ -200,19 +200,20 @@ export function EmailPreloaderProvider({ children }: { children: React.ReactNode
   // This prevents unnecessary API calls when connecting Gmail from Settings
   useEffect(() => {
     // Check if user is on an email-related page
-    const isOnEmailPage = location.pathname.startsWith('/inbox') || 
-                          location.pathname.startsWith('/unread') ||
-                          location.pathname.startsWith('/sent') ||
-                          location.pathname.startsWith('/drafts') ||
-                          location.pathname.startsWith('/trash');
+    const isOnEmailPage = location.pathname.startsWith('/inbox') ||
+      location.pathname.startsWith('/unread') ||
+      location.pathname.startsWith('/sent') ||
+      location.pathname.startsWith('/drafts') ||
+      location.pathname.startsWith('/trash');
 
     if (isGmailSignedIn && !hasInitialPreload && !isRefreshing && isOnEmailPage) {
       console.log('📧 EmailPreloader: User on email page, starting preload');
       setIsGhostPreloadComplete(false);
       setHasInitialPreload(true);
-      
-      // Single preload on sign-in ONLY when on email pages
-      preloadAllPages();
+
+      // ✅ DISABLED: Ghost preload caused 429 errors. Now we only load what is needed.
+      // preloadAllPages(); 
+      setIsGhostPreloadComplete(true);
     } else if (!isGmailSignedIn) {
       setIsGhostPreloadComplete(false);
       setHasInitialPreload(false);

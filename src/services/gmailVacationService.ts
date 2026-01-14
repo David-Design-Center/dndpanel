@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { isGmailSignedIn } from '../integrations/gapiService';
+import { queueGmailRequest } from '../utils/requestQueue';
 
 // Gmail Vacation Responder Service
 // Uses Gmail's built-in vacation responder instead of custom auto-reply logic
@@ -95,10 +96,13 @@ export const getGmailVacationSettings = async (): Promise<VacationSettings | nul
     }
 
     console.log('Getting Gmail vacation responder settings...');
-    
-    const response = await window.gapi.client.gmail.users.settings.getVacation({
-      userId: 'me'
-    });
+
+    // Wrap with queue wrapper to handle rate limits
+    const response = await queueGmailRequest('get-vacation-settings', () =>
+      window.gapi.client.gmail.users.settings.getVacation({
+        userId: 'me'
+      })
+    );
 
     if (!response.result) {
       console.warn('No vacation settings returned from Gmail API');
@@ -159,10 +163,12 @@ export const updateGmailVacationSettings = async (settings: VacationSettings): P
       requestBody.endTime = settings.endTime.toString();
     }
 
-    const response = await window.gapi.client.gmail.users.settings.updateVacation({
-      userId: 'me',
-      resource: requestBody
-    });
+    const response = await queueGmailRequest('update-vacation-settings', () =>
+      window.gapi.client.gmail.users.settings.updateVacation({
+        userId: 'me',
+        resource: requestBody
+      })
+    );
 
     if (!response.result) {
       throw new Error('Failed to update Gmail vacation settings');
@@ -205,7 +211,7 @@ export const enableGmailVacationResponder = async (
     }
 
     const success = await updateGmailVacationSettings(vacationSettings);
-    
+
     if (success) {
       console.log('✅ Gmail vacation responder enabled with configuration:', vacationSettings);
     }
@@ -231,7 +237,7 @@ export const disableGmailVacationResponder = async (): Promise<boolean> => {
     };
 
     const success = await updateGmailVacationSettings(vacationSettings);
-    
+
     if (success) {
       console.log('✅ Gmail vacation responder disabled');
     }
@@ -313,7 +319,7 @@ export const syncGmailVacationStatusWithSupabase = async (profileName: string): 
 export const getDefaultVacationFormData = (): VacationFormData => {
   const today = new Date();
   const todayString = today.toISOString().split('T')[0];
-  
+
   return {
     enableAutoReply: true,
     responseSubject: 'Out of Office',

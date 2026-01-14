@@ -132,6 +132,21 @@ function FoldersColumn({
     string | null
   >("inbox");
 
+  // Loading spinner timeout state
+  const [spinnerTimeoutReached, setSpinnerTimeoutReached] = useState(false);
+
+  // 3-second timeout for spinners
+  useEffect(() => {
+    // Reset timeout when loading starts (if using loadingLabels from context)
+    // Or just run once on mount if the issue is initial load
+    setSpinnerTimeoutReached(false);
+    const timer = setTimeout(() => {
+      setSpinnerTimeoutReached(true);
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, [loadingLabels]); // Reset timer whenever generic loading state toggles
+
   const navigate = useNavigate();
 
   // Format the last updated timestamp
@@ -298,11 +313,11 @@ function FoldersColumn({
       result.sort((a, b) => {
         const aIsParent = a.children.length > 0;
         const bIsParent = b.children.length > 0;
-        
+
         // Parents come before leaves
         if (aIsParent && !bIsParent) return -1;
         if (!aIsParent && bIsParent) return 1;
-        
+
         // Within same category, sort A-Z
         return a.displayName.localeCompare(b.displayName);
       });
@@ -448,7 +463,7 @@ function FoldersColumn({
   useEffect(() => {
     if (labelTree.length > 0 && !hasInitializedFoldersRef.current) {
       hasInitializedFoldersRef.current = true;
-      
+
       const getAllFolderPaths = (nodes: NestedLabel[]): string[] => {
         const paths: string[] = [];
         nodes.forEach((node) => {
@@ -564,9 +579,8 @@ function FoldersColumn({
 
         toast({
           title: "Folder Deleted",
-          description: `Successfully deleted folder "${label.displayName}"${
-            !label.isLeaf && label.children?.length ? " and its sub-labels" : ""
-          }`,
+          description: `Successfully deleted folder "${label.displayName}"${!label.isLeaf && label.children?.length ? " and its sub-labels" : ""
+            }`,
         });
       } catch (error) {
         console.error("Failed to delete label:", error);
@@ -596,16 +610,16 @@ function FoldersColumn({
         const showCount = threadsUnreadCount > 0;
         const countBadgeText = threadsUnreadCount.toString(); // No 99+ cap - show actual number
         const hasRealLabelId = node.id && !node.id.startsWith("temp-");
+        // Spinner logic: Show only if not hydrated AND timeout hasn't passed
         const showSpinner = Boolean(
-          node.labelObj && hasRealLabelId && !isLabelHydrated(node.id)
+          node.labelObj && hasRealLabelId && !isLabelHydrated(node.id) && !spinnerTimeoutReached
         );
 
         return (
           <div className="flex items-center justify-between w-full min-w-0 group">
             <span
-              className={`text-xs font-medium truncate ${
-                node.isLeaf ? "text-gray-700" : "text-gray-900 font-semibold"
-              }`}
+              className={`text-xs font-medium truncate ${node.isLeaf ? "text-gray-700" : "text-gray-900 font-semibold"
+                }`}
             >
               {node.displayName}
             </span>
@@ -676,11 +690,11 @@ function FoldersColumn({
     return [...filteredTree].sort((a, b) => {
       const aIsParent = a.children.length > 0;
       const bIsParent = b.children.length > 0;
-      
+
       // Parents come before leaves
       if (aIsParent && !bIsParent) return -1;
       if (!aIsParent && bIsParent) return 1;
-      
+
       // Within same category, sort A-Z
       return a.displayName.localeCompare(b.displayName);
     });
@@ -688,7 +702,7 @@ function FoldersColumn({
 
   const treeNodes = useMemo(
     () => convertToTreeNodes(reorderedFilteredTree),
-    [reorderedFilteredTree]
+    [reorderedFilteredTree, spinnerTimeoutReached]
   );
 
   const handleNodeClick = (node: TreeNode) => {
@@ -814,9 +828,8 @@ function FoldersColumn({
 
   return (
     <div
-      className={`h-full bg-muted/30 border-r-1 border-gray-400 overflow-hidden relative ${
-        !isGmailSignedIn ? "blur-sm" : ""
-      }`}
+      className={`h-full bg-muted/30 border-r-1 border-gray-400 overflow-hidden relative ${!isGmailSignedIn ? "blur-sm" : ""
+        }`}
     >
       {/* Overlay for non-authenticated state */}
       {!isGmailSignedIn && (
@@ -890,11 +903,10 @@ function FoldersColumn({
                 <button
                   onClick={handleCompose}
                   disabled={!isGmailSignedIn}
-                  className={`w-full flex items-center border border-black/30 justify-center space-x-2 px-3 py-2.5 rounded-full font-medium text-sm transition-colors ${
-                    isGmailSignedIn
-                      ? "bg-white text-black hover:bg-gray-100"
-                      : "bg-white text-gray-500 cursor-not-allowed"
-                  }`}
+                  className={`w-full flex items-center border border-black/30 justify-center space-x-2 px-3 py-2.5 rounded-full font-medium text-sm transition-colors ${isGmailSignedIn
+                    ? "bg-white text-black hover:bg-gray-100"
+                    : "bg-white text-gray-500 cursor-not-allowed"
+                    }`}
                 >
                   <Pen size={16} />
                   <span>Compose</span>
@@ -912,17 +924,17 @@ function FoldersColumn({
                           const IconComponent = folder.icon;
                           const isActive =
                             selectedSystemFolder === folder.folderType;
-                          
+
                           // Map folder type to Gmail label ID for drop target
                           const folderLabelId = folder.folderType === 'inbox' ? 'INBOX' :
                             folder.folderType === 'sent' ? 'SENT' :
-                            folder.folderType === 'drafts' ? 'DRAFT' :
-                            folder.folderType === 'trash' ? 'TRASH' :
-                            folder.folderType === 'spam' ? 'SPAM' :
-                            folder.folderType === 'important' ? 'IMPORTANT' :
-                            folder.folderType === 'starred' ? 'STARRED' :
-                            folder.folderType.toUpperCase();
-                          
+                              folder.folderType === 'drafts' ? 'DRAFT' :
+                                folder.folderType === 'trash' ? 'TRASH' :
+                                  folder.folderType === 'spam' ? 'SPAM' :
+                                    folder.folderType === 'important' ? 'IMPORTANT' :
+                                      folder.folderType === 'starred' ? 'STARRED' :
+                                        folder.folderType.toUpperCase();
+
                           return (
                             <DroppableFolderItem
                               key={folder.name}
@@ -935,11 +947,10 @@ function FoldersColumn({
                                     onClick={() =>
                                       handleSystemFolderClick(folder.folderType)
                                     }
-                                    className={`w-full flex items-center justify-between px-2 py-1.5 text-sm rounded-md transition-colors group ${
-                                      isActive
-                                        ? "bg-gray-200"
-                                        : "hover:bg-gray-100"
-                                    }`}
+                                    className={`w-full flex items-center justify-between px-2 py-1.5 text-sm rounded-md transition-colors group ${isActive
+                                      ? "bg-gray-200"
+                                      : "hover:bg-gray-100"
+                                      }`}
                                   >
                                     <div className="flex items-center space-x-2 min-w-0 flex-1">
                                       <IconComponent
@@ -1034,9 +1045,8 @@ function FoldersColumn({
                             >
                               <RefreshCw
                                 size={14}
-                                className={`text-gray-600 ${
-                                  isRefreshing ? "animate-spin" : ""
-                                }`}
+                                className={`text-gray-600 ${isRefreshing ? "animate-spin" : ""
+                                  }`}
                               />
                             </button>
                           </TooltipTrigger>

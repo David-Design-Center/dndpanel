@@ -17,6 +17,7 @@ import {
 import { decodeHtmlEntities } from '../parsing/charset';
 import type { EmailPart } from '../types';
 import { parseEmailBody } from '../parsing/bodyParserSimple';
+import { AttachmentCache } from '../../../services/attachmentCache';
 
 /**
  * Extract real attachments (files that are NOT inline images)
@@ -24,12 +25,12 @@ import { parseEmailBody } from '../parsing/bodyParserSimple';
  */
 const extractAttachments = (part: EmailPart, inlineCids: string[]): Array<{ name: string; mimeType: string; size: number; attachmentId: string }> => {
   const attachments: Array<{ name: string; mimeType: string; size: number; attachmentId: string }> = [];
-  
+
   const processPart = (p: EmailPart) => {
     // Check if this part has a filename and attachmentId
     const filename = p.filename;
     const contentId = p.headers?.find(h => h.name.toLowerCase() === 'content-id')?.value?.replace(/^<|>$/g, '');
-    
+
     // Include this as an attachment if:
     // 1. It has a filename AND
     // 2. It has an attachmentId AND
@@ -40,7 +41,7 @@ const extractAttachments = (part: EmailPart, inlineCids: string[]): Array<{ name
     if (filename && p.body?.attachmentId) {
       const isImage = p.mimeType?.startsWith('image/');
       const isInlineImage = isImage && contentId && inlineCids.includes(contentId);
-      
+
       if (!isInlineImage) {
         console.log(`📎 Found attachment: ${filename} (${p.mimeType}, ${(p.body.size || 0) / 1024}KB)`);
         attachments.push({
@@ -53,13 +54,13 @@ const extractAttachments = (part: EmailPart, inlineCids: string[]): Array<{ name
         console.log(`🖼️ Skipping inline image: ${filename}`);
       }
     }
-    
+
     // Recursively process child parts
     if (p.parts) {
       p.parts.forEach(processPart);
     }
   };
-  
+
   processPart(part);
   console.log(`📎 Total attachments found: ${attachments.length}`);
   return attachments;
@@ -71,30 +72,30 @@ const extractAttachments = (part: EmailPart, inlineCids: string[]): Array<{ name
  */
 const extractInlineAttachments = (part: EmailPart): Array<{ cid: string; attachmentId: string; mimeType: string }> => {
   const inlineAttachments: Array<{ cid: string; attachmentId: string; mimeType: string }> = [];
-  
+
   const processPart = (p: EmailPart) => {
     // Check if this part has both Content-ID header AND an attachmentId
     const contentIdHeader = p.headers?.find(h => h.name.toLowerCase() === 'content-id');
     const contentType = p.mimeType || 'image/png';
-    
+
     if (contentIdHeader && p.body?.attachmentId) {
       // Clean the Content-ID (remove < > brackets)
       const cid = contentIdHeader.value.replace(/^<|>$/g, '');
       console.log(`📎 Found inline attachment: cid:${cid}, attachmentId: ${p.body.attachmentId}, type: ${contentType}`);
-      
+
       inlineAttachments.push({
         cid: cid,
         attachmentId: p.body.attachmentId,
         mimeType: contentType
       });
     }
-    
+
     // Recursively process child parts
     if (p.parts) {
       p.parts.forEach(processPart);
     }
   };
-  
+
   processPart(part);
   console.log(`📎 Total inline attachments found: ${inlineAttachments.length}`);
   return inlineAttachments;
@@ -105,43 +106,57 @@ const extractInlineAttachments = (part: EmailPart): Array<{ cid: string; attachm
  * Exported for lazy loading on message expand
  */
 export const replaceCidReferences = async (
-  html: string, 
+  html: string,
   inlineAttachments: Array<{ cid: string; attachmentId: string; mimeType: string }>,
   messageId: string
 ): Promise<string> => {
   if (inlineAttachments.length === 0) {
     return html;
   }
-  
+
   console.log(`🔄 Replacing ${inlineAttachments.length} cid: references in HTML...`);
-  
+
   let modifiedHtml = html;
-  
+
   // Process each inline attachment
   for (const attachment of inlineAttachments) {
     try {
-      console.log(`⏳ Fetching attachment: ${attachment.attachmentId} for cid:${attachment.cid}`);
-      
-      // Fetch the attachment data from Gmail API
-      const response = await window.gapi.client.gmail.users.messages.attachments.get({
-        userId: 'me',
-        messageId: messageId,
-        id: attachment.attachmentId
-      });
-      
-      if (response.result?.data) {
-        // Gmail returns base64url - convert to standard base64
-        const base64Data = response.result.data
-          .replace(/-/g, '+')
-          .replace(/_/g, '/');
-        
-        // Pad if needed
-        const padding = '='.repeat((4 - base64Data.length % 4) % 4);
-        const paddedBase64 = base64Data + padding;
-        
-        // Create data URI
-        const dataUri = `data:${attachment.mimeType};base64,${paddedBase64}`;
-        
+      // Check global cache first
+      let dataUrl = AttachmentCache.get(attachment.attachmentId);
+      let loadedFromCache = false;
+
+      if (!dataUrl) {
+        console.log(`⏳ Fetching attachment: ${attachment.attachmentId} for cid:${attachment.cid}`);
+
+        // Fetch the attachment data from Gmail API
+        const response = await window.gapi.client.gmail.users.messages.attachments.get({
+          userId: 'me',
+          messageId: messageId,
+          id: attachment.attachmentId
+        });
+
+        if (response.result?.data) {
+          // Gmail returns base64url - convert to standard base64
+          const base64Data = response.result.data
+            .replace(/-/g, '+')
+            .replace(/_/g, '/');
+
+          // Pad if needed
+          const padding = '='.repeat((4 - base64Data.length % 4) % 4);
+          const paddedBase64 = base64Data + padding;
+
+          // Create data URI
+          dataUrl = `data:${attachment.mimeType};base64,${paddedBase64}`;
+
+          // Cache it!
+          AttachmentCache.set(attachment.attachmentId, dataUrl);
+        }
+      } else {
+        console.log(`💾 Using cached attachment for cid:${attachment.cid}`);
+        loadedFromCache = true;
+      }
+
+      if (dataUrl) {
         // Replace ALL occurrences of this cid in the HTML
         // Match both cid:xxxxx and cid:"xxxxx" formats
         const cidPatterns = [
@@ -149,12 +164,14 @@ export const replaceCidReferences = async (
           new RegExp(`cid:"${attachment.cid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`, 'gi'),
           new RegExp(`cid:'${attachment.cid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`, 'gi')
         ];
-        
+
         cidPatterns.forEach(pattern => {
-          modifiedHtml = modifiedHtml.replace(pattern, dataUri);
+          modifiedHtml = modifiedHtml.replace(pattern, dataUrl!);
         });
-        
-        console.log(`✅ Replaced cid:${attachment.cid} with data URI (${(paddedBase64.length / 1024).toFixed(1)}KB)`);
+
+        if (!loadedFromCache) {
+          console.log(`✅ Replaced cid:${attachment.cid} with data URI`);
+        }
       } else {
         console.warn(`⚠️ No data returned for attachment ${attachment.attachmentId}`);
       }
@@ -162,7 +179,8 @@ export const replaceCidReferences = async (
       console.error(`❌ Failed to fetch attachment for cid:${attachment.cid}:`, error);
     }
   }
-  
+
+
   return modifiedHtml;
 };
 
@@ -229,7 +247,7 @@ export const fetchGmailMessages = async (
     const hasServerSideFilter = finalQuery.includes('-has:userlabels');
 
     const emails: Email[] = [];
-    
+
     // Fetch thread details (latest message from each thread)
     for (const thread of response.result.threads) {
       if (!thread.id) continue;
@@ -237,7 +255,7 @@ export const fetchGmailMessages = async (
       let threadData;
       let retryCount = 0;
       const MAX_RETRIES = 1;
-      
+
       // Retry logic for failed thread fetches
       while (retryCount <= MAX_RETRIES) {
         try {
@@ -259,7 +277,7 @@ export const fetchGmailMessages = async (
           await new Promise(resolve => setTimeout(resolve, 100 * retryCount));
         }
       }
-      
+
       if (!threadData) continue;
 
       try {
@@ -276,7 +294,7 @@ export const fetchGmailMessages = async (
         // Get the latest message in the thread
         const latestMessage = messages[messages.length - 1];
         if (!latestMessage.id || !latestMessage.payload) continue;
-        
+
         const payload = latestMessage.payload as EmailPart;
 
         const headers = payload.headers || [];
@@ -284,7 +302,7 @@ export const fetchGmailMessages = async (
         const fromHeader = gmailDecodeRfc2047(gmailGetHeaderValue(headers, 'from') || '');
         const toHeader = gmailDecodeRfc2047(gmailGetHeaderValue(headers, 'to') || '');
         const dateHeader = gmailGetHeaderValue(headers, 'date') || new Date().toISOString();
-        
+
         const fromAddresses = gmailParseEmailAddresses(fromHeader);
         const fromEmail = fromAddresses[0]?.email || fromHeader;
         const fromName = fromAddresses[0]?.name || fromHeader;
@@ -299,10 +317,10 @@ export const fetchGmailMessages = async (
         const attachments: NonNullable<Email['attachments']> = [];
 
         // Check if any message in the thread is a draft
-        const hasDraftInThread = messages.some((msg: any) => 
+        const hasDraftInThread = messages.some((msg: any) =>
           msg.labelIds?.includes('DRAFT')
         );
-        
+
         if (hasDraftInThread) {
           console.log(`📧 Thread ${thread.id} has draft - setting hasDraftInThread flag`);
         }
@@ -360,7 +378,7 @@ export const fetchGmailMessageById = async (id: string): Promise<Email | undefin
       console.error('Email fetch returned no result or no payload');
       return undefined;
     }
-    
+
     console.log('Email fetch successful, processing payload');
     const payload = msg.result.payload as EmailPart;
 
@@ -385,7 +403,7 @@ export const fetchGmailMessageById = async (id: string): Promise<Email | undefin
     console.log('📧 Using simplified body parser...');
     body = parseEmailBody(msg.result);
     console.log(`✅ Body parsed: ${body.length} characters`);
-    
+
     // Fallback to old parser if new one returns empty
     if (!body) {
       console.warn('⚠️ Simplified parser returned empty, falling back to old parser');
@@ -395,20 +413,20 @@ export const fetchGmailMessageById = async (id: string): Promise<Email | undefin
         body = gmailExtractTextFromPart(bodyPart);
       }
     }
-    
+
     if (body) {
-      
+
       // Extract inline attachments metadata (DON'T fetch data yet for performance)
       console.log('🔍 Searching for inline attachments...');
       const inlineAttachments = extractInlineAttachments(payload);
-      
+
       // SKIP cid: replacement for faster loading - will be done on expand
       if (inlineAttachments.length > 0) {
         console.log(`🖼️ Found ${inlineAttachments.length} inline attachments (lazy loading enabled)`);
       } else {
         console.log('ℹ️ No inline attachments found');
       }
-      
+
       // Extract real attachments (exclude inline images ONLY if actually referenced in body)
       console.log('🔍 Searching for real attachments...');
       // Only filter out inline images that are actually referenced in the email body with cid:
@@ -417,7 +435,7 @@ export const fetchGmailMessageById = async (id: string): Promise<Email | undefin
         .map(a => a.cid);
       console.log(`🖼️ CIDs actually referenced in body: ${referencedInlineCids.length} of ${inlineAttachments.length}`);
       const extractedAttachments = extractAttachments(payload, referencedInlineCids);
-      
+
       // Convert to Email attachment format
       const attachments: NonNullable<Email['attachments']> = extractedAttachments.map(att => ({
         name: att.name,
@@ -426,7 +444,7 @@ export const fetchGmailMessageById = async (id: string): Promise<Email | undefin
         attachmentId: att.attachmentId,
         url: '' // Will be populated when user downloads
       }));
-      
+
       return {
         id: id,
         from: { name: fromName, email: fromEmail },
@@ -445,7 +463,7 @@ export const fetchGmailMessageById = async (id: string): Promise<Email | undefin
         inlineAttachments: inlineAttachments.length > 0 ? inlineAttachments : undefined
       } as Email;
     }
-    
+
     // Final fallback to snippet if still no body
     if (!body && preview) {
       console.warn(`No body found for message ${id}, using snippet`);
@@ -527,7 +545,7 @@ export const fetchThreadMessages = async (threadId: string): Promise<Email[]> =>
     const emails: Email[] = [];
     for (const message of thread.result.messages) {
       if (!message.id) continue;
-      
+
       try {
         const email = await fetchGmailMessageById(message.id);
         if (email) {

@@ -3,22 +3,22 @@ import { X, Reply, ReplyAll, Forward, Trash, MoreVertical, Star, Paperclip, Down
 import { parseISO, format, formatDistanceToNow } from 'date-fns';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
-import { 
-  getEmailById, 
-  markEmailAsTrash, 
-  getThreadEmails, 
-  sendReply, 
-  sendReplyAll, 
-  sendEmail, 
+import {
+  getEmailById,
+  markEmailAsTrash,
+  getThreadEmails,
+  sendReply,
+  sendReplyAll,
+  sendEmail,
   markAsRead,
-  markAsUnread, 
+  markAsUnread,
   markAsImportant,
   markAsUnimportant,
   markAsStarred,
   markAsUnstarred,
   applyLabelsToEmail
 } from '../../services/emailService';
-import { 
+import {
   createGmailFilter,
   createReplyDraft,
   updateReplyDraft,
@@ -26,6 +26,7 @@ import {
 } from '../../integrations/gapiService';
 import { optimizedEmailService } from '../../services/optimizedEmailService';
 import { replaceCidReferences } from '../../integrations/gmail/fetch/messages';
+import { AttachmentCache } from '../../services/attachmentCache';
 import { Email } from '../../types';
 import { useLayoutState } from '../../contexts/LayoutStateContext';
 import { useLabel } from '../../contexts/LabelContext';
@@ -48,13 +49,14 @@ import {
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
 import { stripQuotedText } from '../../utils/emailContentProcessing';
-import { 
-  updateCountersForTrash, 
-  updateCountersForSpam, 
-  updateCountersForMove, 
-  updateCountersForMarkRead, 
-  updateCountersForMarkUnread 
+import {
+  updateCountersForTrash,
+  updateCountersForSpam,
+  updateCountersForMove,
+  updateCountersForMarkRead,
+  updateCountersForMarkUnread
 } from '../../utils/counterUpdateUtils';
+import { queueGmailRequest } from '../../utils/requestQueue';
 
 interface EmbeddedViewEmailProps {
   emailId: string;
@@ -106,12 +108,12 @@ const getSenderColor = (email: string): string => {
     'bg-teal-500',
     'bg-cyan-500',
   ];
-  
+
   let hash = 0;
   for (let i = 0; i < email.length; i++) {
     hash = email.charCodeAt(i) + ((hash << 5) - hash);
   }
-  
+
   return colors[Math.abs(hash) % colors.length];
 };
 
@@ -136,7 +138,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const [forwardType, setForwardType] = useState<'single' | 'all'>('single'); // Track forward type
   const [isReplyExpanded, setIsReplyExpanded] = useState(false); // Reply composer fullscreen mode
   const [showMetadata, setShowMetadata] = useState(false); // Email metadata dropdown
-  
+
   // 🎯 CONSOLIDATED DRAFT STATE - Single source of truth prevents race conditions
   const [draftState, setDraftState] = useState({
     status: 'idle' as 'idle' | 'loading' | 'ready' | 'saving' | 'sending' | 'error',
@@ -153,12 +155,12 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     lastHash: '',
     error: null as string | null
   });
-  
+
   // Helper to update draft state atomically
   const updateDraftState = (updates: Partial<typeof draftState>) => {
     setDraftState(prev => ({ ...prev, ...updates }));
   };
-  
+
   // Backward compatibility - individual setters (use updateDraftState internally)
   const setShowReplyComposer = (show: boolean) => updateDraftState({ showComposer: show });
   const setReplyMode = (mode: typeof draftState.mode) => updateDraftState({ mode });
@@ -170,7 +172,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const setIsSaving = (saving: boolean) => updateDraftState({ isSaving: saving });
   const setLastSavedAt = (date: Date | null) => updateDraftState({ lastSavedAt: date });
   const setLastHash = (hash: string) => updateDraftState({ lastHash: hash });
-  
+
   // Backward compatibility - individual getters
   const showReplyComposer = draftState.showComposer;
   const replyMode = draftState.mode;
@@ -182,24 +184,25 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const isSaving = draftState.isSaving;
   const lastSavedAt = draftState.lastSavedAt;
   const lastHash = draftState.lastHash;
-  
+
   // Refs to store current values (avoid stale closure in timers)
   const draftStateRef = useRef(draftState);
   const replyContentRef = useRef(draftState.content);
   const forwardToRef = useRef(draftState.forwardTo);
   const replyModeRef = useRef(draftState.mode);
   const isDirtyRef = useRef(draftState.isDirty);
-  
+
   const debounceSaveTimerRef = useRef<number | null>(null);
   const failsafeSaveTimerRef = useRef<number | null>(null);
   const lastSaveTimeRef = useRef<number>(0);
-  
+
   // Track previous email ID to detect navigation between emails
   const prevEmailIdRef = useRef<string | null>(null);
-  
+
   // Image cache for inline attachments (cid: references)
-  const imageCache = useRef<Map<string, string>>(new Map());
-  
+  // Replaced by global AttachmentCache
+  // const imageCache = useRef<Map<string, string>>(new Map());
+
   // Update refs whenever draft state changes
   useEffect(() => {
     draftStateRef.current = draftState;
@@ -208,10 +211,10 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     replyModeRef.current = draftState.mode;
     isDirtyRef.current = draftState.isDirty;
   }, [draftState]);
-  
+
   // Attachment preview modal state
   const [previewAttachment, setPreviewAttachment] = useState<{ url: string; name: string; type: string } | null>(null);
-  
+
   // Three-dot menu state (same as context menu in EmailListItem)
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [showFilterSubmenu, setShowFilterSubmenu] = useState(false);
@@ -224,7 +227,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const [nestUnder, setNestUnder] = useState(false);
   const [parentLabel, setParentLabel] = useState('');
   const [autoFilterFuture, setAutoFilterFuture] = useState(false);
-  
+
   // CC/BCC state for reply composer
   const [showCc, setShowCc] = useState(false);
   const [ccRecipients, setCcRecipients] = useState<string[]>([]);
@@ -236,7 +239,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const [bccInput, setBccInput] = useState('');
   const [showBccDropdown, setShowBccDropdown] = useState(false);
   const [filteredBccContacts, setFilteredBccContacts] = useState<any[]>([]);
-  
+
   const hideFilterTimerRef = useRef<number | null>(null);
   const filterButtonRef = useRef<HTMLButtonElement>(null);
   const dropdownContentRef = useRef<HTMLDivElement>(null);
@@ -258,12 +261,12 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const { toast } = useToast();
   const [searchParams] = useSearchParams();
   const draftIdParam = searchParams.get('draft'); // Check for draft query param
-  
+
   // 📁 Extract folder context from URL to preserve when navigating back
   const labelNameParam = searchParams.get('labelName');
   const labelQueryParam = searchParams.get('labelQuery');
   const labelIdParam = searchParams.get('labelId');
-  
+
   // Helper to build URL back to email list, preserving folder context if present
   const getBackToListUrl = (): string => {
     if (labelNameParam) {
@@ -279,15 +282,15 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   // 🎯 CONSOLIDATED DRAFT LOAD FUNCTION - Single async action prevents race conditions
   const loadDraftCompletely = async (messageId: string): Promise<boolean> => {
     console.log('🔄 START loadDraftCompletely:', messageId);
-    
+
     try {
       // Step 1: Set loading state (hides composer until ready)
-      updateDraftState({ 
+      updateDraftState({
         status: 'loading',
         messageId,
-        showComposer: false 
+        showComposer: false
       });
-      
+
       // Step 2: Fetch draft list to find draft ID from message ID
       const draftResponse = await window.gapi.client.gmail.users.drafts.list({
         userId: 'me',
@@ -296,11 +299,11 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
       const drafts = draftResponse.result.drafts || [];
       const matchingDraft = drafts.find((d: any) => d.message?.id === messageId);
-      
+
       if (!matchingDraft) {
         throw new Error('Draft not found in list');
       }
-      
+
       // Step 3: Fetch full draft details
       const draftDetails = await window.gapi.client.gmail.users.drafts.get({
         userId: 'me',
@@ -313,12 +316,12 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       }
 
       const payload = draftDetails.result.message.payload;
-      
+
       // Step 4a: Extract CC and BCC headers
       const headers = payload?.headers || [];
       const ccHeader = headers.find((h: any) => h.name.toLowerCase() === 'cc')?.value || '';
       const bccHeader = headers.find((h: any) => h.name.toLowerCase() === 'bcc')?.value || '';
-      
+
       // Parse CC/BCC into arrays of email addresses
       const parseCcEmails = (headerValue: string): string[] => {
         if (!headerValue) return [];
@@ -330,13 +333,13 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           })
           .filter(email => email && email.includes('@'));
       };
-      
+
       const draftCcRecipients = parseCcEmails(ccHeader);
       const draftBccRecipients = parseCcEmails(bccHeader);
-      
+
       console.log('📧 Draft CC recipients:', draftCcRecipients);
       console.log('📧 Draft BCC recipients:', draftBccRecipients);
-      
+
       // Step 4b: Extract body content
       let bodyHtml = '';
       const findBody = (parts: any[]): { html: string; text: string } => {
@@ -362,14 +365,14 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       } else if (payload?.body?.data) {
         bodyHtml = atob(payload.body.data.replace(/-/g, '+').replace(/_/g, '/'));
       }
-      
+
       // Step 5: Find and replace inline images (cid: references)
       console.log('🖼️ Checking for inline images in draft...');
       const cidMatches = bodyHtml.match(/cid:([^"'\s>]+)/g);
-      
+
       if (cidMatches && cidMatches.length > 0) {
         console.log(`🖼️ Found ${cidMatches.length} cid: references, fetching inline images...`);
-        
+
         // Find all inline attachments
         const findInlineAttachments = (parts: any[]): any[] => {
           let attachments: any[] = [];
@@ -390,36 +393,40 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           }
           return attachments;
         };
-        
+
         const inlineAttachments = payload?.parts ? findInlineAttachments(payload.parts) : [];
         console.log(`📎 Found ${inlineAttachments.length} inline attachments`);
-        
+
         // Fetch and replace each inline image
         for (const attachment of inlineAttachments) {
           try {
             // Check cache first
-            const cacheKey = `${messageId}:${attachment.attachmentId}`;
-            let dataUrl = imageCache.current.get(cacheKey);
-            
+            // Use global cache
+            let dataUrl = AttachmentCache.get(attachment.attachmentId); // Cache by attachmentId (globally unique enough usually, or we can use cacheKey if needed. Actually attachmentId is unique per message but Gmail reuse IDs? No, they are unique.)
+            // Note: The original code used a composite key. The new cache uses attachmentId. 
+            // RFC says Content-ID is unique within message. attachmentId is unique global handle?
+            // Actually reusing the logic from the plan: simple Map<string, string> by attachmentId.
+            // Let's stick to attachmentId as key for simplicity and global sharing.
+
             if (!dataUrl) {
               const response = await window.gapi.client.gmail.users.messages.attachments.get({
                 userId: 'me',
                 messageId: messageId,
                 id: attachment.attachmentId
               });
-              
+
               if (response.result?.data) {
                 const base64Data = response.result.data.replace(/-/g, '+').replace(/_/g, '/');
                 dataUrl = `data:${attachment.mimeType};base64,${base64Data}`;
-                
+
                 // Cache the data URL
-                imageCache.current.set(cacheKey, dataUrl);
+                AttachmentCache.set(attachment.attachmentId, dataUrl);
                 console.log(`✅ Fetched and cached inline image: ${attachment.cid}`);
               }
             } else {
               console.log(`💾 Using cached inline image: ${attachment.cid}`);
             }
-            
+
             if (dataUrl) {
               // Replace cid: reference with data URL
               const cidPattern = new RegExp(`cid:${attachment.cid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g');
@@ -431,7 +438,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           }
         }
       }
-      
+
       // Step 6: Set ALL state atomically
       updateDraftState({
         status: 'ready',
@@ -443,7 +450,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         isDirty: false,
         error: null
       });
-      
+
       // Step 7: Set CC/BCC state from draft
       if (draftCcRecipients.length > 0) {
         setCcRecipients(draftCcRecipients);
@@ -455,17 +462,17 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         setShowBcc(true);
         console.log('📧 Set BCC recipients from draft:', draftBccRecipients);
       }
-      
+
       console.log('✅ COMPLETE loadDraftCompletely - content length:', bodyHtml.length);
       return true;
-      
+
     } catch (error: any) {
       console.error('❌ FAILED loadDraftCompletely:', error);
-      
+
       // Handle 404 - draft no longer exists
       if (error.status === 404) {
         const isDraftEmail = email?.labelIds?.includes('DRAFT');
-        
+
         if (isDraftEmail && email) {
           sonnerToast.error('Draft no longer exists');
           clearSelection();
@@ -473,8 +480,8 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           onEmailDelete?.(email.id);
         }
       }
-      
-      updateDraftState({ 
+
+      updateDraftState({
         status: 'error',
         error: error.message || 'Failed to load draft'
       });
@@ -487,13 +494,13 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   useEffect(() => {
     console.log('🔄 Component effect triggered - emailId:', emailId, 'draftIdParam:', draftIdParam, 'showReplyComposer:', showReplyComposer);
     console.log('🔄 Previous emailId:', prevEmailIdRef.current);
-    
+
     // Detect actual email change (not initial mount, and not same email)
     const isEmailChange = prevEmailIdRef.current !== null && prevEmailIdRef.current !== emailId;
-    
+
     if (isEmailChange) {
       console.log('🔄 Email navigation detected - resetting reply state');
-      
+
       // 1. Clear pending debounce/failsafe timers first
       if (debounceSaveTimerRef.current) {
         clearTimeout(debounceSaveTimerRef.current);
@@ -505,7 +512,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         failsafeSaveTimerRef.current = null;
         console.log('🔄 Cleared failsafe timer');
       }
-      
+
       // 2. Save dirty draft for previous email before resetting (auto-save before discard)
       if (isDirtyRef.current && draftStateRef.current.showComposer) {
         console.log('📝 Saving dirty draft before navigation...');
@@ -514,24 +521,24 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         const currentForwardTo = forwardToRef.current;
         const currentMode = replyModeRef.current;
         const currentDraftId = draftStateRef.current.draftId;
-        
+
         // Only save if there's actual content
-        const hasContent = currentMode === 'forward' 
+        const hasContent = currentMode === 'forward'
           ? currentForwardTo.trim() || currentContent.trim()
           : currentContent.trim();
-        
+
         if (hasContent && email) {
           // Fire and forget async save for the previous email's draft
           (async () => {
             try {
               const ccString = ccRecipients.filter(e => e.trim()).join(',');
               const bccString = bccRecipients.filter(e => e.trim()).join(',');
-              
+
               let recipientEmail = currentForwardTo;
               if (currentMode === 'reply' || currentMode === 'replyAll') {
                 recipientEmail = email?.from?.email || '';
               }
-              
+
               const payload = {
                 to: recipientEmail,
                 body: currentContent,
@@ -541,12 +548,12 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                 cc: ccString || undefined,
                 bcc: bccString || undefined
               };
-              
+
               if (!currentDraftId) {
                 const response = await createReplyDraft(payload);
                 console.log('📝 Created draft on navigation:', response.id);
-                window.dispatchEvent(new CustomEvent('draft-created', { 
-                  detail: { draftId: response.id } 
+                window.dispatchEvent(new CustomEvent('draft-created', {
+                  detail: { draftId: response.id }
                 }));
               } else {
                 await updateReplyDraft(currentDraftId, payload, draftStateRef.current.version);
@@ -558,7 +565,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           })();
         }
       }
-      
+
       // 3. Reset all reply composer state for fresh start
       updateDraftState({
         status: 'idle',
@@ -575,7 +582,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         lastHash: '',
         error: null
       });
-      
+
       // Reset CC/BCC state
       setCcRecipients([]);
       setBccRecipients([]);
@@ -583,20 +590,20 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       setBccInput('');
       setShowCc(false);
       setShowBcc(false);
-      
+
       // Reset other view state
       setIsReplyExpanded(false);
       setForwardingMessage(null);
-      
+
       console.log('✅ Reply state reset complete');
     }
-    
+
     // Update prev email ref for next comparison
     prevEmailIdRef.current = emailId;
-    
+
     // Reset metadata dropdown when switching emails
     setShowMetadata(false);
-    
+
     if (emailId) {
       fetchEmailAndThread();
     }
@@ -611,7 +618,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       // If draftIdParam exists, fetch the draft first (coming from Drafts folder)
       let fetchedEmail: Email | undefined;
       const actualEmailId = draftIdParam || emailId;
-      
+
       try {
         fetchedEmail = await optimizedEmailService.fetchEmailThread(actualEmailId).then(thread => thread[0]);
       } catch {
@@ -639,28 +646,28 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           const thread = await optimizedEmailService.fetchEmailThread(fetchedEmail.threadId);
           if (thread.length > 0) {
             // Sort by date ascending (oldest first)
-            const sorted = thread.sort((a, b) => 
+            const sorted = thread.sort((a, b) =>
               new Date(a.date).getTime() - new Date(b.date).getTime()
             );
-            
+
             // If we loaded a draft initially but it's not in the thread, add it
             if (isDraft && !sorted.find(msg => msg.id === fetchedEmail.id)) {
               console.log('📝 Adding draft to thread (not returned by Gmail API)');
               sorted.push(fetchedEmail);
               sorted.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
             }
-            
+
             console.log('📧 Thread messages count:', sorted.length);
             console.log('📧 Is draft?', isDraft);
-            
+
             // Check for drafts in the thread
             // Priority: URL draft param > any draft in thread
-            let draftMessage = draftIdParam 
+            let draftMessage = draftIdParam
               ? sorted.find(msg => msg.id === draftIdParam)
               : sorted.find(msg => msg.labelIds?.includes('DRAFT'));
-            
+
             console.log('📧 Draft message found?', !!draftMessage, draftMessage?.id);
-            
+
             // Fetch draft separately if not in thread
             if (draftIdParam && !draftMessage) {
               const separateDraft = await getEmailById(draftIdParam);
@@ -668,7 +675,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                 draftMessage = separateDraft;
               }
             }
-            
+
             if (draftMessage) {
               console.log('📧 Processing draft message in thread');
               // Filter out draft from thread display
@@ -680,10 +687,10 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
               } else {
                 setThreadMessages(nonDraftMessages);
               }
-              
+
               // 🎯 Use consolidated load function
               await loadDraftCompletely(draftMessage.id);
-              
+
               // Expand all non-draft messages
               if (nonDraftMessages.length > 0) {
                 setExpandedMessages(new Set(nonDraftMessages.map(m => m.id)));
@@ -695,7 +702,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
               // Auto-expand all messages
               setExpandedMessages(new Set(sorted.map(m => m.id)));
             }
-            
+
             setLoadedImages(new Set());
           } else {
             console.log('⚠️ Empty thread response from API');
@@ -704,23 +711,23 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           }
         } catch {
           const thread = await getThreadEmails(fetchedEmail.threadId);
-          const sorted = (thread || [fetchedEmail]).sort((a, b) => 
+          const sorted = (thread || [fetchedEmail]).sort((a, b) =>
             new Date(a.date).getTime() - new Date(b.date).getTime()
           );
-          
+
           // If we loaded a draft initially but it's not in the thread, add it
           if (isDraft && !sorted.find(msg => msg.id === fetchedEmail.id)) {
             console.log('📝 Adding draft to thread (not returned by Gmail API)');
             sorted.push(fetchedEmail);
             sorted.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
           }
-          
+
           // Check for drafts in the thread
           // Priority: URL draft param > any draft in thread
-          let draftMessage = draftIdParam 
+          let draftMessage = draftIdParam
             ? sorted.find(msg => msg.id === draftIdParam)
             : sorted.find(msg => msg.labelIds?.includes('DRAFT'));
-          
+
           // Fetch draft separately if not in thread
           if (draftIdParam && !draftMessage) {
             const separateDraft = await getEmailById(draftIdParam);
@@ -728,7 +735,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
               draftMessage = separateDraft;
             }
           }
-          
+
           if (draftMessage) {
             // Filter out draft from thread display
             const nonDraftMessages = sorted.filter(msg => !msg.labelIds?.includes('DRAFT'));
@@ -738,10 +745,10 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
             } else {
               setThreadMessages(nonDraftMessages);
             }
-            
+
             // 🎯 Use consolidated load function
             await loadDraftCompletely(draftMessage.id);
-            
+
             // Expand all non-draft messages
             if (nonDraftMessages.length > 0) {
               setExpandedMessages(new Set(nonDraftMessages.map(m => m.id)));
@@ -750,7 +757,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
             setThreadMessages(sorted);
             setExpandedMessages(new Set(sorted.map(m => m.id)));
           }
-          
+
           setLoadedImages(new Set());
         }
       } else {
@@ -773,7 +780,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const handleCcInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setCcInput(value);
-    
+
     // Trigger contacts load if not yet loaded
     setShouldLoadContacts(true);
 
@@ -830,7 +837,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const handleBccInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setBccInput(value);
-    
+
     setShouldLoadContacts(true);
 
     const contacts = searchContacts(value, 5);
@@ -889,20 +896,20 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       // Prepare CC/BCC strings
       const userCc = ccRecipients.filter(e => e.trim()).join(',');
       const bccString = bccRecipients.filter(e => e.trim()).join(',');
-      
+
       if (replyMode === 'reply' || replyMode === 'replyAll') {
         // 🔧 Get correct reply recipients (never reply to yourself)
         const { to: autoTo, cc: autoCc } = getReplyRecipients(replyToMessage, replyMode);
-        
+
         if (!autoTo) {
           sonnerToast.error('Cannot send: No valid recipients');
           setSending(false);
           return;
         }
-        
+
         // Merge auto-detected CC with user-added CC
         const finalCc = [autoCc, userCc].filter(Boolean).join(',');
-        
+
         if (replyMode === 'reply') {
           // Use replyToMessage instead of email
           await sendReply(replyToMessage || email, replyContent, false, finalCc, bccString);
@@ -930,10 +937,10 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         try {
           await deleteReplyDraft(draftId);
           console.log('🗑️ Draft deleted after send');
-          
+
           // Emit event to decrement draft counter
-          window.dispatchEvent(new CustomEvent('email-deleted', { 
-            detail: { emailId: draftId } 
+          window.dispatchEvent(new CustomEvent('email-deleted', {
+            detail: { emailId: draftId }
           }));
         } catch (err) {
           console.error('Failed to delete draft after send:', err);
@@ -953,18 +960,18 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       setIsDirty(false);
       isDirtyRef.current = false;
       setDraftVersion(0);
-      
+
       // Refresh thread to show sent message
       await fetchEmailAndThread();
-      
+
       // Update parent to remove "Draft" badge if this was a draft in thread
       if (email && onEmailUpdate) {
         onEmailUpdate({ ...email, hasDraftInThread: false } as Email);
       }
     } catch (err) {
       console.error('Error sending reply:', err);
-      toast({ 
-        title: 'Failed to send email', 
+      toast({
+        title: 'Failed to send email',
         description: 'Please try again',
         variant: 'destructive'
       });
@@ -976,9 +983,9 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const handleTrash = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (!email) return;
-    
+
     console.log(`🗑️ Moving email ${email.id} to trash`);
-    
+
     // 📊 Update counters (decrement source labels if was unread)
     updateCountersForTrash({
       labelIds: email.labelIds || ['INBOX'],
@@ -986,23 +993,23 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       threadId: email.threadId,
       messageId: email.id,
     });
-    
+
     // ⚡ INSTANT: Navigate away immediately (user expects to leave this view)
     clearSelection();
     navigate(getBackToListUrl());
-    
+
     // ⚡ INSTANT: Notify parent immediately to remove from list
     onEmailDelete?.(email.id);
-    
+
     // Show toast
     toast({ title: 'Moved to trash' });
-    
+
     // 🔄 BACKGROUND: Update on server
     try {
       await markEmailAsTrash(email.id);
     } catch (err) {
       console.error('Failed to move to trash:', err);
-      toast({ 
+      toast({
         title: 'Failed to move to trash',
         variant: 'destructive'
       });
@@ -1012,9 +1019,9 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const handleMarkAsSpam = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (!email) return;
-    
+
     console.log(`🚫 Marking email ${email.id} as spam`);
-    
+
     // 📊 Update counters (decrement source labels if was unread)
     updateCountersForSpam({
       labelIds: email.labelIds || ['INBOX'],
@@ -1022,23 +1029,23 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       threadId: email.threadId,
       messageId: email.id,
     });
-    
+
     // ⚡ INSTANT: Navigate away immediately (user expects to leave this view)
     clearSelection();
     navigate(getBackToListUrl());
-    
+
     // ⚡ INSTANT: Notify parent immediately to remove from list
     onEmailDelete?.(email.id);
-    
+
     // Show toast
     toast({ title: 'Marked as spam' });
-    
+
     // 🔄 BACKGROUND: Update on server
     try {
       await applyLabelsToEmail(email.id, ['SPAM'], ['INBOX']);
     } catch (err) {
       console.error('Failed to mark as spam:', err);
-      toast({ 
+      toast({
         title: 'Failed to mark as spam',
         variant: 'destructive'
       });
@@ -1047,10 +1054,10 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
   const handleMoveToFolder = async (labelId: string, labelName: string) => {
     if (!email) return;
-    
+
     const isMovingToInbox = labelId === 'INBOX';
     console.log(`📁 Moving email ${email.id} to ${isMovingToInbox ? 'Inbox' : `folder: ${labelName}`}`);
-    
+
     // 📊 Update counters (decrement source, increment destination if was unread)
     updateCountersForMove({
       labelIds: email.labelIds || ['INBOX'],
@@ -1059,17 +1066,17 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       threadId: email.threadId,
       messageId: email.id,
     });
-    
+
     try {
       // Get current user labels to remove (exclude system labels)
       const systemLabels = ['INBOX', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'STARRED', 'IMPORTANT', 'UNREAD', 'CATEGORY_PERSONAL', 'CATEGORY_SOCIAL', 'CATEGORY_PROMOTIONS', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS'];
-      const currentUserLabels = (email.labelIds || []).filter(id => 
+      const currentUserLabels = (email.labelIds || []).filter(id =>
         !systemLabels.includes(id) && !id.startsWith('CATEGORY_')
       );
-      
+
       let labelsToAdd: string[];
       let labelsToRemove: string[];
-      
+
       if (isMovingToInbox) {
         // Moving to Inbox: add INBOX, remove all user labels
         labelsToAdd = ['INBOX'];
@@ -1081,25 +1088,25 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         labelsToRemove = [...new Set([...currentUserLabels, 'INBOX'])];
         console.log(`📁 Adding label: ${labelId}, Removing labels:`, labelsToRemove);
       }
-      
+
       // Apply the new label and remove old labels
       await applyLabelsToEmail(email.id, labelsToAdd, labelsToRemove);
-      
+
       // Navigate away
       clearSelection();
       navigate(getBackToListUrl());
-      
+
       // Trigger inbox refetch to update the list (don't use onEmailDelete - that deletes the email!)
       window.dispatchEvent(new CustomEvent('inbox-refetch-required'));
-      
-      toast({ 
-        title: isMovingToInbox 
-          ? 'Moved to Inbox' 
-          : `Moved to ${labelName}` 
+
+      toast({
+        title: isMovingToInbox
+          ? 'Moved to Inbox'
+          : `Moved to ${labelName}`
       });
     } catch (err) {
       console.error('Failed to move email:', err);
-      toast({ 
+      toast({
         title: 'Failed to move email',
         variant: 'destructive'
       });
@@ -1109,12 +1116,12 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const handleMarkAsUnread = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (!email) return;
-    
+
     // Toggle between read and unread
     const newReadStatus = !email.isRead;
-    
+
     console.log(`🔄 Toggling read status: ${email.isRead} → ${newReadStatus}`);
-    
+
     // 📊 Update counters immediately
     if (newReadStatus) {
       // Marking as read → decrement
@@ -1132,26 +1139,26 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         messageId: email.id,
       });
     }
-    
+
     // ⚡ INSTANT: Update local state immediately (optimistic update)
     const updatedEmail = {
       ...email,
       isRead: newReadStatus,
-      labelIds: newReadStatus 
-        ? email.labelIds?.filter(id => id !== 'UNREAD') 
+      labelIds: newReadStatus
+        ? email.labelIds?.filter(id => id !== 'UNREAD')
         : [...(email.labelIds || []), 'UNREAD']
     };
-    
+
     setEmail(updatedEmail);
-    
+
     // ⚡ INSTANT: Notify parent component to update email list immediately
     if (onEmailUpdate) {
       onEmailUpdate(updatedEmail);
     }
-    
+
     // Show appropriate toast
     toast({ title: newReadStatus ? 'Marked as read' : 'Marked as unread' });
-    
+
     // 🔄 BACKGROUND: Update on server
     try {
       if (newReadStatus) {
@@ -1167,7 +1174,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       if (onEmailUpdate) {
         onEmailUpdate(email);
       }
-      toast({ 
+      toast({
         title: 'Failed to update read status',
         variant: 'destructive'
       });
@@ -1177,33 +1184,33 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const handleToggleImportant = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (!email) return;
-    
+
     const isImportant = email.labelIds?.includes('IMPORTANT');
     const newImportantStatus = !isImportant;
-    
+
     console.log(`🚩 Toggling important: ${isImportant} → ${newImportantStatus}`);
-    
+
     // ⚡ INSTANT: Update local state immediately
-    const updatedLabelIds = newImportantStatus 
+    const updatedLabelIds = newImportantStatus
       ? [...(email.labelIds || []), 'IMPORTANT']
       : email.labelIds?.filter(id => id !== 'IMPORTANT') || [];
-    
+
     const updatedEmail = {
       ...email,
       isImportant: newImportantStatus,
       labelIds: updatedLabelIds
     };
-    
+
     setEmail(updatedEmail);
-    
+
     // ⚡ INSTANT: Notify parent component
     if (onEmailUpdate) {
       onEmailUpdate(updatedEmail);
     }
-    
+
     // Show toast
     toast({ title: newImportantStatus ? 'Marked as important' : 'Removed from important' });
-    
+
     // 🔄 BACKGROUND: Update on server
     try {
       if (newImportantStatus) {
@@ -1219,7 +1226,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       if (onEmailUpdate) {
         onEmailUpdate(email);
       }
-      toast({ 
+      toast({
         title: 'Failed to update important status',
         variant: 'destructive'
       });
@@ -1229,33 +1236,33 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const handleToggleStarred = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (!email) return;
-    
+
     const isStarred = email.labelIds?.includes('STARRED');
     const newStarredStatus = !isStarred;
-    
+
     console.log(`⭐ Toggling starred: ${isStarred} → ${newStarredStatus}`);
-    
+
     // ⚡ INSTANT: Update local state immediately
-    const updatedLabelIds = newStarredStatus 
+    const updatedLabelIds = newStarredStatus
       ? [...(email.labelIds || []), 'STARRED']
       : email.labelIds?.filter(id => id !== 'STARRED') || [];
-    
+
     const updatedEmail = {
       ...email,
       isStarred: newStarredStatus,
       labelIds: updatedLabelIds
     };
-    
+
     setEmail(updatedEmail);
-    
+
     // ⚡ INSTANT: Notify parent component
     if (onEmailUpdate) {
       onEmailUpdate(updatedEmail);
     }
-    
+
     // Show toast
     toast({ title: newStarredStatus ? 'Added star' : 'Removed star' });
-    
+
     // 🔄 BACKGROUND: Update on server
     try {
       if (newStarredStatus) {
@@ -1271,7 +1278,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       if (onEmailUpdate) {
         onEmailUpdate(email);
       }
-      toast({ 
+      toast({
         title: 'Failed to update starred status',
         variant: 'destructive'
       });
@@ -1300,7 +1307,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       sonnerToast.error('Please select a folder');
       return;
     }
-    
+
     // 🔧 SELF-FILTER BUG FIX (Dec 2025): Prevent creating filter for own email
     const currentUserEmail = cleanEmailAddress(currentProfile?.userEmail || '').toLowerCase();
     if (sender.toLowerCase() === currentUserEmail) {
@@ -1402,18 +1409,18 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as Node;
-      
+
       // Check if click is inside any of the menus or submenus
       const isInsideDropdown = dropdownContentRef.current?.contains(target);
       const isInsideFilterSubmenu = filterSubmenuRef.current?.contains(target);
       const isInsideFilterButton = filterButtonRef.current?.contains(target);
-      
+
       // Only close if click is outside all menus
       if (!isInsideDropdown && !isInsideFilterSubmenu && !isInsideFilterButton) {
         setShowMoreMenu(false);
         setShowFilterSubmenu(false);
       }
-      
+
       if (filterModalRef.current && !filterModalRef.current.contains(target)) {
         handleCloseCreateFilterModal();
       }
@@ -1437,23 +1444,23 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     .filter(label => {
       const name = (label.name || '').toLowerCase();
       return name !== 'sent' &&
-             name !== 'drafts' &&
-             name !== 'draft' &&
-             name !== 'spam' &&
-             name !== 'trash' &&
-             name !== 'important' &&
-             name !== 'starred' &&
-             name !== 'unread' &&
-             name !== 'yellow_star' &&
-             name !== 'deleted messages' &&
-             name !== 'chat' &&
-             name !== 'blocked' &&
-             name !== '[imap]' &&
-             name !== 'junk e-mail' &&
-             name !== 'notes' &&
-             !name.startsWith('category_') &&
-             !name.startsWith('label_') &&
-             !name.startsWith('[imap');
+        name !== 'drafts' &&
+        name !== 'draft' &&
+        name !== 'spam' &&
+        name !== 'trash' &&
+        name !== 'important' &&
+        name !== 'starred' &&
+        name !== 'unread' &&
+        name !== 'yellow_star' &&
+        name !== 'deleted messages' &&
+        name !== 'chat' &&
+        name !== 'blocked' &&
+        name !== '[imap]' &&
+        name !== 'junk e-mail' &&
+        name !== 'notes' &&
+        !name.startsWith('category_') &&
+        !name.startsWith('label_') &&
+        !name.startsWith('[imap');
     })
     .filter(label => (label.name || '').toLowerCase() !== 'inbox')
     .map(label => {
@@ -1485,8 +1492,8 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     // Only initialize when composer opens for reply/replyAll (not forward, not loading draft)
     if (showReplyComposer && (replyMode === 'reply' || replyMode === 'replyAll') && !draftId) {
       // Initialize with signature if available, otherwise empty
-      const signatureContent = currentProfile?.signature 
-        ? '<br><br>' + currentProfile.signature 
+      const signatureContent = currentProfile?.signature
+        ? '<br><br>' + currentProfile.signature
         : '';
       setReplyContent(signatureContent);
       console.log('✍️ Reply composer initialized with signature');
@@ -1497,22 +1504,22 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   useEffect(() => {
     if (replyMode === 'forward' && forwardingMessage && showReplyComposer) {
       // Add signature at top (before forwarded content)
-      const signatureContent = currentProfile?.signature 
-        ? '<br><br>' + currentProfile.signature 
+      const signatureContent = currentProfile?.signature
+        ? '<br><br>' + currentProfile.signature
         : '';
-      
+
       let forwardedContent = signatureContent;
-      
+
       if (forwardType === 'single') {
         // Format single message forward
         const { time } = formatEmailTime(forwardingMessage.date);
-        const date = new Date(forwardingMessage.date).toLocaleDateString('en-US', { 
-          weekday: 'short', 
-          year: 'numeric', 
-          month: 'short', 
-          day: 'numeric' 
+        const date = new Date(forwardingMessage.date).toLocaleDateString('en-US', {
+          weekday: 'short',
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric'
         });
-        
+
         forwardedContent += `<br><br>---------- Forwarded message ---------<br>` +
           `From: &lt;${forwardingMessage.from.email}&gt;<br>` +
           `Date: ${date} at ${time}<br>` +
@@ -1524,13 +1531,13 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         forwardedContent += '<br><br>';
         threadMessages.forEach((msg, index) => {
           const { time } = formatEmailTime(msg.date);
-          const date = new Date(msg.date).toLocaleDateString('en-US', { 
-            weekday: 'short', 
-            year: 'numeric', 
-            month: 'short', 
-            day: 'numeric' 
+          const date = new Date(msg.date).toLocaleDateString('en-US', {
+            weekday: 'short',
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric'
           });
-          
+
           if (index > 0) forwardedContent += '<br><br>';
           forwardedContent += `---------- Forwarded message ---------<br>` +
             `From: &lt;${msg.from.email}&gt;<br>` +
@@ -1540,7 +1547,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
             `${msg.body || ''}`;
         });
       }
-      
+
       setReplyContent(forwardedContent);
     }
     // 🎯 REMOVED: Auto-clear logic that caused race conditions
@@ -1573,16 +1580,16 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     console.log('  - replyContent:', replyContent.substring(0, 50));
     console.log('  - forwardTo:', forwardTo);
     console.log('  - replyMode:', replyMode);
-    
+
     if (!isDirtyRef.current) {
       console.log('❌ Not dirty (ref check), skipping save');
       return;
     }
-    
+
     // Check if empty - delete if exists
     const emptyCheck = isEmpty();
     console.log('🔍 isEmpty check:', emptyCheck);
-    
+
     if (emptyCheck) {
       console.log('❌ Content is empty, skipping save');
       if (draftId) {
@@ -1607,7 +1614,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     console.log('  - Current hash:', currentHash);
     console.log('  - Last hash:', lastHash);
     console.log('  - Are equal?:', currentHash === lastHash);
-    
+
     if (currentHash === lastHash) {
       console.log('❌ Hash unchanged, skipping save');
       return;
@@ -1617,7 +1624,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     const now = Date.now();
     const timeSinceLastSave = now - lastSaveTimeRef.current;
     console.log('🔍 Time since last save:', timeSinceLastSave, 'ms');
-    
+
     if (timeSinceLastSave < 2000) {
       console.log('❌ Rate limited, skipping save');
       return;
@@ -1632,10 +1639,10 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       const currentReplyContent = replyContentRef.current;
       const currentForwardTo = forwardToRef.current;
       const currentReplyMode = replyModeRef.current;
-      
+
       // Determine recipient based on reply mode
       let recipientEmail = currentForwardTo; // For forward mode
-      
+
       if (currentReplyMode === 'reply' || currentReplyMode === 'replyAll') {
         // For reply modes, use the original sender's email
         recipientEmail = email?.from?.email || '';
@@ -1664,10 +1671,10 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         console.log('📝 Created draft:', response);
         setDraftId(response.id);
         setDraftVersion(response.version);
-        
+
         // Emit event to increment draft counter
-        window.dispatchEvent(new CustomEvent('draft-created', { 
-          detail: { draftId: response.id } 
+        window.dispatchEvent(new CustomEvent('draft-created', {
+          detail: { draftId: response.id }
         }));
         console.log('📤 Emitted draft-created event for:', response.id);
       } else {
@@ -1684,13 +1691,13 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       console.log('✅ Draft saved:', response.id);
     } catch (err: any) {
       console.error('Failed to save draft:', err);
-      
+
       // Handle version conflict (412)
       if (err.status === 412) {
         console.log('⚠️ Version conflict, will retry');
         // TODO: Implement conflict resolution
       }
-      
+
       // Handle draft not found (404) - recreate
       if (err.status === 404) {
         setDraftId(null);
@@ -1704,7 +1711,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
   const scheduleDebouncedSave = useCallback(() => {
     console.log('⏰ scheduleDebouncedSave called');
-    
+
     // Clear existing timers
     if (debounceSaveTimerRef.current) {
       clearTimeout(debounceSaveTimerRef.current);
@@ -1764,7 +1771,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         clearTimeout(failsafeSaveTimerRef.current);
         failsafeSaveTimerRef.current = null;
       }
-      
+
       // Final save when closing if dirty
       if (isDirty) {
         saveDraft();
@@ -1772,13 +1779,13 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     } else {
       // Scroll to reply composer when it opens
       setTimeout(() => {
-        replyComposerRef.current?.scrollIntoView({ 
-          behavior: 'smooth', 
-          block: 'start' 
+        replyComposerRef.current?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start'
         });
       }, 100);
     }
-    
+
     return () => {
       if (debounceSaveTimerRef.current) {
         clearTimeout(debounceSaveTimerRef.current);
@@ -1812,7 +1819,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           messageId
         );
 
-        setThreadMessages(prev => 
+        setThreadMessages(prev =>
           prev.map(m => m.id === messageId ? { ...m, body: updatedBody } : m)
         );
 
@@ -1833,7 +1840,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
   const toggleMessageExpansion = async (messageId: string) => {
     const wasExpanded = expandedMessages.has(messageId);
-    
+
     setExpandedMessages(prev => {
       const next = new Set(prev);
       if (next.has(messageId)) {
@@ -1843,7 +1850,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       }
       return next;
     });
-    
+
     if (!wasExpanded) {
       loadInlineImagesForMessage(messageId);
     }
@@ -1877,23 +1884,23 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const handleDownloadAttachment = async (messageId: string, attachmentId: string, filename: string) => {
     try {
       console.log(`⬇️ Downloading attachment: ${filename}`);
-      
+
       const response = await window.gapi.client.gmail.users.messages.attachments.get({
         userId: 'me',
         messageId: messageId,
         id: attachmentId
       });
-      
+
       if (response.result?.data) {
         // Convert base64url to base64
         const base64Data = response.result.data
           .replace(/-/g, '+')
           .replace(/_/g, '/');
-        
+
         // Add padding
         const padding = '='.repeat((4 - base64Data.length % 4) % 4);
         const paddedBase64 = base64Data + padding;
-        
+
         // Convert to blob and download
         const byteCharacters = atob(paddedBase64);
         const byteNumbers = new Array(byteCharacters.length);
@@ -1902,7 +1909,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         }
         const byteArray = new Uint8Array(byteNumbers);
         const blob = new Blob([byteArray]);
-        
+
         // Create download link
         const url = window.URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -1912,12 +1919,12 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         link.click();
         document.body.removeChild(link);
         window.URL.revokeObjectURL(url);
-        
+
         toast({ title: `Downloaded ${filename}` });
       }
     } catch (error) {
       console.error('Failed to download attachment:', error);
-      toast({ 
+      toast({
         title: 'Download failed',
         description: 'Please try again',
         variant: 'destructive'
@@ -1928,26 +1935,26 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const handlePreviewAttachment = async (messageId: string, attachmentId: string, filename: string, mimeType: string) => {
     try {
       console.log(`👁️ Previewing attachment: ${filename}`);
-      
+
       const response = await window.gapi.client.gmail.users.messages.attachments.get({
         userId: 'me',
         messageId: messageId,
         id: attachmentId
       });
-      
+
       if (response.result?.data) {
         // Convert base64url to base64
         const base64Data = response.result.data
           .replace(/-/g, '+')
           .replace(/_/g, '/');
-        
+
         // Add padding
         const padding = '='.repeat((4 - base64Data.length % 4) % 4);
         const paddedBase64 = base64Data + padding;
-        
+
         // Create data URL
         const dataUrl = `data:${mimeType};base64,${paddedBase64}`;
-        
+
         setPreviewAttachment({
           url: dataUrl,
           name: filename,
@@ -1956,7 +1963,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       }
     } catch (error) {
       console.error('Failed to preview attachment:', error);
-      toast({ 
+      toast({
         title: 'Preview failed',
         description: 'Please try again',
         variant: 'destructive'
@@ -1966,7 +1973,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
   const renderMessageBody = (message: Email) => {
     const htmlBody = message.body || '';
-    
+
     if (!htmlBody) {
       return <div className="text-gray-500 text-sm italic">No content</div>;
     }
@@ -1976,13 +1983,13 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
     // Strip quoted content (Gmail/Outlook reply history)
     const { cleanBody, quotedContent } = stripQuotedText(htmlBody);
-    
+
     // Store quoted content in map for later toggle
     if (quotedContent && !quotedContentMap.has(message.id)) {
       setQuotedContentMap(prev => new Map(prev).set(message.id, quotedContent));
       console.log('📝 Stored quoted content for message:', message.id, 'Length:', quotedContent.length);
     }
-    
+
     console.log('✂️ Stripped quoted content. Original:', htmlBody.length, 'Clean:', cleanBody.length, 'Quoted:', quotedContent?.length || 0);
 
     // Sanitize with email-safe config - preserve formatting and images
@@ -2114,13 +2121,13 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   // 🔧 Helper: Find the correct message to reply to (never reply to yourself)
   const getReplyToMessage = (): Email | null => {
     if (!currentProfile?.userEmail) return latestMessage;
-    
+
     const currentUserEmail = normalizeEmail(currentProfile.userEmail);
     const latestFromEmail = normalizeEmail(latestMessage.from.email);
-    
+
     // Check if latest message is from current user
     const isLatestFromMe = latestFromEmail === currentUserEmail;
-    
+
     if (isLatestFromMe && threadMessages.length > 1) {
       // Find the most recent message NOT from current user
       for (let i = threadMessages.length - 2; i >= 0; i--) {
@@ -2135,16 +2142,16 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       console.warn('⚠️ All messages in thread are from current user');
       return null;
     }
-    
+
     return latestMessage;
   };
 
   // 🔧 Helper: Get reply recipients with self-exclusion and deduplication
   const getReplyRecipients = (message: Email | null, mode: 'reply' | 'replyAll'): { to: string; cc: string } => {
     if (!message || !currentProfile?.userEmail) return { to: '', cc: '' };
-    
+
     const currentUserEmail = normalizeEmail(currentProfile.userEmail);
-    
+
     if (mode === 'reply') {
       // Reply: Only to sender
       const senderEmail = normalizeEmail(message.from.email);
@@ -2154,51 +2161,51 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       }
       return { to: message.from.email, cc: '' };
     }
-    
+
     // Reply All: Sender + all To + all CC, excluding current user
     const allRecipients: Array<{ email: string; name: string }> = [];
-    
+
     // Add sender
     allRecipients.push(message.from);
-    
+
     // Add all To recipients
     if (message.to && message.to.length > 0) {
       allRecipients.push(...message.to);
     }
-    
+
     // Add all CC recipients
     if (message.cc && message.cc.length > 0) {
       allRecipients.push(...message.cc);
     }
-    
+
     // Filter out current user and deduplicate
     const seen = new Set<string>();
     const filtered: Array<{ email: string; name: string }> = [];
-    
+
     for (const recipient of allRecipients) {
       const normalizedEmail = normalizeEmail(recipient.email);
-      
+
       // Skip current user
       if (normalizedEmail === currentUserEmail) continue;
-      
+
       // Skip duplicates
       if (seen.has(normalizedEmail)) continue;
-      
+
       seen.add(normalizedEmail);
       filtered.push(recipient);
     }
-    
+
     if (filtered.length === 0) {
       console.warn('⚠️ No recipients after filtering current user');
       return { to: '', cc: '' };
     }
-    
+
     // Gmail style: Original sender is primary recipient, everyone else goes to CC
     const primaryRecipient = filtered[0].email;
     const ccRecipients = filtered.slice(1).map(r => r.email).join(',');
-    
+
     console.log('📧 Reply All recipients:', { to: primaryRecipient, cc: ccRecipients });
-    
+
     return { to: primaryRecipient, cc: ccRecipients };
   };
 
@@ -2231,9 +2238,9 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           >
             <X size={20} className="text-gray-700" />
           </button>
-          
+
           <div className="w-px h-6 bg-gray-300 mx-2" />
-          
+
           <button
             onClick={handleTrash}
             className="p-2 hover:bg-gray-100 rounded-full transition-colors"
@@ -2266,16 +2273,16 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           >
             <FolderInput size={18} className="text-gray-700" />
           </button>
-          
+
           <div className="w-px h-6 bg-gray-300 mx-2" />
-          
+
           <button
             onClick={handleToggleStarred}
             className="p-2 hover:bg-gray-100 rounded-full transition-colors"
             title={email?.labelIds?.includes('STARRED') ? 'Remove star' : 'Add star'}
           >
-            <Star 
-              size={18} 
+            <Star
+              size={18}
               className={email?.labelIds?.includes('STARRED') ? 'text-yellow-500 fill-yellow-500' : 'text-gray-700'}
             />
           </button>
@@ -2284,8 +2291,8 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
             className="p-2 hover:bg-gray-100 rounded-full transition-colors"
             title={email?.labelIds?.includes('IMPORTANT') ? 'Remove from important' : 'Mark as important'}
           >
-            <Flag 
-              size={18} 
+            <Flag
+              size={18}
               className={email?.labelIds?.includes('IMPORTANT') ? 'text-orange-500 fill-orange-500' : 'text-gray-700'}
             />
           </button>
@@ -2293,8 +2300,8 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           <div className="w-px h-6 bg-gray-300 mx-2" />
 
           {/* More Options Dropdown - Now matching EmailListItem structure */}
-          <DropdownMenu 
-            open={showMoreMenu || showFilterSubmenu} 
+          <DropdownMenu
+            open={showMoreMenu || showFilterSubmenu}
             onOpenChange={(open) => {
               // Don't close if submenus are open
               if (!open && !showFilterSubmenu) {
@@ -2313,9 +2320,9 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                 <MoreVertical size={18} className="text-gray-700" />
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent 
+            <DropdownMenuContent
               ref={dropdownContentRef}
-              align="start" 
+              align="start"
               className="w-56 p-0"
               onPointerDownOutside={(e) => {
                 // Prevent closing when clicking on submenus
@@ -2343,7 +2350,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
               }}
             >
               {/* Filter Menu with Submenu */}
-              <div 
+              <div
                 className="relative"
                 onMouseEnter={handleShowFilterSubmenu}
                 onMouseLeave={handleHideFilterSubmenu}
@@ -2421,7 +2428,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         <h1 className="text-base font-normal text-gray-900 mb-2 break-words overflow-wrap-anywhere whitespace-pre-wrap" style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
           {latestMessage.subject || '(no subject)'}
         </h1>
-        
+
         <div className="flex items-start justify-between mb-1">
           <div className="flex items-start gap-2 flex-1">
             {/* Sender Avatar */}
@@ -2436,7 +2443,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                 <span className="text-xs text-gray-500">{cleanEmailAddress(latestMessage.from.email)}</span>
               </div>
               <div className="relative">
-                <button 
+                <button
                   onClick={(e) => {
                     e.stopPropagation();
                     setShowMetadata(!showMetadata);
@@ -2502,10 +2509,10 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
             <div className="text-gray-500">({relative})</div>
           </div>
         </div>
-        
+
         {/* Metadata Dropdown - Rendered outside of overflow containers */}
         {showMetadata && (
-          <div 
+          <div
             className="mx-4 mb-2 bg-white border border-gray-200 rounded-lg shadow-lg p-3"
             onClick={(e) => e.stopPropagation()}
           >
@@ -2624,10 +2631,10 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                     if (replyMode === 'forward') {
                       return forwardTo || 'Enter recipient...';
                     }
-                    
+
                     // Get filtered recipients
                     const { to } = getReplyRecipients(replyToMessage, replyMode);
-                    
+
                     // 🐛 Debug logging
                     console.log('📧 Reply To field:', {
                       replyMode,
@@ -2635,7 +2642,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                       replyToMessage: replyToMessage?.from,
                       latestMessage: latestMessage?.from
                     });
-                    
+
                     return to || 'No valid recipients';
                   })()}
                 </span>
@@ -2653,7 +2660,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                   </div>
                 ) : null;
               })()}
-              
+
               {/* CC/BCC Toggle buttons */}
               {(!showCc || !showBcc) && (
                 <div className="flex items-center gap-2 pt-1 border-t border-gray-200 mt-1">
@@ -2698,7 +2705,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                         </button>
                       </div>
                     ))}
-                    
+
                     {/* CC Input field */}
                     <input
                       type="text"
@@ -2706,7 +2713,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                       onChange={(e) => {
                         const value = e.target.value;
                         handleCcInputChange(e);
-                        
+
                         // Auto-convert to badge when space or comma is detected
                         if (value.endsWith(' ') || value.endsWith(',')) {
                           const email = value.slice(0, -1).trim();
@@ -2745,7 +2752,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                     <X size={14} />
                   </button>
                 </div>
-                
+
                 {/* CC Contact dropdown */}
                 {showCcDropdown && (
                   <div className="absolute top-full left-0 right-0 z-[998] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto mt-1">
@@ -2804,7 +2811,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                         </button>
                       </div>
                     ))}
-                    
+
                     {/* BCC Input field */}
                     <input
                       type="text"
@@ -2812,7 +2819,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                       onChange={(e) => {
                         const value = e.target.value;
                         handleBccInputChange(e);
-                        
+
                         // Auto-convert to badge when space or comma is detected
                         if (value.endsWith(' ') || value.endsWith(',')) {
                           const email = value.slice(0, -1).trim();
@@ -2851,7 +2858,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                     <X size={14} />
                   </button>
                 </div>
-                
+
                 {/* BCC Contact dropdown */}
                 {showBccDropdown && (
                   <div className="absolute top-full left-0 right-0 z-[998] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto mt-1">
@@ -2928,7 +2935,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
               >
                 {sending ? 'Sending...' : 'Send'}
               </button>
-              
+
               {/* Manual Save Draft button */}
               <button
                 onClick={() => {
@@ -2943,7 +2950,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
               >
                 {isSaving ? 'Saving...' : 'Save Draft'}
               </button>
-              
+
               {/* Discard Draft button - only show if this is a draft */}
               {draftId && (
                 <button
@@ -2952,19 +2959,19 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                       try {
                         const draftIdToDelete = draftId;
                         const isDraftEmail = email?.labelIds?.includes('DRAFT');
-                        
+
                         // Delete the draft
                         await deleteReplyDraft(draftIdToDelete);
                         console.log('🗑️ Draft deleted:', draftIdToDelete);
-                        
+
                         // Emit event to decrement draft counter
-                        window.dispatchEvent(new CustomEvent('email-deleted', { 
-                          detail: { emailId: draftIdToDelete } 
+                        window.dispatchEvent(new CustomEvent('email-deleted', {
+                          detail: { emailId: draftIdToDelete }
                         }));
                         console.log('📤 Emitted email-deleted event for discarded draft:', draftIdToDelete);
-                        
+
                         sonnerToast.success('Draft discarded');
-                        
+
                         // Close composer and reset state
                         setShowReplyComposer(false);
                         setReplyContent('');
@@ -2974,7 +2981,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                         isDirtyRef.current = false;
                         replyContentRef.current = '';
                         forwardToRef.current = '';
-                        
+
                         // CRITICAL UX: Context-aware navigation
                         if (isDraftEmail) {
                           // Case: Viewing draft from Drafts folder
@@ -3015,7 +3022,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
               {[...threadMessages].reverse().map((message) => {
                 const isExpanded = expandedMessages.has(message.id);
                 const { fullDate, relative } = formatEmailTime(message.date);
-                
+
                 // Extract recipients for expanded view
                 const toEmails = message.to?.map(t => t.email).join(', ') || '';
                 const ccEmails = message.cc?.map(c => c.email).join(', ') || '';
@@ -3023,9 +3030,8 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                 return (
                   <div
                     key={message.id}
-                    className={`overflow-hidden transition-all ${
-                      isExpanded ? '' : ''
-                    }`}
+                    className={`overflow-hidden transition-all ${isExpanded ? '' : ''
+                      }`}
                   >
                     {/* Collapsed Header */}
                     <div className="w-full px-2 py-1.5 flex items-center gap-2 hover:bg-gray-50 transition-colors">
@@ -3067,7 +3073,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                           )}
                         </div>
                       </button>
-                      
+
                       {/* Action Icons */}
                       <div className="flex items-center gap-1">
                         <button
@@ -3118,42 +3124,9 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                     {/* Expanded Body */}
                     {isExpanded && (
                       <div className="px-2 pb-2 pt-1.5">
-                        {renderMessageBody(message)}
-                        
-                        {/* Quoted Content Toggle - Gmail-style "..." */}
-                        {quotedContentMap.has(message.id) && (
-                          <div className="mt-3 pt-2">
-                            <button
-                              onClick={() => toggleQuotedContent(message.id)}
-                              className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-800 transition-colors"
-                            >
-                              {expandedQuotedContent.has(message.id) ? (
-                                <ChevronDown size={12} className="text-gray-500" />
-                              ) : (
-                                <ChevronRight size={12} className="text-gray-500" />
-                              )}
-                            </button>
-                            
-                            {expandedQuotedContent.has(message.id) && (
-                              <div className="mt-2 pl-3 border-l-2 border-gray-300">
-                                <div 
-                                  className="text-xs text-gray-600 opacity-75"
-                                  dangerouslySetInnerHTML={{ 
-                                    __html: DOMPurify.sanitize(quotedContentMap.get(message.id)!, {
-                                      ADD_TAGS: ['style', 'link'],
-                                      ADD_ATTR: ['target', 'style', 'class', 'href'],
-                                      ALLOW_DATA_ATTR: false,
-                                    })
-                                  }}
-                                />
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        
-                        {/* Attachments Section */}
+                        {/* Attachments Section - Outlook style, at top */}
                         {message.attachments && message.attachments.length > 0 && (
-                          <div className="mt-3 pt-2 border-t border-gray-100">
+                          <div className="mb-3 pb-2 border-b border-gray-100">
                             <div className="flex items-center gap-2 text-xs font-medium text-gray-700 mb-2">
                               <Paperclip size={12} />
                               <span>{message.attachments.length} Attachment{message.attachments.length > 1 ? 's' : ''}</span>
@@ -3167,15 +3140,15 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                                 const isSpreadsheet = att.mimeType?.includes('spreadsheet') || att.mimeType?.includes('excel');
                                 const isPresentation = att.mimeType?.includes('presentation') || att.mimeType?.includes('powerpoint');
                                 const isZip = att.mimeType?.includes('zip') || att.mimeType?.includes('compressed');
-                                const isPreviewable = isImage || isPdf || 
+                                const isPreviewable = isImage || isPdf ||
                                   att.mimeType?.startsWith('text/') ||
                                   isDoc || isSpreadsheet;
-                                
+
                                 // Determine background color and icon
                                 let bgColor = 'bg-gray-100';
                                 let textColor = 'text-gray-700';
                                 let icon = ext;
-                                
+
                                 if (isPdf) {
                                   bgColor = 'bg-red-50';
                                   textColor = 'text-red-700';
@@ -3197,12 +3170,12 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                                   textColor = 'text-purple-700';
                                   icon = 'ZIP';
                                 }
-                                
+
                                 // Truncate filename to max 25 characters
-                                const truncatedName = att.name.length > 25 
-                                  ? att.name.substring(0, 22) + '...' 
+                                const truncatedName = att.name.length > 25
+                                  ? att.name.substring(0, 22) + '...'
                                   : att.name;
-                                
+
                                 return (
                                   <div
                                     key={idx}
@@ -3226,15 +3199,34 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                                           className="w-full h-full object-contain"
                                           onLoad={async (e) => {
                                             try {
-                                              const response = await window.gapi.client.gmail.users.messages.attachments.get({
-                                                userId: 'me',
-                                                messageId: message.id,
-                                                id: att.attachmentId!
-                                              });
-                                              if (response.result?.data) {
-                                                const base64Data = response.result.data.replace(/-/g, '+').replace(/_/g, '/');
+                                              const attachmentId = att.attachmentId!;
+
+                                              // 1. Check Cache First
+                                              if (AttachmentCache.has(attachmentId)) {
+                                                const cachedData = AttachmentCache.get(attachmentId);
+                                                if (cachedData) {
+                                                  (e.target as HTMLImageElement).src = cachedData;
+                                                  return;
+                                                }
+                                              }
+
+                                              // 2. Queue the Request (Throttled)
+                                              const response = await queueGmailRequest(`fetch-attachment-${attachmentId}`, () =>
+                                                window.gapi.client.gmail.users.messages.attachments.get({
+                                                  userId: 'me',
+                                                  messageId: message.id,
+                                                  id: attachmentId
+                                                })
+                                              );
+
+                                              if ((response as any).result?.data) {
+                                                const base64Data = (response as any).result.data.replace(/-/g, '+').replace(/_/g, '/');
                                                 const padding = '='.repeat((4 - base64Data.length % 4) % 4);
-                                                (e.target as HTMLImageElement).src = `data:${att.mimeType};base64,${base64Data}${padding}`;
+                                                const dataUrl = `data:${att.mimeType};base64,${base64Data}${padding}`;
+
+                                                // 3. Update Cache & Set Src
+                                                AttachmentCache.set(attachmentId, dataUrl);
+                                                (e.target as HTMLImageElement).src = dataUrl;
                                               }
                                             } catch (err) {
                                               console.error('Failed to load thumbnail:', err);
@@ -3250,7 +3242,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                                         </div>
                                       )}
                                     </button>
-                                    
+
                                     {/* Hover overlay with filename and download */}
                                     <div className="absolute inset-0 bg-black bg-opacity-75 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-2 pointer-events-none">
                                       <div className="text-white text-[10px] text-center break-words w-full mb-1 px-1 line-clamp-2">
@@ -3276,6 +3268,39 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                             </div>
                           </div>
                         )}
+
+                        {renderMessageBody(message)}
+
+                        {/* Quoted Content Toggle - Gmail-style "..." */}
+                        {quotedContentMap.has(message.id) && (
+                          <div className="mt-3 pt-2">
+                            <button
+                              onClick={() => toggleQuotedContent(message.id)}
+                              className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-800 transition-colors"
+                            >
+                              {expandedQuotedContent.has(message.id) ? (
+                                <ChevronDown size={12} className="text-gray-500" />
+                              ) : (
+                                <ChevronRight size={12} className="text-gray-500" />
+                              )}
+                            </button>
+
+                            {expandedQuotedContent.has(message.id) && (
+                              <div className="mt-2 pl-3 border-l-2 border-gray-300">
+                                <div
+                                  className="text-xs text-gray-600 opacity-75"
+                                  dangerouslySetInnerHTML={{
+                                    __html: DOMPurify.sanitize(quotedContentMap.get(message.id)!, {
+                                      ADD_TAGS: ['style', 'link'],
+                                      ADD_ATTR: ['target', 'style', 'class', 'href'],
+                                      ALLOW_DATA_ATTR: false,
+                                    })
+                                  }}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -3284,45 +3309,9 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
             </div>
           ) : (
             <div>
-              {renderMessageBody(latestMessage)}
-              
-              {/* Quoted Content Toggle - Gmail-style "..." for single message */}
-              {quotedContentMap.has(latestMessage.id) && (
-                <div className="mt-3 pt-2 border-t border-gray-100">
-                  <button
-                    onClick={() => toggleQuotedContent(latestMessage.id)}
-                    className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-800 transition-colors"
-                  >
-                    {expandedQuotedContent.has(latestMessage.id) ? (
-                      <ChevronDown size={12} className="text-gray-500" />
-                    ) : (
-                      <ChevronRight size={12} className="text-gray-500" />
-                    )}
-                    <span className="font-medium">
-                      {expandedQuotedContent.has(latestMessage.id) ? 'Hide' : 'Show'} quoted text
-                    </span>
-                  </button>
-                  
-                  {expandedQuotedContent.has(latestMessage.id) && (
-                    <div className="mt-2 pl-3 border-l-2 border-gray-300">
-                      <div 
-                        className="text-xs text-gray-600 opacity-75"
-                        dangerouslySetInnerHTML={{ 
-                          __html: DOMPurify.sanitize(quotedContentMap.get(latestMessage.id)!, {
-                            ADD_TAGS: ['style', 'link'],
-                            ADD_ATTR: ['target', 'style', 'class', 'href'],
-                            ALLOW_DATA_ATTR: false,
-                          })
-                        }}
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
-              
-              {/* Attachments Section for single email */}
+              {/* Attachments Section for single email - Outlook style, at top */}
               {latestMessage.attachments && latestMessage.attachments.length > 0 && (
-                <div className="mt-4 pt-3 border-t border-gray-100">
+                <div className="mb-4 pb-3 border-b border-gray-100">
                   <div className="flex items-center gap-2 text-xs font-medium text-gray-700 mb-2">
                     <Paperclip size={12} />
                     <span>{latestMessage.attachments.length} Attachment{latestMessage.attachments.length > 1 ? 's' : ''}</span>
@@ -3336,15 +3325,15 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                       const isSpreadsheet = att.mimeType?.includes('spreadsheet') || att.mimeType?.includes('excel');
                       const isPresentation = att.mimeType?.includes('presentation') || att.mimeType?.includes('powerpoint');
                       const isZip = att.mimeType?.includes('zip') || att.mimeType?.includes('compressed');
-                      const isPreviewable = isImage || isPdf || 
+                      const isPreviewable = isImage || isPdf ||
                         att.mimeType?.startsWith('text/') ||
                         isDoc || isSpreadsheet;
-                      
+
                       // Determine background color and icon
                       let bgColor = 'bg-gray-100';
                       let textColor = 'text-gray-700';
                       let icon = ext;
-                      
+
                       if (isPdf) {
                         bgColor = 'bg-red-50';
                         textColor = 'text-red-700';
@@ -3366,15 +3355,15 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                         textColor = 'text-purple-700';
                         icon = 'ZIP';
                       }
-                      
-                      const truncatedName = att.name.length > 25 
-                        ? att.name.substring(0, 22) + '...' 
+
+                      const truncatedName = att.name.length > 10
+                        ? att.name.substring(0, 10) + '...'
                         : att.name;
-                      
+
                       return (
                         <div
                           key={idx}
-                          className="relative group w-24 h-24 flex-shrink-0"
+                          className="relative group w-24 h-12 flex-shrink-0"
                         >
                           <button
                             onClick={() => {
@@ -3383,7 +3372,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                                 handlePreviewAttachment(latestMessage.id, att.attachmentId!, att.name, att.mimeType!);
                               }
                             }}
-                            className={`w-full h-full rounded-lg flex items-center justify-center overflow-hidden border border-gray-200 ${bgColor} ${isPreviewable ? 'cursor-pointer hover:opacity-90 hover:ring-2 hover:ring-blue-500' : 'cursor-default'}`}
+                            className={`w-full h-full flex items-center justify-center overflow-hidden border border-gray-200 ${bgColor} ${isPreviewable ? 'cursor-pointer hover:opacity-90 hover:ring-blue-500' : 'cursor-default'}`}
                             title={isPreviewable ? `Click to preview ${att.name}` : att.name}
                           >
                             {isImage && att.attachmentId ? (
@@ -3393,15 +3382,34 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                                 className="w-full h-full object-contain"
                                 onLoad={async (e) => {
                                   try {
-                                    const response = await window.gapi.client.gmail.users.messages.attachments.get({
-                                      userId: 'me',
-                                      messageId: latestMessage.id,
-                                      id: att.attachmentId!
-                                    });
-                                    if (response.result?.data) {
-                                      const base64Data = response.result.data.replace(/-/g, '+').replace(/_/g, '/');
+                                    const attachmentId = att.attachmentId!;
+
+                                    // 1. Check Cache First
+                                    if (AttachmentCache.has(attachmentId)) {
+                                      const cachedData = AttachmentCache.get(attachmentId);
+                                      if (cachedData) {
+                                        (e.target as HTMLImageElement).src = cachedData;
+                                        return;
+                                      }
+                                    }
+
+                                    // 2. Queue the Request (Throttled)
+                                    const response = await queueGmailRequest(`fetch-attachment-${attachmentId}`, () =>
+                                      window.gapi.client.gmail.users.messages.attachments.get({
+                                        userId: 'me',
+                                        messageId: latestMessage.id,
+                                        id: attachmentId
+                                      })
+                                    );
+
+                                    if ((response as any).result?.data) {
+                                      const base64Data = (response as any).result.data.replace(/-/g, '+').replace(/_/g, '/');
                                       const padding = '='.repeat((4 - base64Data.length % 4) % 4);
-                                      (e.target as HTMLImageElement).src = `data:${att.mimeType};base64,${base64Data}${padding}`;
+                                      const dataUrl = `data:${att.mimeType};base64,${base64Data}${padding}`;
+
+                                      // 3. Update Cache & Set Src
+                                      AttachmentCache.set(attachmentId, dataUrl);
+                                      (e.target as HTMLImageElement).src = dataUrl;
                                     }
                                   } catch (err) {
                                     console.error('Failed to load thumbnail:', err);
@@ -3417,13 +3425,10 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                               </div>
                             )}
                           </button>
-                          
-                          <div className="absolute inset-0 bg-black bg-opacity-75 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-2 pointer-events-none">
+
+                          <div className="absolute inset-0 bg-black bg-opacity-75 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-2 pointer-events-none">
                             <div className="text-white text-[10px] text-center break-words w-full mb-1 px-1 line-clamp-2">
                               {truncatedName}
-                            </div>
-                            <div className="text-white text-[10px] mb-2">
-                              {formatFileSize(att.size || 0)}
                             </div>
                             <button
                               onClick={(e) => {
@@ -3440,6 +3445,42 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                       );
                     })}
                   </div>
+                </div>
+              )}
+
+              {renderMessageBody(latestMessage)}
+
+              {/* Quoted Content Toggle - Gmail-style "..." for single message */}
+              {quotedContentMap.has(latestMessage.id) && (
+                <div className="mt-3 pt-2 border-t border-gray-100">
+                  <button
+                    onClick={() => toggleQuotedContent(latestMessage.id)}
+                    className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-800 transition-colors"
+                  >
+                    {expandedQuotedContent.has(latestMessage.id) ? (
+                      <ChevronDown size={12} className="text-gray-500" />
+                    ) : (
+                      <ChevronRight size={12} className="text-gray-500" />
+                    )}
+                    <span className="font-medium">
+                      {expandedQuotedContent.has(latestMessage.id) ? 'Hide' : 'Show'} quoted text
+                    </span>
+                  </button>
+
+                  {expandedQuotedContent.has(latestMessage.id) && (
+                    <div className="mt-2 pl-3 border-l-2 border-gray-300">
+                      <div
+                        className="text-xs text-gray-600 opacity-75"
+                        dangerouslySetInnerHTML={{
+                          __html: DOMPurify.sanitize(quotedContentMap.get(latestMessage.id)!, {
+                            ADD_TAGS: ['style', 'link'],
+                            ADD_ATTR: ['target', 'style', 'class', 'href'],
+                            ALLOW_DATA_ATTR: false,
+                          })
+                        }}
+                      />
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -3992,7 +4033,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                 </div>
 
                 <div className="flex items-center space-x-2">
-                  <Checkbox 
+                  <Checkbox
                     id="nest-under-create"
                     checked={nestUnder}
                     onCheckedChange={(checked) => setNestUnder(!!checked)}
@@ -4054,11 +4095,11 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
       {/* Attachment Preview Modal */}
       {previewAttachment && createPortal(
-        <div 
+        <div
           className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-[10000]"
           onClick={() => setPreviewAttachment(null)}
         >
-          <div 
+          <div
             className="relative max-w-7xl max-h-[90vh] w-full mx-4"
             onClick={(e) => e.stopPropagation()}
           >
@@ -4131,7 +4172,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         </div>,
         document.body
       )}
-      
+
       {/* Move to Folder Dialog */}
       <MoveToFolderDialog
         open={showMoveDialog}
