@@ -156,7 +156,7 @@ function ProfileSelectionScreen() {
         {/* Footer */}
         <div className="text-center mt-6">
           <p className="text-sm text-gray-500">
-            D&D Panel &copy; 2025. All rights reserved.
+            D&D Panel &copy; 2026. All rights reserved.
           </p>
         </div>
       </div>

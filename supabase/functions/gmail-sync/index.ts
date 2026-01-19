@@ -115,29 +115,7 @@ serve(async (req) => {
         const labelsResponse = await gmail.users.labels.list({ userId: 'me' });
         const labels = labelsResponse.data.labels || [];
 
-        // Helper to get label details
-        const getLabelDetails = async (id: string) => {
-            try {
-                const res = await gmail.users.labels.get({ userId: 'me', id });
-                return res.data;
-            } catch (e) {
-                console.error(`Failed to fetc label ${id}`, e);
-                return null;
-            }
-        };
-
-        const enrichedLabels = [];
-        // Limit concurrency or batch
-        for (const label of labels) {
-            if (!label.id) continue;
-            const details = await getLabelDetails(label.id);
-            if (details) enrichedLabels.push(details);
-
-            // Small delay to be nice to API limits
-            await new Promise(r => setTimeout(r, 50));
-        }
-
-        // 5. Upsert into Supabase (gmail_accounts)
+        // 5. Upsert into Supabase (gmail_accounts) - DO THIS FIRST so we have account.id
         let { data: account } = await supabaseClient
             .from('gmail_accounts')
             .select('id')
@@ -145,7 +123,6 @@ serve(async (req) => {
             .single();
 
         if (!account) {
-            // Create account if missing
             const { data: newAccount, error: createError } = await supabaseClient
                 .from('gmail_accounts')
                 .insert({
@@ -160,25 +137,59 @@ serve(async (req) => {
             account = newAccount;
         }
 
-        // Upsert labels
-        const ops = enrichedLabels.map(l => ({
-            gmail_account_id: account.id,
-            label_id: l.id,
-            name: l.name,
-            type: l.type,
-            messages_total: l.messagesTotal || 0,
-            messages_unread: l.messagesUnread || 0,
-            threads_total: l.threadsTotal || 0,
-            threads_unread: l.threadsUnread || 0,
-            last_synced_at: new Date().toISOString()
-        }));
+        // Helper to get label details
+        const getLabelDetails = async (id: string) => {
+            try {
+                const res = await gmail.users.labels.get({ userId: 'me', id });
+                return res.data;
+            } catch (e) {
+                console.error(`Failed to fetc label ${id}`, e);
+                return null;
+            }
+        };
 
-        // Batch upsert
-        const { error: upsertError } = await supabaseClient
-            .from('gmail_labels')
-            .upsert(ops, { onConflict: 'gmail_account_id,label_id' });
+        // BATCH PROCESSING
+        const BATCH_SIZE = 5; // Process 5 labels at a time
+        let processedCount = 0;
 
-        if (upsertError) throw upsertError;
+        for (let i = 0; i < labels.length; i += BATCH_SIZE) {
+            const batch = labels.slice(i, i + BATCH_SIZE);
+
+            // Fetch details in parallel for this batch
+            const batchResults = await Promise.all(
+                batch.map(label => label.id ? getLabelDetails(label.id) : Promise.resolve(null))
+            );
+
+            const enrichedLabels = batchResults.filter(l => l !== null);
+
+            if (enrichedLabels.length > 0) {
+                const ops = enrichedLabels.map(l => ({
+                    gmail_account_id: account.id,
+                    label_id: l.id,
+                    name: l.name,
+                    type: l.type,
+                    messages_total: l.messagesTotal || 0,
+                    messages_unread: l.messagesUnread || 0,
+                    threads_total: l.threadsTotal || 0,
+                    threads_unread: l.threadsUnread || 0,
+                    last_synced_at: new Date().toISOString()
+                }));
+
+                // Progressive Upsert
+                const { error: upsertError } = await supabaseClient
+                    .from('gmail_labels')
+                    .upsert(ops, { onConflict: 'gmail_account_id,label_id' });
+
+                if (upsertError) console.error('Batch upsert error:', upsertError);
+            }
+
+            processedCount += enrichedLabels.length;
+            // No strict sleep based on concurrency, or small sleep to yield
+            // await new Promise(r => setTimeout(r, 20)); 
+        }
+
+        // (Account creation moved up)
+        // (Upserts handled in loop)
 
         // Update account sync status
         await supabaseClient
@@ -190,7 +201,7 @@ serve(async (req) => {
             .eq('id', account.id);
 
         return new Response(
-            JSON.stringify({ success: true, count: ops.length }),
+            JSON.stringify({ success: true, count: processedCount }),
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
         );
 

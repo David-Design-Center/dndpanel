@@ -22,7 +22,7 @@ export default function Footer({ className = '' }: FooterProps) {
           Terms of Service
         </Link>
         <span>•</span>
-        <span>© 2025 D&D Panel</span>
+        <span>© 2026 D&D Panel</span>
       </div>
     </footer>
   );

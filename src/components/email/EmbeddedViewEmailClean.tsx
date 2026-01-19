@@ -1,22 +1,14 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Reply, ReplyAll, Forward, Trash, MoreVertical, Star, Paperclip, Download, ChevronDown, ChevronRight, Mail, MailOpen, Flag, MailWarning, Filter, Search, Settings, Plus, Maximize2, Minimize2, FolderInput, Trash2 } from 'lucide-react';
-import { parseISO, format, formatDistanceToNow } from 'date-fns';
+import { useState, useEffect, useRef } from 'react';
+import { X, Reply, ReplyAll, Forward, Trash, MoreVertical, Star, Paperclip, Download, ChevronDown, ChevronRight, Mail, MailOpen, Flag, MailWarning, Filter, Settings, Plus, Maximize2, Minimize2, FolderInput, Trash2, SendHorizontal } from 'lucide-react';
+import { format, parseISO } from 'date-fns';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import {
   getEmailById,
-  markEmailAsTrash,
   getThreadEmails,
   sendReply,
   sendReplyAll,
   sendEmail,
-  markAsRead,
-  markAsUnread,
-  markAsImportant,
-  markAsUnimportant,
-  markAsStarred,
-  markAsUnstarred,
-  applyLabelsToEmail
 } from '../../services/emailService';
 import {
   createGmailFilter,
@@ -25,7 +17,6 @@ import {
   deleteReplyDraft,
 } from '../../integrations/gapiService';
 import { optimizedEmailService } from '../../services/optimizedEmailService';
-import { replaceCidReferences } from '../../integrations/gmail/fetch/messages';
 import { AttachmentCache } from '../../services/attachmentCache';
 import { Email } from '../../types';
 import { useLayoutState } from '../../contexts/LayoutStateContext';
@@ -37,92 +28,29 @@ import { getProfileInitial } from '../../lib/utils';
 import { cleanEmailAddress } from '../../utils/emailFormatting';
 import { toast as sonnerToast } from 'sonner';
 import RichTextEditor from '../common/RichTextEditor';
-import { useToast } from '../ui/use-toast';
 import DOMPurify from 'dompurify';
-import { Input } from '../ui/input';
-import { Checkbox } from '../ui/checkbox';
-import { Button } from '../ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
-import { stripQuotedText } from '../../utils/emailContentProcessing';
-import {
-  updateCountersForTrash,
-  updateCountersForSpam,
-  updateCountersForMove,
-  updateCountersForMarkRead,
-  updateCountersForMarkUnread
-} from '../../utils/counterUpdateUtils';
 import { queueGmailRequest } from '../../utils/requestQueue';
 
-interface EmbeddedViewEmailProps {
-  emailId: string;
-  onEmailUpdate?: (email: Email) => void;
-  onEmailDelete?: (emailId: string) => void;
-}
+// Extracted utilities
+import { formatEmailTime, getInitials, formatFileSize } from './EmbeddedViewEmail/utils/formatters';
+import { getSenderColor, cleanDisplayName } from './EmbeddedViewEmail/utils/senderColors';
+import type { EmbeddedViewEmailProps } from './EmbeddedViewEmail/types';
 
-// Format time like Gmail: "Dec 19, 2025, 7:37 AM (4 days ago)"
-const formatEmailTime = (dateString: string): { time: string; relative: string; fullDate: string } => {
-  try {
-    const date = parseISO(dateString);
-    const time = format(date, 'h:mm a');
-    const relative = formatDistanceToNow(date, { addSuffix: true });
-    const fullDate = format(date, 'MMM d, yyyy, h:mm a');
-    return { time, relative, fullDate };
-  } catch {
-    return { time: '', relative: '', fullDate: '' };
-  }
-};
+// Extracted modal components
+import { AttachmentPreviewModal } from './EmbeddedViewEmail/components/AttachmentPreviewModal';
+import { CreateFilterModal } from './EmbeddedViewEmail/components/CreateFilterModal';
+import { CreateLabelModal } from './EmbeddedViewEmail/components/CreateLabelModal';
+import { MessageBodyRenderer } from './EmbeddedViewEmail/components/MessageBodyRenderer';
 
-// Extract initials for avatar
-const getInitials = (name: string): string => {
-  if (!name) return '?';
-  // Remove angle brackets if present
-  const cleanName = name.replace(/[<>]/g, '').trim();
-  const parts = cleanName.split(' ');
-  if (parts.length >= 2) {
-    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-  }
-  return cleanName.substring(0, 2).toUpperCase();
-};
-
-// Clean display name by removing angle brackets
-const cleanDisplayName = (name: string): string => {
-  if (!name) return '';
-  // Remove < and > brackets
-  return name.replace(/[<>]/g, '').trim();
-};
-
-// Generate consistent color for sender
-const getSenderColor = (email: string): string => {
-  const colors = [
-    'bg-blue-500',
-    'bg-green-500',
-    'bg-purple-500',
-    'bg-pink-500',
-    'bg-indigo-500',
-    'bg-orange-500',
-    'bg-teal-500',
-    'bg-cyan-500',
-  ];
-
-  let hash = 0;
-  for (let i = 0; i < email.length; i++) {
-    hash = email.charCodeAt(i) + ((hash << 5) - hash);
-  }
-
-  return colors[Math.abs(hash) % colors.length];
-};
-
-// Format file size
-const formatFileSize = (bytes: number): string => {
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-};
+// Extracted hooks
+import { useEmailActions } from './EmbeddedViewEmail/hooks/useEmailActions';
+import { useDraftComposer } from './EmbeddedViewEmail/hooks/useDraftComposer';
+import { useInlineImages } from './EmbeddedViewEmail/hooks/useInlineImages';
 
 function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: EmbeddedViewEmailProps) {
   const [email, setEmail] = useState<Email | null>(null);
@@ -194,7 +122,6 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
   const debounceSaveTimerRef = useRef<number | null>(null);
   const failsafeSaveTimerRef = useRef<number | null>(null);
-  const lastSaveTimeRef = useRef<number>(0);
 
   // Track previous email ID to detect navigation between emails
   const prevEmailIdRef = useRef<string | null>(null);
@@ -240,6 +167,9 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const [showBccDropdown, setShowBccDropdown] = useState(false);
   const [filteredBccContacts, setFilteredBccContacts] = useState<any[]>([]);
 
+  // Reply Attachments state
+  const [replyAttachments, setReplyAttachments] = useState<File[]>([]);
+
   const hideFilterTimerRef = useRef<number | null>(null);
   const filterButtonRef = useRef<HTMLButtonElement>(null);
   const dropdownContentRef = useRef<HTMLDivElement>(null);
@@ -258,7 +188,6 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const { currentProfile } = useProfile(); // Get current profile for From field
   const { searchContacts, setShouldLoadContacts } = useContacts(); // For CC/BCC dropdown
   const navigate = useNavigate();
-  const { toast } = useToast();
   const [searchParams] = useSearchParams();
   const draftIdParam = searchParams.get('draft'); // Check for draft query param
 
@@ -278,6 +207,58 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     }
     return '/inbox';
   };
+
+  // 🎯 Email action handlers (extracted to hook)
+  const {
+    handleTrash,
+    handleMarkAsSpam,
+    handleMoveToFolder,
+    handleMarkAsUnread,
+    handleToggleImportant,
+    handleToggleStarred,
+  } = useEmailActions({
+    email,
+    setEmail,
+    clearSelection,
+    getBackToListUrl,
+    onEmailUpdate,
+    onEmailDelete,
+  });
+
+  // 🎯 Draft composer (extracted to hook)
+  const {
+    handleDraftChange,
+    // saveDraft, scheduleDebouncedSave, hashDraftState, isEmpty - available but handled internally
+  } = useDraftComposer({
+    email,
+    ccRecipients,
+    bccRecipients,
+    showReplyComposer,
+    draftId,
+    draftVersion,
+    isDirty,
+    lastHash,
+    replyContentRef,
+    forwardToRef,
+    replyModeRef,
+    isDirtyRef,
+    debounceSaveTimerRef,
+    failsafeSaveTimerRef,
+    setDraftId,
+    setDraftVersion,
+    setIsDirty,
+    setLastHash,
+    setIsSaving,
+    setLastSavedAt,
+  });
+
+  // 🎯 Inline images loader (extracted to hook) - now with batch loading support
+  const { loadInlineImagesForMessage, loadImagesForVisibleMessages } = useInlineImages({
+    loadedImages,
+    threadMessages,
+    setThreadMessages,
+    setLoadedImages,
+  });
 
   // 🎯 CONSOLIDATED DRAFT LOAD FUNCTION - Single async action prevents race conditions
   const loadDraftCompletely = async (messageId: string): Promise<boolean> => {
@@ -888,11 +869,46 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     handleDraftChange();
   };
 
+  // Helper to convert File to base64 for Gmail API
+  const convertFileToBase64 = (file: File): Promise<{ name: string; mimeType: string; data: string }> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = (reader.result as string).split(',')[1]; // Remove data URL prefix
+        resolve({
+          name: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          data: base64
+        });
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Handler for file attachment from RichTextEditor
+  const handleReplyFileAttachment = (files: FileList) => {
+    const newFiles = Array.from(files);
+    setReplyAttachments(prev => [...prev, ...newFiles]);
+    handleDraftChange();
+  };
+
+  // Remove an attachment from the list
+  const removeReplyAttachment = (index: number) => {
+    setReplyAttachments(prev => prev.filter((_, i) => i !== index));
+    handleDraftChange();
+  };
+
   const handleSendReply = async () => {
     if (!email || !replyContent.trim()) return;
 
     setSending(true);
     try {
+      // Convert attachments to base64
+      const attachmentsForSend = await Promise.all(
+        replyAttachments.map(file => convertFileToBase64(file))
+      );
+
       // Prepare CC/BCC strings
       const userCc = ccRecipients.filter(e => e.trim()).join(',');
       const bccString = bccRecipients.filter(e => e.trim()).join(',');
@@ -912,24 +928,43 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
         if (replyMode === 'reply') {
           // Use replyToMessage instead of email
-          await sendReply(replyToMessage || email, replyContent, false, finalCc, bccString);
-          toast({ title: 'Email sent' });
+          const replyResult = await sendReply(replyToMessage || email, replyContent, false, finalCc, bccString, attachmentsForSend);
+          if (!replyResult.success) {
+            sonnerToast.error('Failed to send reply. Please try again.');
+            setSending(false);
+            return;
+          }
+          sonnerToast.success(`Email sent successfully to ${autoTo}`);
         } else {
           // Use replyToMessage instead of email
-          await sendReplyAll(replyToMessage || email, replyContent, finalCc, bccString);
-          toast({ title: 'Email sent' });
+          const replyResult = await sendReplyAll(replyToMessage || email, replyContent, finalCc, bccString, attachmentsForSend);
+          if (!replyResult.success) {
+            sonnerToast.error('Failed to send reply. Please try again.');
+            setSending(false);
+            return;
+          }
+          const allRecipients = [autoTo, finalCc].filter(Boolean).join(', ');
+          const recipientCount = allRecipients.split(',').filter(r => r.trim()).length;
+          const recipientDisplay = recipientCount === 1 ? autoTo : `${recipientCount} recipients`;
+          sonnerToast.success(`Email sent successfully to ${recipientDisplay}`);
         }
       } else if (replyMode === 'forward' && forwardTo.trim()) {
         const subject = email.subject.startsWith('Fwd: ') ? email.subject : `Fwd: ${email.subject}`;
-        await sendEmail({
+        const sendResult = await sendEmail({
           from: email.from,
           to: [{ name: '', email: forwardTo }],
           subject,
           body: replyContent,
           threadId: email.threadId,
           internalDate: null
-        }, undefined, undefined, userCc, bccString);
-        toast({ title: 'Email sent' });
+        }, attachmentsForSend, undefined, userCc, bccString);
+        
+        if (!sendResult.success) {
+          sonnerToast.error('Failed to forward email. Please try again.');
+          setSending(false);
+          return;
+        }
+        sonnerToast.success(`Email sent successfully to ${forwardTo}`);
       }
 
       // Delete draft after successful send
@@ -960,6 +995,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       setIsDirty(false);
       isDirtyRef.current = false;
       setDraftVersion(0);
+      setReplyAttachments([]); // Clear attachments
 
       // Refresh thread to show sent message
       await fetchEmailAndThread();
@@ -970,321 +1006,14 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       }
     } catch (err) {
       console.error('Error sending reply:', err);
-      toast({
-        title: 'Failed to send email',
-        description: 'Please try again',
-        variant: 'destructive'
-      });
+      sonnerToast.error('Failed to send email. Please try again.');
     } finally {
       setSending(false);
     }
   };
 
-  const handleTrash = async (e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    if (!email) return;
-
-    console.log(`🗑️ Moving email ${email.id} to trash`);
-
-    // 📊 Update counters (decrement source labels if was unread)
-    updateCountersForTrash({
-      labelIds: email.labelIds || ['INBOX'],
-      wasUnread: !email.isRead,
-      threadId: email.threadId,
-      messageId: email.id,
-    });
-
-    // ⚡ INSTANT: Navigate away immediately (user expects to leave this view)
-    clearSelection();
-    navigate(getBackToListUrl());
-
-    // ⚡ INSTANT: Notify parent immediately to remove from list
-    onEmailDelete?.(email.id);
-
-    // Show toast
-    toast({ title: 'Moved to trash' });
-
-    // 🔄 BACKGROUND: Update on server
-    try {
-      await markEmailAsTrash(email.id);
-    } catch (err) {
-      console.error('Failed to move to trash:', err);
-      toast({
-        title: 'Failed to move to trash',
-        variant: 'destructive'
-      });
-    }
-  };
-
-  const handleMarkAsSpam = async (e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    if (!email) return;
-
-    console.log(`🚫 Marking email ${email.id} as spam`);
-
-    // 📊 Update counters (decrement source labels if was unread)
-    updateCountersForSpam({
-      labelIds: email.labelIds || ['INBOX'],
-      wasUnread: !email.isRead,
-      threadId: email.threadId,
-      messageId: email.id,
-    });
-
-    // ⚡ INSTANT: Navigate away immediately (user expects to leave this view)
-    clearSelection();
-    navigate(getBackToListUrl());
-
-    // ⚡ INSTANT: Notify parent immediately to remove from list
-    onEmailDelete?.(email.id);
-
-    // Show toast
-    toast({ title: 'Marked as spam' });
-
-    // 🔄 BACKGROUND: Update on server
-    try {
-      await applyLabelsToEmail(email.id, ['SPAM'], ['INBOX']);
-    } catch (err) {
-      console.error('Failed to mark as spam:', err);
-      toast({
-        title: 'Failed to mark as spam',
-        variant: 'destructive'
-      });
-    }
-  };
-
-  const handleMoveToFolder = async (labelId: string, labelName: string) => {
-    if (!email) return;
-
-    const isMovingToInbox = labelId === 'INBOX';
-    console.log(`📁 Moving email ${email.id} to ${isMovingToInbox ? 'Inbox' : `folder: ${labelName}`}`);
-
-    // 📊 Update counters (decrement source, increment destination if was unread)
-    updateCountersForMove({
-      labelIds: email.labelIds || ['INBOX'],
-      wasUnread: !email.isRead,
-      toLabelId: labelId,
-      threadId: email.threadId,
-      messageId: email.id,
-    });
-
-    try {
-      // Get current user labels to remove (exclude system labels)
-      const systemLabels = ['INBOX', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'STARRED', 'IMPORTANT', 'UNREAD', 'CATEGORY_PERSONAL', 'CATEGORY_SOCIAL', 'CATEGORY_PROMOTIONS', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS'];
-      const currentUserLabels = (email.labelIds || []).filter(id =>
-        !systemLabels.includes(id) && !id.startsWith('CATEGORY_')
-      );
-
-      let labelsToAdd: string[];
-      let labelsToRemove: string[];
-
-      if (isMovingToInbox) {
-        // Moving to Inbox: add INBOX, remove all user labels
-        labelsToAdd = ['INBOX'];
-        labelsToRemove = currentUserLabels;
-        console.log(`📥 Moving to Inbox. Removing user labels:`, labelsToRemove);
-      } else {
-        // Moving to folder: add the folder label, remove INBOX + current user labels
-        labelsToAdd = [labelId];
-        labelsToRemove = [...new Set([...currentUserLabels, 'INBOX'])];
-        console.log(`📁 Adding label: ${labelId}, Removing labels:`, labelsToRemove);
-      }
-
-      // Apply the new label and remove old labels
-      await applyLabelsToEmail(email.id, labelsToAdd, labelsToRemove);
-
-      // Navigate away
-      clearSelection();
-      navigate(getBackToListUrl());
-
-      // Trigger inbox refetch to update the list (don't use onEmailDelete - that deletes the email!)
-      window.dispatchEvent(new CustomEvent('inbox-refetch-required'));
-
-      toast({
-        title: isMovingToInbox
-          ? 'Moved to Inbox'
-          : `Moved to ${labelName}`
-      });
-    } catch (err) {
-      console.error('Failed to move email:', err);
-      toast({
-        title: 'Failed to move email',
-        variant: 'destructive'
-      });
-    }
-  };
-
-  const handleMarkAsUnread = async (e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    if (!email) return;
-
-    // Toggle between read and unread
-    const newReadStatus = !email.isRead;
-
-    console.log(`🔄 Toggling read status: ${email.isRead} → ${newReadStatus}`);
-
-    // 📊 Update counters immediately
-    if (newReadStatus) {
-      // Marking as read → decrement
-      updateCountersForMarkRead({
-        labelIds: email.labelIds || ['INBOX'],
-        wasUnread: !email.isRead,
-        threadId: email.threadId,
-        messageId: email.id,
-      });
-    } else {
-      // Marking as unread → increment
-      updateCountersForMarkUnread({
-        labelIds: email.labelIds || ['INBOX'],
-        threadId: email.threadId,
-        messageId: email.id,
-      });
-    }
-
-    // ⚡ INSTANT: Update local state immediately (optimistic update)
-    const updatedEmail = {
-      ...email,
-      isRead: newReadStatus,
-      labelIds: newReadStatus
-        ? email.labelIds?.filter(id => id !== 'UNREAD')
-        : [...(email.labelIds || []), 'UNREAD']
-    };
-
-    setEmail(updatedEmail);
-
-    // ⚡ INSTANT: Notify parent component to update email list immediately
-    if (onEmailUpdate) {
-      onEmailUpdate(updatedEmail);
-    }
-
-    // Show appropriate toast
-    toast({ title: newReadStatus ? 'Marked as read' : 'Marked as unread' });
-
-    // 🔄 BACKGROUND: Update on server
-    try {
-      if (newReadStatus) {
-        await markAsRead(email.id);
-      } else {
-        await markAsUnread(email.id);
-      }
-      // ✅ No refresh needed - optimistic update already done
-    } catch (err) {
-      console.error('Failed to update read status:', err);
-      // Revert on error
-      setEmail(email);
-      if (onEmailUpdate) {
-        onEmailUpdate(email);
-      }
-      toast({
-        title: 'Failed to update read status',
-        variant: 'destructive'
-      });
-    }
-  };
-
-  const handleToggleImportant = async (e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    if (!email) return;
-
-    const isImportant = email.labelIds?.includes('IMPORTANT');
-    const newImportantStatus = !isImportant;
-
-    console.log(`🚩 Toggling important: ${isImportant} → ${newImportantStatus}`);
-
-    // ⚡ INSTANT: Update local state immediately
-    const updatedLabelIds = newImportantStatus
-      ? [...(email.labelIds || []), 'IMPORTANT']
-      : email.labelIds?.filter(id => id !== 'IMPORTANT') || [];
-
-    const updatedEmail = {
-      ...email,
-      isImportant: newImportantStatus,
-      labelIds: updatedLabelIds
-    };
-
-    setEmail(updatedEmail);
-
-    // ⚡ INSTANT: Notify parent component
-    if (onEmailUpdate) {
-      onEmailUpdate(updatedEmail);
-    }
-
-    // Show toast
-    toast({ title: newImportantStatus ? 'Marked as important' : 'Removed from important' });
-
-    // 🔄 BACKGROUND: Update on server
-    try {
-      if (newImportantStatus) {
-        await markAsImportant(email.id);
-      } else {
-        await markAsUnimportant(email.id);
-      }
-      // ✅ No refresh needed - optimistic update already done
-    } catch (err) {
-      console.error('Failed to update important status:', err);
-      // Revert on error
-      setEmail(email);
-      if (onEmailUpdate) {
-        onEmailUpdate(email);
-      }
-      toast({
-        title: 'Failed to update important status',
-        variant: 'destructive'
-      });
-    }
-  };
-
-  const handleToggleStarred = async (e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    if (!email) return;
-
-    const isStarred = email.labelIds?.includes('STARRED');
-    const newStarredStatus = !isStarred;
-
-    console.log(`⭐ Toggling starred: ${isStarred} → ${newStarredStatus}`);
-
-    // ⚡ INSTANT: Update local state immediately
-    const updatedLabelIds = newStarredStatus
-      ? [...(email.labelIds || []), 'STARRED']
-      : email.labelIds?.filter(id => id !== 'STARRED') || [];
-
-    const updatedEmail = {
-      ...email,
-      isStarred: newStarredStatus,
-      labelIds: updatedLabelIds
-    };
-
-    setEmail(updatedEmail);
-
-    // ⚡ INSTANT: Notify parent component
-    if (onEmailUpdate) {
-      onEmailUpdate(updatedEmail);
-    }
-
-    // Show toast
-    toast({ title: newStarredStatus ? 'Added star' : 'Removed star' });
-
-    // 🔄 BACKGROUND: Update on server
-    try {
-      if (newStarredStatus) {
-        await markAsStarred(email.id);
-      } else {
-        await markAsUnstarred(email.id);
-      }
-      // ✅ No refresh needed - optimistic update already done
-    } catch (err) {
-      console.error('Failed to update starred status:', err);
-      // Revert on error
-      setEmail(email);
-      if (onEmailUpdate) {
-        onEmailUpdate(email);
-      }
-      toast({
-        title: 'Failed to update starred status',
-        variant: 'destructive'
-      });
-    }
-  };
-
+  // NOTE: handleTrash, handleMarkAsSpam, handleMoveToFolder, handleMarkAsUnread, 
+  // handleToggleImportant, handleToggleStarred are now provided by useEmailActions hook
 
   const handleCloseCreateFilterModal = () => {
     setShowCreateFilterModal(false);
@@ -1297,9 +1026,63 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     setFilterLabelQuery(labelName);
   };
 
+  // 🔧 COUNTERPARTY LOGIC (Jan 2026): Find the external sender for filter creation
+  // In a thread, find the person who initiated or is the main external participant
+  const getFilterCounterparty = (): { email: string; name: string } => {
+    const currentUserEmail = cleanEmailAddress(currentProfile?.userEmail || '').toLowerCase();
+    
+    // First, check the first message in thread (original initiator)
+    if (threadMessages.length > 0) {
+      const firstMessage = threadMessages[0];
+      const firstFromEmail = cleanEmailAddress(firstMessage.from?.email || '');
+      if (firstFromEmail && firstFromEmail.toLowerCase() !== currentUserEmail) {
+        return { 
+          email: firstFromEmail, 
+          name: firstMessage.from?.name || firstFromEmail 
+        };
+      }
+    }
+    
+    // If first message is from me, check all thread messages for first external sender
+    for (const msg of threadMessages) {
+      const msgFromEmail = cleanEmailAddress(msg.from?.email || '');
+      if (msgFromEmail && msgFromEmail.toLowerCase() !== currentUserEmail) {
+        return { 
+          email: msgFromEmail, 
+          name: msg.from?.name || msgFromEmail 
+        };
+      }
+    }
+    
+    // Fallback: check current email's recipients for non-me address
+    const currentFromEmail = cleanEmailAddress(email?.from?.email || '');
+    if (currentFromEmail.toLowerCase() !== currentUserEmail) {
+      return { 
+        email: currentFromEmail, 
+        name: email?.from?.name || currentFromEmail 
+      };
+    }
+    
+    // Last resort: first recipient that's not me
+    const recipients = [...(email?.to || []), ...(email?.cc || [])];
+    for (const recipient of recipients) {
+      const recipientEmail = cleanEmailAddress(recipient.email || '');
+      if (recipientEmail && recipientEmail.toLowerCase() !== currentUserEmail) {
+        return { 
+          email: recipientEmail, 
+          name: recipient.name || recipientEmail 
+        };
+      }
+    }
+    
+    return { email: currentFromEmail, name: email?.from?.name || '' };
+  };
+
   const handleCreateFilterWithLabel = async () => {
-    const sender = cleanEmailAddress(email?.from?.email || '');
-    if (!sender) {
+    const counterparty = getFilterCounterparty();
+    const counterpartyEmail = counterparty.email;
+    
+    if (!counterpartyEmail) {
       sonnerToast.error('No sender email available');
       return;
     }
@@ -1308,9 +1091,9 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       return;
     }
 
-    // 🔧 SELF-FILTER BUG FIX (Dec 2025): Prevent creating filter for own email
+    // 🔧 SELF-FILTER BUG FIX: Prevent creating filter for own email
     const currentUserEmail = cleanEmailAddress(currentProfile?.userEmail || '').toLowerCase();
-    if (sender.toLowerCase() === currentUserEmail) {
+    if (counterpartyEmail.toLowerCase() === currentUserEmail) {
       sonnerToast.error('Cannot create rule for your own email address. This would affect all your sent emails.');
       return;
     }
@@ -1330,11 +1113,11 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
       // 2) Create the Gmail filter
       await createGmailFilter(
-        { from: sender },
+        { from: counterpartyEmail },
         { addLabelIds: [match.id] }
       );
 
-      sonnerToast.success(`Rule created! Emails from "${sender}" will be moved to "${selectedFilterLabel}"`);
+      sonnerToast.success(`Rule created! Emails from "${counterpartyEmail}" will be moved to "${selectedFilterLabel}"`);
       await fetchEmailAndThread();
     } catch (err) {
       console.error('Filter creation error:', err);
@@ -1480,12 +1263,8 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     setShowReplyComposer(true);
   };
 
-  const handleForwardAll = () => {
-    setForwardingMessage(email);
-    setForwardType('all');
-    setReplyMode('forward');
-    setShowReplyComposer(true);
-  };
+  // NOTE: handleForwardAll was removed - unused function. 
+  // If "Forward All" feature is needed, add a button that calls handleForwardSingle(email) with forwardType='all'
 
   // Initialize reply/replyAll composer with signature
   useEffect(() => {
@@ -1554,289 +1333,8 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     // Content should only be cleared explicitly by user actions (close, discard, send)
   }, [replyMode, forwardingMessage, forwardType, showReplyComposer, threadMessages, currentProfile?.signature]);
 
-  // Draft saving utilities
-  const hashDraftState = useCallback(() => {
-    const state = {
-      to: forwardToRef.current,
-      body: replyContentRef.current,
-      mode: replyModeRef.current
-    };
-    return btoa(JSON.stringify(state));
-  }, []); // No dependencies - uses refs
-
-  const isEmpty = useCallback(() => {
-    // For forward mode, check if both to and body are empty
-    if (replyModeRef.current === 'forward') {
-      return !forwardToRef.current.trim() && !replyContentRef.current.trim();
-    }
-    // For reply/replyAll mode, only check body
-    return !replyContentRef.current.trim();
-  }, []); // No dependencies - uses refs
-
-  const saveDraft = useCallback(async () => {
-    console.log('🔍 saveDraft called');
-    console.log('  - isDirty:', isDirty);
-    console.log('  - isDirtyRef.current:', isDirtyRef.current);
-    console.log('  - replyContent:', replyContent.substring(0, 50));
-    console.log('  - forwardTo:', forwardTo);
-    console.log('  - replyMode:', replyMode);
-
-    if (!isDirtyRef.current) {
-      console.log('❌ Not dirty (ref check), skipping save');
-      return;
-    }
-
-    // Check if empty - delete if exists
-    const emptyCheck = isEmpty();
-    console.log('🔍 isEmpty check:', emptyCheck);
-
-    if (emptyCheck) {
-      console.log('❌ Content is empty, skipping save');
-      if (draftId) {
-        try {
-          // Delete empty draft
-          await deleteReplyDraft(draftId);
-          console.log('🗑️ Deleted empty draft:', draftId);
-          setDraftId(null);
-          setDraftVersion(0);
-        } catch (err) {
-          console.error('Failed to delete draft:', err);
-        }
-      }
-      setIsDirty(false);
-      isDirtyRef.current = false;
-      return;
-    }
-
-    // Check if content actually changed
-    const currentHash = hashDraftState();
-    console.log('🔍 Hash comparison:');
-    console.log('  - Current hash:', currentHash);
-    console.log('  - Last hash:', lastHash);
-    console.log('  - Are equal?:', currentHash === lastHash);
-
-    if (currentHash === lastHash) {
-      console.log('❌ Hash unchanged, skipping save');
-      return;
-    }
-
-    // Rate limit: ensure at least 2s between saves
-    const now = Date.now();
-    const timeSinceLastSave = now - lastSaveTimeRef.current;
-    console.log('🔍 Time since last save:', timeSinceLastSave, 'ms');
-
-    if (timeSinceLastSave < 2000) {
-      console.log('❌ Rate limited, skipping save');
-      return;
-    }
-
-    console.log('✅ All checks passed, saving draft...');
-    setIsSaving(true);
-    lastSaveTimeRef.current = now;
-
-    try {
-      // Use refs to get current values (avoid stale closures)
-      const currentReplyContent = replyContentRef.current;
-      const currentForwardTo = forwardToRef.current;
-      const currentReplyMode = replyModeRef.current;
-
-      // Determine recipient based on reply mode
-      let recipientEmail = currentForwardTo; // For forward mode
-
-      if (currentReplyMode === 'reply' || currentReplyMode === 'replyAll') {
-        // For reply modes, use the original sender's email
-        recipientEmail = email?.from?.email || '';
-      }
-
-      // Build CC/BCC strings from current state
-      const ccString = ccRecipients.filter(e => e.trim()).join(',');
-      const bccString = bccRecipients.filter(e => e.trim()).join(',');
-
-      const payload = {
-        to: recipientEmail,
-        body: currentReplyContent,
-        mode: currentReplyMode,
-        threadId: email?.threadId,
-        inReplyTo: email?.id,
-        cc: ccString || undefined,
-        bcc: bccString || undefined
-      };
-
-      console.log('📝 Draft payload:', { ...payload, body: payload.body.substring(0, 100) + '...' });
-
-      let response;
-      if (!draftId) {
-        // Create new draft
-        response = await createReplyDraft(payload);
-        console.log('📝 Created draft:', response);
-        setDraftId(response.id);
-        setDraftVersion(response.version);
-
-        // Emit event to increment draft counter
-        window.dispatchEvent(new CustomEvent('draft-created', {
-          detail: { draftId: response.id }
-        }));
-        console.log('📤 Emitted draft-created event for:', response.id);
-      } else {
-        // Update existing draft
-        response = await updateReplyDraft(draftId, payload, draftVersion);
-        console.log('📝 Updated draft:', response);
-        setDraftVersion(response.version);
-      }
-
-      setLastHash(currentHash);
-      setIsDirty(false);
-      isDirtyRef.current = false;
-      setLastSavedAt(new Date());
-      console.log('✅ Draft saved:', response.id);
-    } catch (err: any) {
-      console.error('Failed to save draft:', err);
-
-      // Handle version conflict (412)
-      if (err.status === 412) {
-        console.log('⚠️ Version conflict, will retry');
-        // TODO: Implement conflict resolution
-      }
-
-      // Handle draft not found (404) - recreate
-      if (err.status === 404) {
-        setDraftId(null);
-        setDraftVersion(0);
-        // Will retry on next trigger
-      }
-    } finally {
-      setIsSaving(false);
-    }
-  }, [isDirty, isEmpty, draftId, draftVersion, lastHash, hashDraftState, email]); // Removed replyContent, forwardTo, replyMode (using refs)
-
-  const scheduleDebouncedSave = useCallback(() => {
-    console.log('⏰ scheduleDebouncedSave called');
-
-    // Clear existing timers
-    if (debounceSaveTimerRef.current) {
-      clearTimeout(debounceSaveTimerRef.current);
-      console.log('⏰ Cleared existing debounce timer');
-    }
-
-    // Schedule debounced save (3s after last change)
-    debounceSaveTimerRef.current = window.setTimeout(() => {
-      console.log('⏰ Debounce timer fired, calling saveDraft');
-      saveDraft();
-    }, 3000);
-    console.log('⏰ Scheduled debounced save in 3s');
-
-    // Schedule failsafe save (30s if user never idles)
-    if (!failsafeSaveTimerRef.current) {
-      failsafeSaveTimerRef.current = window.setTimeout(() => {
-        console.log('⏰ Failsafe timer fired, calling saveDraft');
-        saveDraft();
-        failsafeSaveTimerRef.current = null;
-      }, 30000);
-      console.log('⏰ Scheduled failsafe save in 30s');
-    }
-  }, [saveDraft]);
-
-  const handleDraftChange = useCallback(() => {
-    console.log('📝 handleDraftChange called');
-    setIsDirty(true);
-    isDirtyRef.current = true;
-    scheduleDebouncedSave();
-  }, [scheduleDebouncedSave]);
-
-  // Save on beforeunload
-  useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (isDirty && showReplyComposer) {
-        // Attempt synchronous save
-        saveDraft();
-        e.preventDefault();
-        e.returnValue = '';
-      }
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, [isDirty, showReplyComposer, saveDraft]);
-
-  // Cleanup timers on unmount or when composer closes
-  useEffect(() => {
-    if (!showReplyComposer) {
-      if (debounceSaveTimerRef.current) {
-        clearTimeout(debounceSaveTimerRef.current);
-        debounceSaveTimerRef.current = null;
-      }
-      if (failsafeSaveTimerRef.current) {
-        clearTimeout(failsafeSaveTimerRef.current);
-        failsafeSaveTimerRef.current = null;
-      }
-
-      // Final save when closing if dirty
-      if (isDirty) {
-        saveDraft();
-      }
-    } else {
-      // Scroll to reply composer when it opens
-      setTimeout(() => {
-        replyComposerRef.current?.scrollIntoView({
-          behavior: 'smooth',
-          block: 'start'
-        });
-      }, 100);
-    }
-
-    return () => {
-      if (debounceSaveTimerRef.current) {
-        clearTimeout(debounceSaveTimerRef.current);
-      }
-      if (failsafeSaveTimerRef.current) {
-        clearTimeout(failsafeSaveTimerRef.current);
-      }
-    };
-  }, [showReplyComposer, isDirty, saveDraft]);
-
-  const loadInlineImagesForMessage = useCallback(async (messageId: string) => {
-    if (loadedImages.has(messageId)) return;
-
-    const message = threadMessages.find(m => m.id === messageId);
-    if (!message || !message.inlineAttachments || message.inlineAttachments.length === 0) {
-      return;
-    }
-
-    console.log(`🖼️ Loading ${message.inlineAttachments.length} inline images for message ${messageId}`);
-
-    const maxRetries = 3;
-    const delayMs = 1000;
-
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        console.log(`🔄 Attempt ${attempt}/${maxRetries} to load images for message ${messageId}`);
-
-        const updatedBody = await replaceCidReferences(
-          message.body,
-          message.inlineAttachments || [],
-          messageId
-        );
-
-        setThreadMessages(prev =>
-          prev.map(m => m.id === messageId ? { ...m, body: updatedBody } : m)
-        );
-
-        setLoadedImages(prev => new Set(prev).add(messageId));
-        console.log(`✅ Inline images loaded for message ${messageId} on attempt ${attempt}`);
-        return;
-      } catch (error) {
-        console.error(`❌ Attempt ${attempt}/${maxRetries} failed to load inline images:`, error);
-        if (attempt < maxRetries) {
-          console.log(`⏳ Retrying in ${delayMs}ms...`);
-          await new Promise(resolve => setTimeout(resolve, delayMs));
-        }
-      }
-    }
-
-    console.error(`❌ All ${maxRetries} attempts failed for message ${messageId}`);
-  }, [loadedImages, threadMessages, setThreadMessages]);
+  // 🎯 Draft saving logic moved to useDraftComposer hook
+  // 🎯 Inline images loading moved to useInlineImages hook
 
   const toggleMessageExpansion = async (messageId: string) => {
     const wasExpanded = expandedMessages.has(messageId);
@@ -1869,6 +1367,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   };
 
   // Ensure inline images load for any message currently expanded (including initial single-message threads)
+  // Uses batch loading to prevent rate limiting - loads first 3 messages, more on scroll
   useEffect(() => {
     if (!threadMessages.length) return;
 
@@ -1876,10 +1375,9 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       ? Array.from(expandedMessages)
       : [threadMessages[threadMessages.length - 1].id];
 
-    targetIds.forEach(id => {
-      loadInlineImagesForMessage(id);
-    });
-  }, [expandedMessages, threadMessages, loadInlineImagesForMessage]);
+    // Use batch loading - will only load first 3 at a time
+    loadImagesForVisibleMessages(targetIds);
+  }, [expandedMessages.size, threadMessages.length, loadImagesForVisibleMessages]);
 
   const handleDownloadAttachment = async (messageId: string, attachmentId: string, filename: string) => {
     try {
@@ -1920,15 +1418,11 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         document.body.removeChild(link);
         window.URL.revokeObjectURL(url);
 
-        toast({ title: `Downloaded ${filename}` });
+        sonnerToast.success(`Downloaded ${filename}`);
       }
     } catch (error) {
       console.error('Failed to download attachment:', error);
-      toast({
-        title: 'Download failed',
-        description: 'Please try again',
-        variant: 'destructive'
-      });
+      sonnerToast.error('Download failed. Please try again.');
     }
   };
 
@@ -1963,125 +1457,24 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       }
     } catch (error) {
       console.error('Failed to preview attachment:', error);
-      toast({
-        title: 'Preview failed',
-        description: 'Please try again',
-        variant: 'destructive'
-      });
+      sonnerToast.error('Preview failed. Please try again.');
     }
   };
 
+  // Callback for memoized MessageBodyRenderer to report quoted content
+  const handleQuotedContentFound = (messageId: string, quotedContent: string) => {
+    if (!quotedContentMap.has(messageId)) {
+      setQuotedContentMap(prev => new Map(prev).set(messageId, quotedContent));
+    }
+  };
+
+  // 🎯 Render message body using memoized component (prevents re-processing on resize)
   const renderMessageBody = (message: Email) => {
-    const htmlBody = message.body || '';
-
-    if (!htmlBody) {
-      return <div className="text-gray-500 text-sm italic">No content</div>;
-    }
-
-    console.log('🖼️ Rendering email body, length:', htmlBody.length);
-    console.log('🖼️ First 300 chars:', htmlBody.substring(0, 300));
-
-    // Strip quoted content (Gmail/Outlook reply history)
-    const { cleanBody, quotedContent } = stripQuotedText(htmlBody);
-
-    // Store quoted content in map for later toggle
-    if (quotedContent && !quotedContentMap.has(message.id)) {
-      setQuotedContentMap(prev => new Map(prev).set(message.id, quotedContent));
-      console.log('📝 Stored quoted content for message:', message.id, 'Length:', quotedContent.length);
-    }
-
-    console.log('✂️ Stripped quoted content. Original:', htmlBody.length, 'Clean:', cleanBody.length, 'Quoted:', quotedContent?.length || 0);
-
-    // Sanitize with email-safe config - preserve formatting and images
-    const clean = DOMPurify.sanitize(cleanBody, {
-      ADD_TAGS: ['style', 'link'],
-      ADD_ATTR: ['target', 'style', 'class', 'id', 'width', 'height', 'src', 'href', 'alt', 'title', 'align', 'valign', 'border', 'cellpadding', 'cellspacing', 'bgcolor', 'color', 'size', 'face'],
-      ALLOW_DATA_ATTR: false,
-    });
-
-    // Wrap in constrained HTML with forced responsive CSS
-    const wrappedHtml = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <meta name="referrer" content="no-referrer">
-        <base target="_blank">
-        <style>
-          * { 
-            font-size: 12px !important; 
-            max-width: 100% !important;
-            box-sizing: border-box !important;
-          }
-          body { 
-            margin: 0; 
-            padding: 16px; 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            overflow-x: hidden;
-            word-wrap: break-word;
-            font-size: 12px !important;
-          }
-          img { 
-            max-width: 100% !important; 
-            height: auto !important; 
-            display: block;
-          }
-          table { 
-            max-width: 100% !important;
-            border-collapse: collapse;
-          }
-          td, th {
-            word-wrap: break-word;
-            font-size: 12px !important;
-          }
-          a {
-            color: #1a73e8;
-            font-size: 12px !important;
-          }
-          p, div, span, li {
-            font-size: 12px !important;
-          }
-        </style>
-        <script>
-          // Ensure all links open in new tab
-          document.addEventListener('DOMContentLoaded', function() {
-            document.addEventListener('click', function(e) {
-              if (e.target.tagName === 'A' || e.target.closest('a')) {
-                const link = e.target.tagName === 'A' ? e.target : e.target.closest('a');
-                if (link.href) {
-                  e.preventDefault();
-                  window.open(link.href, '_blank', 'noopener,noreferrer');
-                }
-              }
-            });
-          });
-        </script>
-      </head>
-      <body>
-        ${clean}
-      </body>
-      </html>
-    `;
-
     return (
-      <iframe
-        srcDoc={wrappedHtml}
-        title="Email content"
-        className="w-full border-0"
-        style={{ minHeight: '50px', height: 'auto' }}
-        sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-        referrerPolicy="no-referrer"
-        onLoad={(e) => {
-          const iframe = e.target as HTMLIFrameElement;
-          if (iframe.contentDocument) {
-            // Use body scrollHeight for more accurate measurement
-            const body = iframe.contentDocument.body;
-            const height = body ? body.scrollHeight : iframe.contentDocument.documentElement.scrollHeight;
-            // Reduce extra padding from 20px to 5px
-            iframe.style.height = `${height + 5}px`;
-          }
-        }}
+      <MessageBodyRenderer
+        message={message}
+        imagesLoaded={loadedImages.has(message.id)}
+        onQuotedContentFound={handleQuotedContentFound}
       />
     );
   };
@@ -2213,7 +1606,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const replyToMessage = getReplyToMessage();
   const { time, relative } = formatEmailTime(latestMessage.date);
 
-  // Debug: Log render state
+ /* // Debug: Log render state
   console.log('🎨 RENDER STATE:', {
     showReplyComposer,
     replyContentLength: replyContent.length,
@@ -2221,7 +1614,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     isDirty,
     emailId: email?.id,
     threadMessagesCount: threadMessages.length
-  });
+  }); */
 
   return (
     <div className="flex flex-col h-full bg-white">
@@ -2402,17 +1795,10 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                     />
                     <button
                       className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center"
-                      onClick={handleManageFilters}
-                    >
-                      <Settings size={16} className="mr-3 text-gray-500" />
-                      Manage Rules
-                    </button>
-                    <button
-                      className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center"
                       onClick={handleCreateNewFilter}
                     >
                       <Plus size={16} className="mr-3 text-gray-500" />
-                      Create Rules
+                      Create Rule
                     </button>
                   </div>,
                   document.body
@@ -2546,41 +1932,45 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
       {/* Email Body - Scrollable */}
       <div className="flex-1 overflow-y-auto">
-        {/* Reply Composer - Clean, minimal design - AT TOP */}
+        {/* Reply Composer - Compose.tsx style design */}
         {showReplyComposer && !isReplyExpanded && (
-          <div ref={replyComposerRef} className="mb-6 px-4 pt-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-3">
-                <h3 className="text-sm font-semibold text-gray-800">
-                  {replyMode === 'reply' && 'Reply'}
-                  {replyMode === 'replyAll' && 'Reply all'}
-                  {replyMode === 'forward' && 'Forward'}
-                </h3>
-                {/* Draft continuation indicator */}
-                {draftId && !isDirty && (
-                  <span className="flex items-center gap-1.5 text-xs font-medium text-amber-700 bg-amber-50 px-2 py-1 rounded border border-amber-200">
-                    Continuing draft
-                  </span>
-                )}
-                {/* Draft status indicator - More visible */}
+          <div ref={replyComposerRef} className="mb-6 border border-gray-200 rounded-lg shadow-lg overflow-hidden bg-white">
+            {/* Outlook-style Header */}
+            <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
+              <div className="flex items-center gap-4">
+                {/* Send Button */}
+                <button
+                  type="button"
+                  onClick={handleSendReply}
+                  disabled={sending || !replyContent.trim() || (replyMode === 'forward' && !forwardTo.trim())}
+                  className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-medium rounded transition-colors"
+                >
+                  <SendHorizontal size={14} />
+                  {sending ? 'Sending...' : 'Send'}
+                </button>
+
+                {/* Draft status indicator */}
                 {isSaving && (
-                  <span className="flex items-center gap-1.5 text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                  <span className="flex items-center gap-1.5 text-xs font-medium text-green-600">
                     <span className="animate-pulse">●</span>
                     Saving...
                   </span>
                 )}
                 {!isSaving && lastSavedAt && (
-                  <span className="flex items-center gap-1.5 text-xs font-medium text-green-600 bg-green-50 px-2 py-1 rounded">
+                  <span className="flex items-center gap-1.5 text-xs font-medium text-green-600">
                     <span>✓</span>
                     Saved {format(lastSavedAt, 'h:mm a')}
                   </span>
                 )}
-                {!isSaving && !lastSavedAt && isDirty && (
-                  <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded">
-                    Unsaved changes
-                  </span>
-                )}
+
+                {/* From display */}
+                <div className="flex items-center gap-1 text-sm text-gray-700">
+                  <span className="text-gray-500">From:</span>
+                  <span>{currentProfile?.userEmail || 'me@example.com'}</span>
+                </div>
               </div>
+
+              {/* Right side icons */}
               <div className="flex items-center gap-1">
                 <button
                   type="button"
@@ -2596,112 +1986,100 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                     setBccInput('');
                     setShowCc(false);
                     setShowBcc(false);
-                    // Clear refs
                     replyContentRef.current = '';
                     forwardToRef.current = '';
                     setIsDirty(false);
                     isDirtyRef.current = false;
                   }}
-                  className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                  title="Discard and close"
+                  className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                  title="Discard"
                 >
-                  <Trash2 size={16} />
+                  <Trash2 size={18} />
                 </button>
                 <button
                   type="button"
                   onClick={() => setIsReplyExpanded(true)}
-                  className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded transition-colors"
+                  className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
                   title="Expand"
                 >
-                  <Maximize2 size={16} />
+                  <Maximize2 size={18} />
                 </button>
               </div>
             </div>
 
-            {/* Email metadata fields */}
-            <div className="space-y-1 mb-3 text-xs border border-gray-200 rounded-lg p-3 bg-gray-50">
-              <div className="flex items-center gap-2">
-                <span className="text-gray-500 w-12">From:</span>
-                <span className="text-gray-800">{currentProfile?.userEmail || 'me'}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-gray-500 w-12">To:</span>
-                <span className="text-gray-800">
-                  {(() => {
-                    if (replyMode === 'forward') {
-                      return forwardTo || 'Enter recipient...';
-                    }
-
-                    // Get filtered recipients
-                    const { to } = getReplyRecipients(replyToMessage, replyMode);
-
-                    // 🐛 Debug logging
-                    console.log('📧 Reply To field:', {
-                      replyMode,
-                      to,
-                      replyToMessage: replyToMessage?.from,
-                      latestMessage: latestMessage?.from
-                    });
-
-                    return to || 'No valid recipients';
-                  })()}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-gray-500 w-12">Date:</span>
-                <span className="text-gray-800">{format(new Date(), 'MMM d, yyyy, h:mm a')}</span>
-              </div>
-              {replyMode === 'replyAll' && (() => {
-                const { cc } = getReplyRecipients(replyToMessage, 'replyAll');
-                return cc ? (
-                  <div className="flex items-center gap-2">
-                    <span className="text-gray-500 w-12">CC:</span>
-                    <span className="text-gray-800 truncate">{cc}</span>
+            {/* Recipient fields section - Compose.tsx style */}
+            <div className="flex-shrink-0 px-4 py-2 space-y-2">
+              {/* TO Section */}
+              <div className="relative">
+                <div className="flex items-start gap-3 py-2">
+                  <button
+                    type="button"
+                    className="px-3 py-1 text-sm text-gray-700 border border-gray-300 rounded hover:bg-gray-50 flex-shrink-0"
+                  >
+                    To
+                  </button>
+                  <div className="flex-1 flex flex-wrap items-center gap-1.5 border-b border-gray-300 pb-2 min-h-[32px]">
+                    {replyMode === 'forward' ? (
+                      /* Forward mode - editable input */
+                      <input
+                        type="email"
+                        value={forwardTo}
+                        onChange={(e) => {
+                          setForwardTo(e.target.value);
+                          forwardToRef.current = e.target.value;
+                          handleDraftChange();
+                        }}
+                        className="flex-1 min-w-[120px] outline-none text-sm py-0.5 bg-transparent"
+                        placeholder="Enter recipient email..."
+                      />
+                    ) : (
+                      /* Reply mode - show recipient as badge */
+                      (() => {
+                        const { to } = getReplyRecipients(replyToMessage, replyMode);
+                        return to ? (
+                          <div className="flex items-center bg-gray-100 text-gray-800 px-2 py-0.5 rounded text-sm">
+                            <span>{to}</span>
+                          </div>
+                        ) : (
+                          <span className="text-sm text-gray-400">No valid recipients</span>
+                        );
+                      })()
+                    )}
                   </div>
-                ) : null;
-              })()}
-
-              {/* CC/BCC Toggle buttons */}
-              {(!showCc || !showBcc) && (
-                <div className="flex items-center gap-2 pt-1 border-t border-gray-200 mt-1">
-                  {!showCc && (
-                    <button
-                      type="button"
-                      onClick={() => setShowCc(true)}
-                      className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
-                    >
-                      Add CC
-                    </button>
-                  )}
-                  {!showBcc && (
-                    <button
-                      type="button"
-                      onClick={() => setShowBcc(true)}
-                      className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
-                    >
-                      Add BCC
-                    </button>
-                  )}
                 </div>
-              )}
-            </div>
+              </div>
 
-            {/* CC Section */}
-            {showCc && (
-              <div className="relative mb-2">
-                <div className="flex items-center border border-gray-200 rounded-lg py-1.5 px-3 gap-2 bg-gray-50">
-                  <span className="text-gray-500 text-xs w-10">CC:</span>
-                  <div className="flex-1 flex flex-wrap items-center gap-1">
-                    {/* Display existing CC recipients */}
+              {/* CC Section - Always visible style like Compose.tsx */}
+              <div className="relative">
+                <div className="flex items-start gap-3 py-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowCc(!showCc)}
+                    className="px-3 py-1 text-sm text-gray-700 border border-gray-300 rounded hover:bg-gray-50 flex-shrink-0"
+                  >
+                    Cc
+                  </button>
+                  <div className="flex-1 flex flex-wrap items-center gap-1.5 border-b border-gray-300 pb-2 min-h-[32px]">
+                    {/* Display replyAll CC recipients as read-only badges */}
+                    {replyMode === 'replyAll' && (() => {
+                      const { cc } = getReplyRecipients(replyToMessage, 'replyAll');
+                      return cc ? cc.split(', ').map((email, idx) => (
+                        <div key={`auto-cc-${idx}`} className="flex items-center bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-sm">
+                          <span>{email}</span>
+                        </div>
+                      )) : null;
+                    })()}
+                    
+                    {/* Display manually added CC recipients */}
                     {ccRecipients.map((email, index) => (
-                      <div key={index} className="flex items-center bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded-full text-[10px]">
+                      <div key={index} className="flex items-center bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-sm">
                         <span>{email}</span>
                         <button
                           type="button"
                           onClick={() => removeCcRecipient(email)}
-                          className="ml-1 text-blue-600 hover:text-blue-800"
+                          className="ml-1.5 text-blue-600 hover:text-blue-800"
                         >
-                          <X size={10} />
+                          <X size={12} />
                         </button>
                       </div>
                     ))}
@@ -2713,8 +2091,6 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                       onChange={(e) => {
                         const value = e.target.value;
                         handleCcInputChange(e);
-
-                        // Auto-convert to badge when space or comma is detected
                         if (value.endsWith(' ') || value.endsWith(',')) {
                           const email = value.slice(0, -1).trim();
                           if (email && email.includes('@') && !ccRecipients.includes(email)) {
@@ -2726,7 +2102,6 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                       }}
                       onFocus={handleCcInputFocus}
                       onBlur={() => {
-                        // Convert to badge on blur if valid email
                         const email = ccInput.trim();
                         if (email && email.includes('@') && !ccRecipients.includes(email)) {
                           setCcRecipients([...ccRecipients, email]);
@@ -2736,91 +2111,71 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                         handleCcInputBlur();
                       }}
                       onKeyDown={handleCcInputKeyDown}
-                      className="flex-1 min-w-[100px] outline-none text-xs py-0.5 bg-transparent"
+                      className="flex-1 min-w-[120px] outline-none text-sm py-0.5 bg-transparent"
                       placeholder=""
                     />
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowCc(false);
-                      setCcRecipients([]);
-                      setCcInput('');
-                    }}
-                    className="text-gray-400 hover:text-gray-600"
-                  >
-                    <X size={14} />
-                  </button>
                 </div>
 
                 {/* CC Contact dropdown */}
                 {showCcDropdown && (
-                  <div className="absolute top-full left-0 right-0 z-[998] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto mt-1">
+                  <div className="absolute top-full left-14 right-0 z-[999] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
                     {filteredCcContacts.length > 0 ? (
                       filteredCcContacts.map((contact, index) => (
                         <div
                           key={`cc-${contact.email}-${index}`}
                           onClick={() => handleCcContactSelect(contact)}
-                          className="flex items-center px-2 py-1.5 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                          className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
                         >
                           {contact.photoUrl ? (
-                            <img
-                              src={contact.photoUrl}
-                              alt={contact.name}
-                              className="w-6 h-6 rounded-full mr-2 flex-shrink-0"
-                            />
+                            <img src={contact.photoUrl} alt={contact.name} className="w-7 h-7 rounded-full mr-2.5 flex-shrink-0" />
                           ) : (
-                            <div className="w-6 h-6 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-medium mr-2 flex-shrink-0">
+                            <div className="w-7 h-7 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-medium mr-2.5 flex-shrink-0">
                               {getProfileInitial(contact.name, contact.email)}
                             </div>
                           )}
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1">
-                              <span className="text-xs font-medium text-gray-900 truncate">
-                                {contact.name}
-                              </span>
-                            </div>
-                            <p className="text-[10px] text-gray-500 truncate">{contact.email}</p>
+                            <span className="text-sm font-medium text-gray-900 truncate">{contact.name}</span>
+                            <p className="text-xs text-gray-500 truncate">{contact.email}</p>
                           </div>
                         </div>
                       ))
                     ) : (
-                      <div className="px-2 py-2 text-gray-500 text-xs">No contacts found</div>
+                      <div className="px-3 py-2 text-gray-500 text-sm">No contacts found</div>
                     )}
                   </div>
                 )}
               </div>
-            )}
 
-            {/* BCC Section */}
-            {showBcc && (
-              <div className="relative mb-2">
-                <div className="flex items-center border border-gray-200 rounded-lg py-1.5 px-3 gap-2 bg-gray-50">
-                  <span className="text-gray-500 text-xs w-10">BCC:</span>
-                  <div className="flex-1 flex flex-wrap items-center gap-1">
-                    {/* Display existing BCC recipients */}
+              {/* BCC Section */}
+              <div className="relative">
+                <div className="flex items-start gap-3 py-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowBcc(!showBcc)}
+                    className="px-3 py-1 text-sm text-gray-700 border border-gray-300 rounded hover:bg-gray-50 flex-shrink-0"
+                  >
+                    Bcc
+                  </button>
+                  <div className="flex-1 flex flex-wrap items-center gap-1.5 border-b border-gray-300 pb-2 min-h-[32px]">
                     {bccRecipients.map((email, index) => (
-                      <div key={index} className="flex items-center bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded-full text-[10px]">
+                      <div key={index} className="flex items-center bg-purple-100 text-purple-800 px-2 py-0.5 rounded text-sm">
                         <span>{email}</span>
                         <button
                           type="button"
                           onClick={() => removeBccRecipient(email)}
-                          className="ml-1 text-purple-600 hover:text-purple-800"
+                          className="ml-1.5 text-purple-600 hover:text-purple-800"
                         >
-                          <X size={10} />
+                          <X size={12} />
                         </button>
                       </div>
                     ))}
-
-                    {/* BCC Input field */}
                     <input
                       type="text"
                       value={bccInput}
                       onChange={(e) => {
                         const value = e.target.value;
                         handleBccInputChange(e);
-
-                        // Auto-convert to badge when space or comma is detected
                         if (value.endsWith(' ') || value.endsWith(',')) {
                           const email = value.slice(0, -1).trim();
                           if (email && email.includes('@') && !bccRecipients.includes(email)) {
@@ -2832,7 +2187,6 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                       }}
                       onFocus={handleBccInputFocus}
                       onBlur={() => {
-                        // Convert to badge on blur if valid email
                         const email = bccInput.trim();
                         if (email && email.includes('@') && !bccRecipients.includes(email)) {
                           setBccRecipients([...bccRecipients, email]);
@@ -2842,177 +2196,91 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                         handleBccInputBlur();
                       }}
                       onKeyDown={handleBccInputKeyDown}
-                      className="flex-1 min-w-[100px] outline-none text-xs py-0.5 bg-transparent"
+                      className="flex-1 min-w-[120px] outline-none text-sm py-0.5 bg-transparent"
                       placeholder=""
                     />
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowBcc(false);
-                      setBccRecipients([]);
-                      setBccInput('');
-                    }}
-                    className="text-gray-400 hover:text-gray-600"
-                  >
-                    <X size={14} />
-                  </button>
                 </div>
 
                 {/* BCC Contact dropdown */}
                 {showBccDropdown && (
-                  <div className="absolute top-full left-0 right-0 z-[998] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto mt-1">
+                  <div className="absolute top-full left-14 right-0 z-[999] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
                     {filteredBccContacts.length > 0 ? (
                       filteredBccContacts.map((contact, index) => (
                         <div
                           key={`bcc-${contact.email}-${index}`}
                           onClick={() => handleBccContactSelect(contact)}
-                          className="flex items-center px-2 py-1.5 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                          className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
                         >
                           {contact.photoUrl ? (
-                            <img
-                              src={contact.photoUrl}
-                              alt={contact.name}
-                              className="w-6 h-6 rounded-full mr-2 flex-shrink-0"
-                            />
+                            <img src={contact.photoUrl} alt={contact.name} className="w-7 h-7 rounded-full mr-2.5 flex-shrink-0" />
                           ) : (
-                            <div className="w-6 h-6 rounded-full bg-purple-500 text-white flex items-center justify-center text-xs font-medium mr-2 flex-shrink-0">
+                            <div className="w-7 h-7 rounded-full bg-purple-500 text-white flex items-center justify-center text-xs font-medium mr-2.5 flex-shrink-0">
                               {getProfileInitial(contact.name, contact.email)}
                             </div>
                           )}
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1">
-                              <span className="text-xs font-medium text-gray-900 truncate">
-                                {contact.name}
-                              </span>
-                            </div>
-                            <p className="text-[10px] text-gray-500 truncate">{contact.email}</p>
+                            <span className="text-sm font-medium text-gray-900 truncate">{contact.name}</span>
+                            <p className="text-xs text-gray-500 truncate">{contact.email}</p>
                           </div>
                         </div>
                       ))
                     ) : (
-                      <div className="px-2 py-2 text-gray-500 text-xs">No contacts found</div>
+                      <div className="px-3 py-2 text-gray-500 text-sm">No contacts found</div>
                     )}
                   </div>
                 )}
               </div>
-            )}
+            </div>
 
-            {replyMode === 'forward' && (
-              <div className="mb-3">
-                <input
-                  type="email"
-                  value={forwardTo}
-                  onChange={(e) => {
-                    setForwardTo(e.target.value);
-                    forwardToRef.current = e.target.value; // Update ref
-                    handleDraftChange();
-                  }}
-                  placeholder="Forward to..."
-                  className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-            )}
-
-            <div className="border border-gray-300 rounded overflow-hidden mb-3" style={{ minHeight: '350px' }}>
+            {/* Rich Text Editor */}
+            <div className="border-t border-gray-200" style={{ minHeight: '350px' }}>
               <RichTextEditor
                 value={replyContent}
                 onChange={(content) => {
                   setReplyContent(content);
-                  replyContentRef.current = content; // Update ref
+                  replyContentRef.current = content;
                   handleDraftChange();
                 }}
                 placeholder="Type your message..."
-                minHeight="400px"
+                minHeight="350px"
+                showFileAttachmentButton={true}
+                onFileAttachment={handleReplyFileAttachment}
               />
             </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleSendReply}
-                disabled={sending || !replyContent.trim() || (replyMode === 'forward' && !forwardTo.trim())}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded text-sm font-medium transition-colors shadow-sm"
-              >
-                {sending ? 'Sending...' : 'Send'}
-              </button>
-
-              {/* Manual Save Draft button */}
-              <button
-                onClick={() => {
-                  if (!isDirty) {
-                    sonnerToast.info('No changes to save');
-                    return;
-                  }
-                  saveDraft();
-                }}
-                disabled={isSaving || !isDirty}
-                className="px-4 py-2 text-sm text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {isSaving ? 'Saving...' : 'Save Draft'}
-              </button>
-
-              {/* Discard Draft button - only show if this is a draft */}
-              {draftId && (
-                <button
-                  onClick={async () => {
-                    if (window.confirm('Are you sure you want to discard this draft?')) {
-                      try {
-                        const draftIdToDelete = draftId;
-                        const isDraftEmail = email?.labelIds?.includes('DRAFT');
-
-                        // Delete the draft
-                        await deleteReplyDraft(draftIdToDelete);
-                        console.log('🗑️ Draft deleted:', draftIdToDelete);
-
-                        // Emit event to decrement draft counter
-                        window.dispatchEvent(new CustomEvent('email-deleted', {
-                          detail: { emailId: draftIdToDelete }
-                        }));
-                        console.log('📤 Emitted email-deleted event for discarded draft:', draftIdToDelete);
-
-                        sonnerToast.success('Draft discarded');
-
-                        // Close composer and reset state
-                        setShowReplyComposer(false);
-                        setReplyContent('');
-                        setForwardTo('');
-                        setDraftId(null);
-                        setIsDirty(false);
-                        isDirtyRef.current = false;
-                        replyContentRef.current = '';
-                        forwardToRef.current = '';
-
-                        // CRITICAL UX: Context-aware navigation
-                        if (isDraftEmail) {
-                          // Case: Viewing draft from Drafts folder
-                          // Draft already deleted from Gmail - just navigate away
-                          console.log('🔄 Discarded draft from Drafts folder, navigating back to list');
-                          clearSelection();
-                          navigate(getBackToListUrl());
-                          // DON'T call onEmailDelete - draft already deleted, would cause 404
-                          // List removal happens via 'email-deleted' event listener
-                        } else {
-                          // Case: Draft in a thread (inbox view)
-                          // The thread still exists, just refresh to show without draft
-                          console.log('🔄 Discarded draft from thread, refreshing view');
-                          await fetchEmailAndThread();
-                          // Update parent to remove orange "Draft" badge
-                          if (email && onEmailUpdate) {
-                            onEmailUpdate({ ...email, hasDraftInThread: false } as Email);
-                          }
-                        }
-                      } catch (error) {
-                        console.error('Failed to discard draft:', error);
-                        sonnerToast.error('Failed to discard draft');
-                      }
-                    }
-                  }}
-                  className="px-4 py-2 text-sm text-red-600 hover:text-red-700 hover:bg-red-50 rounded transition-colors"
-                >
-                  Discard Draft
-                </button>
-              )}
-            </div>
+            {/* Attachment thumbnails section */}
+            {replyAttachments.length > 0 && (
+              <div className="flex-shrink-0 bg-gray-50 border-t border-gray-200 p-2">
+                <div className="flex items-center gap-1 mb-1">
+                  <Paperclip size={12} className="text-gray-500" />
+                  <span className="text-[10px] font-medium text-gray-600">
+                    {replyAttachments.length} file{replyAttachments.length > 1 ? 's' : ''}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {replyAttachments.map((file, index) => (
+                    <div key={index} className="group relative bg-white border border-gray-200 rounded p-1.5 hover:border-gray-300 transition-colors">
+                      <div className="flex items-center gap-1.5">
+                        <Paperclip size={12} className="text-gray-400" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-gray-900 truncate max-w-[100px]">{file.name}</p>
+                          <p className="text-xs text-gray-500">{(file.size / 1024).toFixed(1)} KB</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeReplyAttachment(index)}
+                          className="w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600"
+                          title="Remove attachment"
+                        >
+                          <X size={10} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -3487,108 +2755,157 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
           )}
         </div>
 
-        {/* Fullscreen Reply Composer */}
+        {/* Fullscreen Reply Composer - Compose.tsx style */}
         {showReplyComposer && isReplyExpanded && createPortal(
           <div className="fixed inset-0 z-[9999] bg-black/50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-lg shadow-2xl w-full h-full flex flex-col transition-all duration-300 ease-in-out">
-              {/* Header */}
-              <div className="px-4 py-3 bg-gray-100 border-b border-gray-200 flex items-center justify-between flex-shrink-0 rounded-t-lg">
-                <div className="flex items-center gap-3">
-                  <h2 className="text-sm font-semibold text-gray-800">
-                    {replyMode === 'reply' && 'Reply'}
-                    {replyMode === 'replyAll' && 'Reply all'}
-                    {replyMode === 'forward' && 'Forward'}
-                  </h2>
-                  {draftId && !isDirty && (
-                    <span className="flex items-center gap-1.5 text-xs font-medium text-amber-700 bg-amber-50 px-2 py-1 rounded border border-amber-200">
-                      Continuing draft
-                    </span>
-                  )}
+            <div className="bg-white rounded-lg shadow-2xl w-full h-full flex flex-col transition-all duration-300 ease-in-out overflow-hidden">
+              {/* Outlook-style Header */}
+              <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
+                <div className="flex items-center gap-4">
+                  {/* Send Button */}
+                  <button
+                    type="button"
+                    onClick={handleSendReply}
+                    disabled={sending || !replyContent.trim() || (replyMode === 'forward' && !forwardTo.trim())}
+                    className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-medium rounded transition-colors"
+                  >
+                    <SendHorizontal size={14} />
+                    {sending ? 'Sending...' : 'Send'}
+                  </button>
+
+                  {/* Draft status indicator */}
                   {isSaving && (
-                    <span className="flex items-center gap-1.5 text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                    <span className="flex items-center gap-1.5 text-xs font-medium text-green-600">
                       <span className="animate-pulse">●</span>
                       Saving...
                     </span>
                   )}
                   {!isSaving && lastSavedAt && (
-                    <span className="flex items-center gap-1.5 text-xs font-medium text-green-600 bg-green-50 px-2 py-1 rounded">
+                    <span className="flex items-center gap-1.5 text-xs font-medium text-green-600">
                       <span>✓</span>
                       Saved {format(lastSavedAt, 'h:mm a')}
                     </span>
                   )}
-                  {!isSaving && !lastSavedAt && isDirty && (
-                    <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded">
-                      Unsaved changes
-                    </span>
-                  )}
+
+                  {/* From display */}
+                  <div className="flex items-center gap-1 text-sm text-gray-700">
+                    <span className="text-gray-500">From:</span>
+                    <span>{currentProfile?.userEmail || 'me@example.com'}</span>
+                  </div>
                 </div>
+
+                {/* Right side icons */}
                 <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setIsReplyExpanded(false)}
-                    className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded transition-colors"
-                    title="Minimize"
-                  >
-                    <Minimize2 size={16} />
-                  </button>
                   <button
                     type="button"
                     onClick={() => {
                       setIsReplyExpanded(false);
                       setShowReplyComposer(false);
+                      setReplyContent('');
+                      setForwardTo('');
+                      setReplyMode('reply');
+                      setCcRecipients([]);
+                      setBccRecipients([]);
+                      setCcInput('');
+                      setBccInput('');
+                      setShowCc(false);
+                      setShowBcc(false);
+                      replyContentRef.current = '';
+                      forwardToRef.current = '';
+                      setIsDirty(false);
+                      isDirtyRef.current = false;
                     }}
-                    className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded transition-colors"
-                    title="Close"
+                    className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                    title="Discard"
                   >
-                    <X size={16} />
+                    <Trash2 size={18} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsReplyExpanded(false)}
+                    className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                    title="Minimize"
+                  >
+                    <Minimize2 size={18} />
                   </button>
                 </div>
               </div>
 
-              {/* Body */}
-              <div className="flex-1 flex flex-col min-h-0 p-4">
-                {/* CC/BCC Toggle buttons for expanded mode */}
-                {(!showCc || !showBcc) && (
-                  <div className="flex items-center gap-3 mb-3">
-                    {!showCc && (
+              {/* Body with recipient fields */}
+              <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                {/* Recipient fields section */}
+                <div className="flex-shrink-0 px-4 py-2 space-y-2 border-b border-gray-100">
+                  {/* TO Section */}
+                  <div className="relative">
+                    <div className="flex items-start gap-3 py-2">
                       <button
                         type="button"
-                        onClick={() => setShowCc(true)}
-                        className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                        className="px-3 py-1 text-sm text-gray-700 border border-gray-300 rounded hover:bg-gray-50 flex-shrink-0"
                       >
-                        Add CC
+                        To
                       </button>
-                    )}
-                    {!showBcc && (
-                      <button
-                        type="button"
-                        onClick={() => setShowBcc(true)}
-                        className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
-                      >
-                        Add BCC
-                      </button>
-                    )}
+                      <div className="flex-1 flex flex-wrap items-center gap-1.5 border-b border-gray-300 pb-2 min-h-[32px]">
+                        {replyMode === 'forward' ? (
+                          <input
+                            type="email"
+                            value={forwardTo}
+                            onChange={(e) => {
+                              setForwardTo(e.target.value);
+                              forwardToRef.current = e.target.value;
+                              handleDraftChange();
+                            }}
+                            className="flex-1 min-w-[120px] outline-none text-sm py-0.5 bg-transparent"
+                            placeholder="Enter recipient email..."
+                          />
+                        ) : (
+                          (() => {
+                            const { to } = getReplyRecipients(replyToMessage, replyMode);
+                            return to ? (
+                              <div className="flex items-center bg-gray-100 text-gray-800 px-2 py-0.5 rounded text-sm">
+                                <span>{to}</span>
+                              </div>
+                            ) : (
+                              <span className="text-sm text-gray-400">No valid recipients</span>
+                            );
+                          })()
+                        )}
+                      </div>
+                    </div>
                   </div>
-                )}
 
-                {/* CC Section for expanded mode */}
-                {showCc && (
-                  <div className="relative mb-3">
-                    <div className="flex items-center border border-gray-200 rounded-lg py-1.5 px-3 gap-2 bg-gray-50">
-                      <span className="text-gray-500 text-xs w-10">CC:</span>
-                      <div className="flex-1 flex flex-wrap items-center gap-1">
+                  {/* CC Section */}
+                  <div className="relative">
+                    <div className="flex items-start gap-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowCc(!showCc)}
+                        className="px-3 py-1 text-sm text-gray-700 border border-gray-300 rounded hover:bg-gray-50 flex-shrink-0"
+                      >
+                        Cc
+                      </button>
+                      <div className="flex-1 flex flex-wrap items-center gap-1.5 border-b border-gray-300 pb-2 min-h-[32px]">
+                        {replyMode === 'replyAll' && (() => {
+                          const { cc } = getReplyRecipients(replyToMessage, 'replyAll');
+                          return cc ? cc.split(', ').map((email, idx) => (
+                            <div key={`auto-cc-${idx}`} className="flex items-center bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-sm">
+                              <span>{email}</span>
+                            </div>
+                          )) : null;
+                        })()}
+                        
                         {ccRecipients.map((email, index) => (
-                          <div key={index} className="flex items-center bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded-full text-[10px]">
+                          <div key={index} className="flex items-center bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-sm">
                             <span>{email}</span>
                             <button
                               type="button"
                               onClick={() => removeCcRecipient(email)}
-                              className="ml-1 text-blue-600 hover:text-blue-800"
+                              className="ml-1.5 text-blue-600 hover:text-blue-800"
                             >
-                              <X size={10} />
+                              <X size={12} />
                             </button>
                           </div>
                         ))}
+
                         <input
                           type="text"
                           value={ccInput}
@@ -3615,67 +2932,61 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                             handleCcInputBlur();
                           }}
                           onKeyDown={handleCcInputKeyDown}
-                          className="flex-1 min-w-[100px] outline-none text-xs py-0.5 bg-transparent"
+                          className="flex-1 min-w-[120px] outline-none text-sm py-0.5 bg-transparent"
                           placeholder=""
                         />
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowCc(false);
-                          setCcRecipients([]);
-                          setCcInput('');
-                        }}
-                        className="text-gray-400 hover:text-gray-600"
-                      >
-                        <X size={14} />
-                      </button>
                     </div>
+
                     {showCcDropdown && (
-                      <div className="absolute top-full left-0 right-0 z-[10000] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto mt-1">
+                      <div className="absolute top-full left-14 right-0 z-[10000] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
                         {filteredCcContacts.length > 0 ? (
                           filteredCcContacts.map((contact, index) => (
                             <div
                               key={`cc-exp-${contact.email}-${index}`}
                               onClick={() => handleCcContactSelect(contact)}
-                              className="flex items-center px-2 py-1.5 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                              className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
                             >
                               {contact.photoUrl ? (
-                                <img src={contact.photoUrl} alt={contact.name} className="w-6 h-6 rounded-full mr-2 flex-shrink-0" />
+                                <img src={contact.photoUrl} alt={contact.name} className="w-7 h-7 rounded-full mr-2.5 flex-shrink-0" />
                               ) : (
-                                <div className="w-6 h-6 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-medium mr-2 flex-shrink-0">
+                                <div className="w-7 h-7 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-medium mr-2.5 flex-shrink-0">
                                   {getProfileInitial(contact.name, contact.email)}
                                 </div>
                               )}
                               <div className="flex-1 min-w-0">
-                                <span className="text-xs font-medium text-gray-900 truncate">{contact.name}</span>
-                                <p className="text-[10px] text-gray-500 truncate">{contact.email}</p>
+                                <span className="text-sm font-medium text-gray-900 truncate">{contact.name}</span>
+                                <p className="text-xs text-gray-500 truncate">{contact.email}</p>
                               </div>
                             </div>
                           ))
                         ) : (
-                          <div className="px-2 py-2 text-gray-500 text-xs">No contacts found</div>
+                          <div className="px-3 py-2 text-gray-500 text-sm">No contacts found</div>
                         )}
                       </div>
                     )}
                   </div>
-                )}
 
-                {/* BCC Section for expanded mode */}
-                {showBcc && (
-                  <div className="relative mb-3">
-                    <div className="flex items-center border border-gray-200 rounded-lg py-1.5 px-3 gap-2 bg-gray-50">
-                      <span className="text-gray-500 text-xs w-10">BCC:</span>
-                      <div className="flex-1 flex flex-wrap items-center gap-1">
+                  {/* BCC Section */}
+                  <div className="relative">
+                    <div className="flex items-start gap-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowBcc(!showBcc)}
+                        className="px-3 py-1 text-sm text-gray-700 border border-gray-300 rounded hover:bg-gray-50 flex-shrink-0"
+                      >
+                        Bcc
+                      </button>
+                      <div className="flex-1 flex flex-wrap items-center gap-1.5 border-b border-gray-300 pb-2 min-h-[32px]">
                         {bccRecipients.map((email, index) => (
-                          <div key={index} className="flex items-center bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded-full text-[10px]">
+                          <div key={index} className="flex items-center bg-purple-100 text-purple-800 px-2 py-0.5 rounded text-sm">
                             <span>{email}</span>
                             <button
                               type="button"
                               onClick={() => removeBccRecipient(email)}
-                              className="ml-1 text-purple-600 hover:text-purple-800"
+                              className="ml-1.5 text-purple-600 hover:text-purple-800"
                             >
-                              <X size={10} />
+                              <X size={12} />
                             </button>
                           </div>
                         ))}
@@ -3705,69 +3016,44 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                             handleBccInputBlur();
                           }}
                           onKeyDown={handleBccInputKeyDown}
-                          className="flex-1 min-w-[100px] outline-none text-xs py-0.5 bg-transparent"
+                          className="flex-1 min-w-[120px] outline-none text-sm py-0.5 bg-transparent"
                           placeholder=""
                         />
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowBcc(false);
-                          setBccRecipients([]);
-                          setBccInput('');
-                        }}
-                        className="text-gray-400 hover:text-gray-600"
-                      >
-                        <X size={14} />
-                      </button>
                     </div>
+
                     {showBccDropdown && (
-                      <div className="absolute top-full left-0 right-0 z-[10000] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto mt-1">
+                      <div className="absolute top-full left-14 right-0 z-[10000] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
                         {filteredBccContacts.length > 0 ? (
                           filteredBccContacts.map((contact, index) => (
                             <div
                               key={`bcc-exp-${contact.email}-${index}`}
                               onClick={() => handleBccContactSelect(contact)}
-                              className="flex items-center px-2 py-1.5 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                              className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
                             >
                               {contact.photoUrl ? (
-                                <img src={contact.photoUrl} alt={contact.name} className="w-6 h-6 rounded-full mr-2 flex-shrink-0" />
+                                <img src={contact.photoUrl} alt={contact.name} className="w-7 h-7 rounded-full mr-2.5 flex-shrink-0" />
                               ) : (
-                                <div className="w-6 h-6 rounded-full bg-purple-500 text-white flex items-center justify-center text-xs font-medium mr-2 flex-shrink-0">
+                                <div className="w-7 h-7 rounded-full bg-purple-500 text-white flex items-center justify-center text-xs font-medium mr-2.5 flex-shrink-0">
                                   {getProfileInitial(contact.name, contact.email)}
                                 </div>
                               )}
                               <div className="flex-1 min-w-0">
-                                <span className="text-xs font-medium text-gray-900 truncate">{contact.name}</span>
-                                <p className="text-[10px] text-gray-500 truncate">{contact.email}</p>
+                                <span className="text-sm font-medium text-gray-900 truncate">{contact.name}</span>
+                                <p className="text-xs text-gray-500 truncate">{contact.email}</p>
                               </div>
                             </div>
                           ))
                         ) : (
-                          <div className="px-2 py-2 text-gray-500 text-xs">No contacts found</div>
+                          <div className="px-3 py-2 text-gray-500 text-sm">No contacts found</div>
                         )}
                       </div>
                     )}
                   </div>
-                )}
+                </div>
 
-                {replyMode === 'forward' && (
-                  <div className="mb-3">
-                    <input
-                      type="email"
-                      value={forwardTo}
-                      onChange={(e) => {
-                        setForwardTo(e.target.value);
-                        forwardToRef.current = e.target.value;
-                        handleDraftChange();
-                      }}
-                      placeholder="Forward to..."
-                      className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
-                )}
-
-                <div className="flex-1 border border-gray-300 rounded overflow-hidden">
+                {/* Rich Text Editor - fills remaining space */}
+                <div className="flex-1 min-h-0">
                   <RichTextEditor
                     value={replyContent}
                     onChange={(content) => {
@@ -3777,60 +3063,42 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                     }}
                     placeholder="Type your message..."
                     minHeight="100%"
+                    showFileAttachmentButton={true}
+                    onFileAttachment={handleReplyFileAttachment}
                   />
                 </div>
-              </div>
 
-              {/* Footer */}
-              <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 flex items-center gap-2 flex-shrink-0 rounded-b-lg">
-                <button
-                  onClick={handleSendReply}
-                  disabled={sending || !replyContent.trim() || (replyMode === 'forward' && !forwardTo.trim())}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded text-sm font-medium transition-colors shadow-sm"
-                >
-                  {sending ? 'Sending...' : 'Send'}
-                </button>
-                <button
-                  onClick={() => {
-                    if (!isDirty) {
-                      sonnerToast.info('No changes to save');
-                      return;
-                    }
-                    saveDraft();
-                  }}
-                  disabled={isSaving || !isDirty}
-                  className="px-4 py-2 text-sm text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  {isSaving ? 'Saving...' : 'Save Draft'}
-                </button>
-                {draftId && (
-                  <button
-                    onClick={async () => {
-                      if (window.confirm('Are you sure you want to discard this draft?')) {
-                        try {
-                          await deleteReplyDraft(draftId);
-                          window.dispatchEvent(new CustomEvent('email-deleted', { detail: { emailId: draftId } }));
-                          sonnerToast.success('Draft discarded');
-                          setIsReplyExpanded(false);
-                          setShowReplyComposer(false);
-                          setReplyContent('');
-                          setForwardTo('');
-                          setDraftId(null);
-                          setIsDirty(false);
-                          isDirtyRef.current = false;
-                          replyContentRef.current = '';
-                          forwardToRef.current = '';
-                          await fetchEmailAndThread();
-                        } catch (error) {
-                          console.error('Failed to discard draft:', error);
-                          sonnerToast.error('Failed to discard draft');
-                        }
-                      }
-                    }}
-                    className="px-4 py-2 text-sm text-red-600 hover:text-red-700 hover:bg-red-50 rounded transition-colors"
-                  >
-                    Discard Draft
-                  </button>
+                {/* Attachment thumbnails section */}
+                {replyAttachments.length > 0 && (
+                  <div className="flex-shrink-0 bg-gray-50 border-t border-gray-200 p-2">
+                    <div className="flex items-center gap-1 mb-1">
+                      <Paperclip size={12} className="text-gray-500" />
+                      <span className="text-[10px] font-medium text-gray-600">
+                        {replyAttachments.length} file{replyAttachments.length > 1 ? 's' : ''}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {replyAttachments.map((file, index) => (
+                        <div key={index} className="group relative bg-white border border-gray-200 rounded p-1.5 hover:border-gray-300 transition-colors">
+                          <div className="flex items-center gap-1.5">
+                            <Paperclip size={12} className="text-gray-400" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-medium text-gray-900 truncate max-w-[100px]">{file.name}</p>
+                              <p className="text-xs text-gray-500">{(file.size / 1024).toFixed(1)} KB</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => removeReplyAttachment(index)}
+                              className="w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600"
+                              title="Remove attachment"
+                            >
+                              <X size={10} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </div>
             </div>
@@ -3907,271 +3175,45 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       `}</style>
 
       {/* Create Filter Modal */}
-      {showCreateFilterModal && createPortal(
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[10000]">
-          <div
-            ref={filterModalRef}
-            className="bg-white rounded-lg shadow-xl w-96 max-w-[90vw] max-h-[90vh] overflow-hidden"
-          >
-            {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-gray-900">Create a rule</h2>
-                <button
-                  onClick={handleCloseCreateFilterModal}
-                  className="p-1 hover:bg-gray-100 rounded transition-colors"
-                >
-                  <X size={16} className="text-gray-500" />
-                </button>
-              </div>
-            </div>
-            {/* Modal Body */}
-            <div className="px-6 py-4">
-              <div className="mb-4">
-                <p className="text-sm text-gray-700 mb-4">
-                  Always move messages from <span className="font-semibold">{email?.from.name || cleanEmailAddress(email?.from.email || '')}</span> to this folder:
-                </p>
-                {/* Label Selection UI */}
-                <div className="border border-gray-200 rounded-lg">
-                  {/* Search Bar */}
-                  <div className="p-2 border-b border-gray-100">
-                    <div className="relative">
-                      <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
-                      <input
-                        type="text"
-                        placeholder="Search for a folder"
-                        value={filterLabelQuery}
-                        onChange={(e) => setFilterLabelQuery(e.target.value)}
-                        className="w-full pl-7 pr-2 py-1.5 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                      />
-                      {filterLabelQuery && (
-                        <button
-                          onClick={() => setFilterLabelQuery('')}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 hover:bg-gray-100 rounded"
-                          aria-label="Clear search"
-                        >
-                          <X size={12} className="text-gray-400" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Labels List */}
-                  <div className="max-h-56 overflow-y-auto">
-                    {filteredFilterLabels.length > 0 ? (
-                      filteredFilterLabels.map((label: any) => (
-                        <button
-                          key={label.id}
-                          className={`w-full px-3 py-2 text-left text-sm flex items-center justify-between hover:bg-gray-50 ${selectedFilterLabel === label.displayName ? 'bg-blue-50' : ''}`}
-                          onClick={() => handleSelectFilterLabel(label.id, label.displayName)}
-                        >
-                          <span className="truncate text-gray-800">{label.displayName}</span>
-                          {selectedFilterLabel === label.displayName && (
-                            <span className="text-xs text-blue-600">Selected</span>
-                          )}
-                        </button>
-                      ))
-                    ) : (
-                      <div className="px-3 py-3 text-sm text-gray-500">No folders found</div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-            {/* Modal Footer */}
-            <div className="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
-              <button
-                onClick={handleCloseCreateFilterModal}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateFilterWithLabel}
-                disabled={!selectedFilterLabel}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-              >
-                OK
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      {(() => {
+        const counterparty = getFilterCounterparty();
+        return (
+          <CreateFilterModal
+            isOpen={showCreateFilterModal}
+            modalRef={filterModalRef}
+            senderName={counterparty.name}
+            senderEmail={counterparty.email}
+            selectedFilterLabel={selectedFilterLabel}
+            onSelectLabel={handleSelectFilterLabel}
+            onClose={handleCloseCreateFilterModal}
+            onCreateFilter={handleCreateFilterWithLabel}
+          />
+        );
+      })()}
 
       {/* Create Label Modal */}
-      {showCreateLabelModal && createPortal(
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[10000]">
-          <div
-            ref={createLabelModalRef}
-            className="bg-white rounded-lg shadow-xl w-96 max-w-[90vw] max-h-[90vh] overflow-hidden"
-          >
-            {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-gray-900">New folder</h2>
-                <button
-                  onClick={() => setShowCreateLabelModal(false)}
-                  className="p-1 hover:bg-gray-100 rounded transition-colors"
-                >
-                  <X size={16} className="text-gray-500" />
-                </button>
-              </div>
-            </div>
-            {/* Modal Body */}
-            <div className="px-6 py-4">
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-sm text-gray-600">Folder name</label>
-                  <Input
-                    placeholder="Enter folder name"
-                    value={newLabelName}
-                    onChange={(e) => setNewLabelName(e.target.value)}
-                    className="w-full"
-                    autoFocus
-                  />
-                </div>
-
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="nest-under-create"
-                    checked={nestUnder}
-                    onCheckedChange={(checked) => setNestUnder(!!checked)}
-                  />
-                  <label htmlFor="nest-under-create" className="text-sm text-gray-600">
-                    Nest folder under
-                  </label>
-                </div>
-
-                {nestUnder && (
-                  <div className="space-y-2">
-                    <label className="text-sm text-gray-600">Parent folder</label>
-                    <Select value={parentLabel} onValueChange={setParentLabel}>
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Choose parent folder..." />
-                      </SelectTrigger>
-                      <SelectContent className="max-h-64">
-                        {filteredFilterLabels.map((label: any) => (
-                          <SelectItem key={label.id} value={label.displayName}>
-                            {label.displayName}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-
-                <div className="flex items-start space-x-2">
-                  <Checkbox
-                    id="auto-filter-future"
-                    checked={autoFilterFuture}
-                    onCheckedChange={(checked) => setAutoFilterFuture(!!checked)}
-                  />
-                  <label htmlFor="auto-filter-future" className="text-sm text-gray-600">
-                    Also auto-move future emails from {cleanEmailAddress(email?.from?.email || '') || 'this sender'}
-                  </label>
-                </div>
-              </div>
-            </div>
-            {/* Modal Footer */}
-            <div className="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
-              <Button
-                variant="outline"
-                onClick={() => setShowCreateLabelModal(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={handleCreateLabelSubmit}
-                disabled={!newLabelName.trim()}
-              >
-                Create
-              </Button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      <CreateLabelModal
+        isOpen={showCreateLabelModal}
+        modalRef={createLabelModalRef}
+        senderEmail={cleanEmailAddress(email?.from?.email || '')}
+        newLabelName={newLabelName}
+        onLabelNameChange={setNewLabelName}
+        nestUnder={nestUnder}
+        onNestUnderChange={setNestUnder}
+        parentLabel={parentLabel}
+        onParentLabelChange={setParentLabel}
+        autoFilterFuture={autoFilterFuture}
+        onAutoFilterFutureChange={setAutoFilterFuture}
+        availableLabels={filteredFilterLabels}
+        onClose={() => setShowCreateLabelModal(false)}
+        onSubmit={handleCreateLabelSubmit}
+      />
 
       {/* Attachment Preview Modal */}
-      {previewAttachment && createPortal(
-        <div
-          className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-[10000]"
-          onClick={() => setPreviewAttachment(null)}
-        >
-          <div
-            className="relative max-w-7xl max-h-[90vh] w-full mx-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="absolute top-0 left-0 right-0 bg-black bg-opacity-75 px-4 py-3 flex items-center justify-between z-10">
-              <div className="flex items-center gap-3 text-white">
-                <h3 className="text-sm font-medium truncate">{previewAttachment.name}</h3>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    const link = document.createElement('a');
-                    link.href = previewAttachment.url;
-                    link.download = previewAttachment.name;
-                    link.click();
-                  }}
-                  className="p-2 hover:bg-white hover:bg-opacity-20 rounded transition-colors text-white"
-                  title="Download"
-                >
-                  <Download size={18} />
-                </button>
-                <button
-                  onClick={() => setPreviewAttachment(null)}
-                  className="p-2 hover:bg-white hover:bg-opacity-20 rounded transition-colors text-white"
-                  title="Close"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-            </div>
-
-            {/* Content */}
-            <div className="bg-white rounded-lg overflow-hidden mt-14 max-h-[calc(90vh-56px)]">
-              {previewAttachment.type.startsWith('image/') ? (
-                <img
-                  src={previewAttachment.url}
-                  alt={previewAttachment.name}
-                  className="w-full h-full object-contain"
-                />
-              ) : previewAttachment.type === 'application/pdf' ? (
-                <iframe
-                  src={previewAttachment.url}
-                  className="w-full h-[calc(90vh-56px)]"
-                  title={previewAttachment.name}
-                />
-              ) : previewAttachment.type.startsWith('text/') ? (
-                <iframe
-                  src={previewAttachment.url}
-                  className="w-full h-[calc(90vh-56px)]"
-                  title={previewAttachment.name}
-                />
-              ) : (
-                <div className="flex flex-col items-center justify-center h-96 text-gray-500">
-                  <p className="mb-4">Preview not available for this file type</p>
-                  <button
-                    onClick={() => {
-                      const link = document.createElement('a');
-                      link.href = previewAttachment.url;
-                      link.download = previewAttachment.name;
-                      link.click();
-                    }}
-                    className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-                  >
-                    Download File
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      <AttachmentPreviewModal
+        attachment={previewAttachment}
+        onClose={() => setPreviewAttachment(null)}
+      />
 
       {/* Move to Folder Dialog */}
       <MoveToFolderDialog

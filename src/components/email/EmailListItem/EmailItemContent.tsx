@@ -26,8 +26,22 @@ export function EmailItemContent({ email, isSentFolder, hasDraftInThread }: Emai
   ).toLowerCase().trim();
   
   // Check if the email's From is the current user (meaning I sent/replied last)
-  const fromEmail = (email.from?.email || '').toLowerCase().trim();
+  // Clean the fromEmail to extract just the email address (handles "Name <email>" format)
+  const rawFromEmail = email.from?.email || '';
+  const fromEmail = cleanEmailAddress(rawFromEmail).toLowerCase().trim();
   const isFromMe = currentUserEmail && fromEmail === currentUserEmail;
+  
+  // Debug: Log mismatch when fromEmail looks like current user but doesn't match
+  if (!isFromMe && rawFromEmail.toLowerCase().includes('@dnddesigncenter.com')) {
+    console.log('⚠️ EmailItemContent: fromEmail is dnddesigncenter but isFromMe is false:', {
+      rawFromEmail,
+      cleanedFromEmail: fromEmail,
+      currentUserEmail,
+      match: fromEmail === currentUserEmail,
+      emailSubject: email.subject?.substring(0, 30),
+      to: email.to
+    });
+  }
   
   // Determine sender/recipient text
   const senderText = (() => {

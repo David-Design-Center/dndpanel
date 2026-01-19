@@ -63,8 +63,31 @@ FeatureProviders (route-specific, wraps Layout):
 | Thread viewer | `src/components/email/EmbeddedViewEmailClean.tsx` |
 | Folders sidebar | `src/components/email labels/FoldersColumn.tsx` |
 
+### 📖 EmbeddedViewEmail Architecture (Thread Viewer)
+
+**For ANY issues with the email viewer/thread viewer component**, consult:
+→ **`docs/EmbeddedViewEmail-Architecture.md`**
+
+This document contains:
+- Quick issue lookup table (symptom → file mapping)
+- Module breakdown (hooks, components, utils)
+- State ownership diagram
+- Debugging workflow
+
+The thread viewer was refactored from 4,108 lines into modular pieces:
+- `hooks/useEmailActions.ts` - Trash, spam, star, important, move handlers
+- `hooks/useDraftComposer.ts` - Auto-save drafts, dirty tracking, timers
+- `hooks/useInlineImages.ts` - CID image resolution
+- `components/` - Extracted modals (AttachmentPreview, CreateFilter, CreateLabel)
+- `utils/` - Formatters, sender colors, reply recipient logic
+
 ## Code Style Conventions
 
+- **Toast Notifications**: Use **sonner** library (`import { toast } from 'sonner'`). Do NOT use `useToast` from `@/components/ui/use-toast` - that hook is not connected to any Toaster component.
+  - Success: `toast.success('Message')`
+  - Error: `toast.error('Message')`
+  - Info: `toast.message('Message')`
+  - In EmbeddedViewEmailClean.tsx, sonner is imported as `sonnerToast` to avoid naming conflicts.
 - **Logging**: Use emoji prefixes for grep-ability: `📝 Draft`, `🗑️ Delete`, `✅ Success`, `❌ Error`
 - **Async Handlers**: Always wrap in try-catch with console.error for debugging
 - **Comments**: Explain WHY not WHAT. Mark race conditions, timing issues prominently.

@@ -282,17 +282,10 @@ export function EmailItemContextMenu({
           >
             <button
               className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center"
-              onClick={handleManageFilters}
-            >
-              <Settings size={16} className="mr-3 text-gray-500" />
-              Manage Rules
-            </button>
-            <button
-              className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center"
               onClick={handleCreateNewFilter}
             >
               <Plus size={16} className="mr-3 text-gray-500" />
-              Create Rules
+              Create Rule
             </button>
           </div>
         )}

@@ -9,6 +9,7 @@ import {
   queueGmailRequest,
   getGmailQueueStatus,
 } from "../../../utils/requestQueue";
+import { FEATURE_FLAGS } from "../../../config/server";
 
 const LABEL_DETAIL_BATCH_SIZE = 50;
 const LABEL_DETAIL_MIN_BATCH_SIZE = 15;
@@ -42,6 +43,15 @@ const isGmailSignedIn = (): boolean => {
 
 /**
  * Fetch Gmail labels
+ * 
+ * When FEATURE_FLAGS.USE_DIRECT_GMAIL_LABELS is TRUE:
+ *   - Fetches ALL labels (system + custom) via individual users.labels.get() calls
+ *   - Logs detailed API responses to console for Google Support debugging
+ *   - Batches in groups of 5, sequential batches
+ * 
+ * When FEATURE_FLAGS.USE_DIRECT_GMAIL_LABELS is FALSE:
+ *   - Only fetches system labels with counts (original behavior)
+ *   - Custom labels hydrate later via Supabase sync
  */
 export const fetchGmailLabels = async (): Promise<GmailLabel[]> => {
   try {
@@ -58,6 +68,123 @@ export const fetchGmailLabels = async (): Promise<GmailLabel[]> => {
       return [];
     }
 
+    // =========================================================================
+    // DIAGNOSTIC MODE: Fetch ALL labels with detailed logging
+    // Purpose: Google Support case - prove counters come directly from Gmail API
+    // =========================================================================
+    if (FEATURE_FLAGS.USE_DIRECT_GMAIL_LABELS) {
+      console.log("═══════════════════════════════════════════════════════════════");
+      console.log("🔬 DIAGNOSTIC MODE: Direct Gmail API Label Fetch");
+      console.log("📅 Timestamp:", new Date().toISOString());
+      console.log("📊 Total labels to fetch:", response.result.labels.length);
+      console.log("═══════════════════════════════════════════════════════════════");
+
+      const allLabels = response.result.labels;
+      const labelDetails: any[] = [];
+      const failedLabels: { labelName: string; labelId: string; error: unknown }[] = [];
+      
+      // Batch size of 5 as per plan
+      const DIAGNOSTIC_BATCH_SIZE = 5;
+      const totalBatches = Math.ceil(allLabels.length / DIAGNOSTIC_BATCH_SIZE);
+
+      for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+        const start = batchIndex * DIAGNOSTIC_BATCH_SIZE;
+        const batch = allLabels.slice(start, start + DIAGNOSTIC_BATCH_SIZE);
+        
+        console.log(`\n📦 Batch ${batchIndex + 1}/${totalBatches} - Fetching ${batch.length} labels...`);
+
+        const batchResults = await Promise.all(
+          batch.map(async (label: any) => {
+            try {
+              const detailResponse = await window.gapi.client.gmail.users.labels.get({
+                userId: "me",
+                id: label.id,
+              });
+              
+              const result = detailResponse.result;
+              
+              // Log each label's API response in detail
+              console.log(
+                `📊 Label GET: "${result.name}" | ` +
+                `id: ${result.id} | ` +
+                `messagesTotal: ${result.messagesTotal ?? 0} | ` +
+                `threadsTotal: ${result.threadsTotal ?? 0} | ` +
+                `messagesUnread: ${result.messagesUnread ?? 0} | ` +
+                `threadsUnread: ${result.threadsUnread ?? 0}`
+              );
+              
+              return result;
+            } catch (error: any) {
+              console.error(`❌ Failed to fetch "${label.name}" (${label.id}):`, error?.message || error);
+              failedLabels.push({ labelName: label.name, labelId: label.id, error });
+              return null;
+            }
+          })
+        );
+
+        // Collect successful results
+        batchResults.forEach((result) => {
+          if (result) {
+            labelDetails.push(result);
+          }
+        });
+
+        console.log(`✅ Batch ${batchIndex + 1}/${totalBatches} complete`);
+
+        // Small delay between batches to avoid rate limiting
+        if (batchIndex < totalBatches - 1) {
+          await sleep(200);
+        }
+      }
+
+      // Summary table for easy copy-paste to Google Support
+      console.log("\n═══════════════════════════════════════════════════════════════");
+      console.log("📊 SUMMARY TABLE - All Labels with Counts");
+      console.log("📅 Timestamp:", new Date().toISOString());
+      console.log("───────────────────────────────────────────────────────────────");
+      
+      // Prepare data for console.table
+      const tableData = labelDetails.map((label) => ({
+        name: label.name,
+        id: label.id,
+        type: label.type || "user",
+        messagesTotal: label.messagesTotal ?? 0,
+        threadsTotal: label.threadsTotal ?? 0,
+        messagesUnread: label.messagesUnread ?? 0,
+        threadsUnread: label.threadsUnread ?? 0,
+      }));
+      
+      console.table(tableData);
+      
+      console.log("───────────────────────────────────────────────────────────────");
+      console.log(`✅ Successfully fetched: ${labelDetails.length}/${allLabels.length} labels`);
+      if (failedLabels.length) {
+        console.warn(`⚠️ Failed labels (${failedLabels.length}):`, failedLabels.map(f => f.labelName));
+      }
+      console.log("═══════════════════════════════════════════════════════════════");
+      console.log("ℹ️ NOTE: threadsUnread ≠ messagesUnread is expected behavior.");
+      console.log("   Gmail Inbox uses threads. Custom labels may use messages.");
+      console.log("═══════════════════════════════════════════════════════════════\n");
+
+      const labels: GmailLabel[] = labelDetails.map((label: any) => ({
+        id: label.id,
+        name: label.name,
+        messageListVisibility: label.messageListVisibility,
+        labelListVisibility: label.labelListVisibility,
+        type: label.type,
+        messagesTotal: label.messagesTotal || 0,
+        messagesUnread: label.messagesUnread || 0,
+        threadsTotal: label.threadsTotal || 0,
+        threadsUnread: label.threadsUnread || 0,
+      }));
+
+      return labels;
+    }
+
+    // =========================================================================
+    // PRODUCTION MODE: Original behavior - only fetch system labels
+    // =========================================================================
+    
     // Fetch details for SYSTEM labels only (custom labels hydrate later in background)
     const labelsToFetchDetails = response.result.labels.filter((label: any) => {
       return SYSTEM_LABELS_WITH_COUNTS.has(label.id);

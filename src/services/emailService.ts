@@ -1,14 +1,14 @@
 import { Email } from '../types';
 import { supabase } from '../lib/supabase';
 import { format } from 'date-fns';
-import { 
+import {
   getAttachmentDownloadUrl as getGmailAttachmentDownloadUrl
 } from '../lib/gmail';
 import { gapiCallWithRecovery } from '../utils/gapiCallWrapper';
 import { queueGmailRequest } from '../utils/requestQueue';
-import { 
-  fetchGmailMessages, 
-  sendGmailMessage, 
+import {
+  fetchGmailMessages,
+  sendGmailMessage,
   fetchGmailMessageById,
   fetchLatestMessageInThread,
   fetchThreadMessages,
@@ -45,15 +45,15 @@ const getOutOfOfficeSettings = async (profileName: string) => {
 
     if (error) {
       console.error('Error fetching out-of-office settings:', error);
-    } else if (data?.out_of_office_settings && 
-               typeof data.out_of_office_settings === 'object' &&
-               data.out_of_office_settings.autoReplyMessage) {
+    } else if (data?.out_of_office_settings &&
+      typeof data.out_of_office_settings === 'object' &&
+      data.out_of_office_settings.autoReplyMessage) {
       return data.out_of_office_settings;
     }
   } catch (error) {
     console.error('Error loading out-of-office settings:', error);
   }
-  
+
   const defaults: { [key: string]: { autoReplyMessage: string } } = {
     'David': {
       autoReplyMessage: `
@@ -76,7 +76,7 @@ const getOutOfOfficeSettings = async (profileName: string) => {
       `.trim()
     }
   };
-  
+
   return defaults[profileName] || {
     autoReplyMessage: `
       <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
@@ -90,26 +90,26 @@ const getOutOfOfficeSettings = async (profileName: string) => {
 
 export const checkAndSendAutoReply = async (email: Email): Promise<void> => {
   const senderEmail = email.from.email.toLowerCase();
-  
+
   // CRITICAL FIX: Immediate atomic check and lock
-  if (senderEmail === 'me@example.com' || 
-      senderEmail.includes('david') || 
-      senderEmail.includes('marti') ||
-      senderEmail.includes('natalia') ||
-      senderEmail.includes('dimitry') ||
-      processedSenders.has(senderEmail) ||
-      pendingSenders.has(senderEmail)) {
+  if (senderEmail === 'me@example.com' ||
+    senderEmail.includes('david') ||
+    senderEmail.includes('marti') ||
+    senderEmail.includes('natalia') ||
+    senderEmail.includes('dimitry') ||
+    processedSenders.has(senderEmail) ||
+    pendingSenders.has(senderEmail)) {
     return;
   }
-  
+
   // CRITICAL FIX: Mark as pending IMMEDIATELY to prevent race conditions
   pendingSenders.add(senderEmail);
-  
+
   try {
     // Get out-of-office statuses from Supabase profiles table
     let outOfOfficeUsers: string[] = [];
     const userStatuses: { [name: string]: boolean } = {};
-    
+
     try {
       const { data: profiles, error } = await supabase
         .from('profiles')
@@ -136,7 +136,7 @@ export const checkAndSendAutoReply = async (email: Email): Promise<void> => {
       // Fallback to localStorage
       const outOfOfficeStatuses = localStorage.getItem('outOfOfficeStatuses');
       const statuses = outOfOfficeStatuses ? JSON.parse(outOfOfficeStatuses) : {};
-      
+
       ['David', 'Marti', 'Natalia', 'Dimitry'].forEach(name => {
         if (statuses[name]) {
           outOfOfficeUsers.push(name);
@@ -146,31 +146,31 @@ export const checkAndSendAutoReply = async (email: Email): Promise<void> => {
         }
       });
     }
-    
+
     if (outOfOfficeUsers.length === 0) {
       return; // No one is out of office, no auto-reply needed
     }
-    
+
     // Don't auto-reply to automated emails, newsletters, etc.
     const automatedIndicators = [
       'noreply', 'no-reply', 'donotreply', 'notifications', 'newsletter',
       'support', 'automated', 'system', 'admin', 'info@', 'help@'
     ];
-    
+
     if (automatedIndicators.some(indicator => senderEmail.includes(indicator))) {
       return;
     }
-    
+
     // Determine who is out of office and get their settings
     let outOfOfficePerson = '';
     let autoReplyMessage = '';
     const userSettings: { [name: string]: any } = {};
-    
+
     // Load settings for all out-of-office users
     for (const userName of outOfOfficeUsers) {
       userSettings[userName] = await getOutOfOfficeSettings(userName);
     }
-    
+
     // Generate appropriate message based on who is out of office
     if (outOfOfficeUsers.length === 1) {
       // Single person out of office
@@ -209,12 +209,12 @@ export const checkAndSendAutoReply = async (email: Email): Promise<void> => {
         </div>
       `;
     }
-    
+
     console.log(`🏖️ ${outOfOfficePerson} is out of office, sending auto-reply to: ${senderEmail}`);
-    
+
     // Send auto-reply
     const autoReplySubject = `Re: ${email.subject}`;
-    
+
     // Send the auto-reply
     await sendGmailMessage(
       senderEmail,
@@ -228,7 +228,7 @@ export const checkAndSendAutoReply = async (email: Email): Promise<void> => {
     // CRITICAL FIX: Only mark as processed AFTER successful completion
     processedSenders.add(senderEmail);
     console.log(`✅ Auto-reply sent for ${outOfOfficePerson} to: ${senderEmail}`);
-    
+
   } catch (error) {
     console.error('❌ Error processing auto-reply for', senderEmail, ':', error);
     // CRITICAL FIX: Do NOT mark as processed on error to allow retry later
@@ -307,7 +307,7 @@ const clearOldLocalStorageCaches = (): void => {
   const keys = Object.keys(localStorage);
   const emailCacheKeys = keys.filter(key => key.startsWith(CACHE_KEY_PREFIX));
   const now = Date.now();
-  
+
   emailCacheKeys.forEach(key => {
     const data = getFromLocalStorage(key);
     if (data && data.timestamp && (now - data.timestamp > CACHE_VALIDITY_MS)) {
@@ -324,17 +324,17 @@ let currentCacheProfileId: string | null = null;
  */
 export const clearEmailCache = (): void => {
   console.log('Clearing all email caches (memory + localStorage)');
-  
+
   // Clear in-memory cache
   emailCache.list = undefined;
   emailCache.details = {};
   emailCache.threads = {};
-  
+
   // Clear localStorage cache
   const keys = Object.keys(localStorage);
   const emailCacheKeys = keys.filter(key => key.startsWith(CACHE_KEY_PREFIX));
   emailCacheKeys.forEach(key => localStorage.removeItem(key));
-  
+
   currentCacheProfileId = null;
 };
 
@@ -347,12 +347,12 @@ const invalidateEmailListCache = (reason: string): void => {
   if (emailCache.list) {
     emailCache.list = undefined;
   }
-  
+
   // Clear all localStorage list caches (they can have different queries)
   const keys = Object.keys(localStorage);
   const listCacheKeys = keys.filter(key => key.startsWith(`${CACHE_KEY_PREFIX}list_`));
   listCacheKeys.forEach(key => localStorage.removeItem(key));
-  
+
   console.log(`📦 Email list cache invalidated: ${reason} (cleared ${listCacheKeys.length} localStorage entries)`);
 };
 
@@ -361,7 +361,7 @@ const invalidateEmailListCache = (reason: string): void => {
  */
 export const clearEmailCacheForProfileSwitch = (newProfileId: string): void => {
   console.log(`Clearing email cache for profile switch to: ${newProfileId}`);
-  
+
   // If switching to a different profile, clear all caches
   if (currentCacheProfileId !== newProfileId) {
     clearEmailCache();
@@ -374,22 +374,22 @@ export const clearEmailCacheForProfileSwitch = (newProfileId: string): void => {
  */
 const getCachedEmailList = (query: string, maxAgeMs?: number): EmailCacheData | null => {
   // First check in-memory cache
-  if (emailCache.list && 
-      emailCache.list.query === query && 
-      isCacheValidForProfile(emailCache.list.timestamp, emailCache.list.profileId, maxAgeMs)) {
+  if (emailCache.list &&
+    emailCache.list.query === query &&
+    isCacheValidForProfile(emailCache.list.timestamp, emailCache.list.profileId, maxAgeMs)) {
     return emailCache.list;
   }
-  
+
   // Then check localStorage
   const cacheKey = `${CACHE_KEY_PREFIX}list_${query}_${currentCacheProfileId}`;
   const cachedData = getFromLocalStorage(cacheKey);
-  
+
   if (cachedData && isCacheValidForProfile(cachedData.timestamp, cachedData.profileId, maxAgeMs)) {
     // Restore to in-memory cache for faster access
     emailCache.list = cachedData;
     return cachedData;
   }
-  
+
   return null;
 };
 
@@ -404,10 +404,10 @@ const setCachedEmailList = (emails: Email[], query: string, nextPageToken?: stri
     profileId: currentCacheProfileId || undefined,
     nextPageToken
   };
-  
+
   // Save to in-memory cache
   emailCache.list = cacheData;
-  
+
   // Save to localStorage
   const cacheKey = `${CACHE_KEY_PREFIX}list_${query}_${currentCacheProfileId}`;
   setToLocalStorage(cacheKey, cacheData);
@@ -445,7 +445,7 @@ export const getEmails = async (
   // If force refresh is requested OR it's an inbox query, fetch new data (don't use cache for inbox)
   const isInboxQuery = (query?.toLowerCase() ?? '').includes('inbox');
   const shouldBypassCache = pageToken || forceRefresh;
-  
+
   if (!shouldBypassCache) {
     const cacheTtl = isInboxQuery ? INBOX_CACHE_MAX_AGE_MS : undefined;
     const cachedData = getCachedEmailList(query, cacheTtl);
@@ -459,12 +459,12 @@ export const getEmails = async (
     }
   }
 
-  console.log('Fetching fresh email list' + 
-    (forceRefresh ? ' (forced refresh)' : '') + 
-    (pageToken ? ' (pagination)' : '') + 
+  console.log('Fetching fresh email list' +
+    (forceRefresh ? ' (forced refresh)' : '') +
+    (pageToken ? ' (pagination)' : '') +
     (isInboxQuery && !shouldBypassCache ? ' (inbox - cache expired)' : '') +
     ` with query: ${query}`);
-  
+
   try {
     // Queue the Gmail API request to prevent concurrent calls
     console.log('📧 Queueing Gmail API request for emails...');
@@ -472,11 +472,11 @@ export const getEmails = async (
       `fetch-emails-${query.replace(/\s+/g, '-')}`,
       () => fetchGmailMessages(query, maxResults, pageToken)
     );
-    
+
     // If this is not a paginated request (no pageToken), update cache
     if (!pageToken) {
       setCachedEmailList(gmailResponse.emails, query, gmailResponse.nextPageToken);
-      
+
       // Also update the details cache for each email
       gmailResponse.emails.forEach(email => {
         emailCache.details[email.id] = {
@@ -484,7 +484,7 @@ export const getEmails = async (
           timestamp: Date.now(),
           profileId: currentCacheProfileId || undefined
         };
-        
+
         // Also update thread cache if threadId is present
         if (email.threadId) {
           emailCache.threads[email.threadId] = {
@@ -494,7 +494,7 @@ export const getEmails = async (
           };
         }
       });
-      
+
       // ✅ OPTIMIZATION: Legacy auto-reply processing disabled
       // Auto-reply now handled by optimizedInitialLoad.processAutoReplyOptimized() 
       // using cached data from Step 1 (no duplicate API calls)
@@ -513,7 +513,7 @@ export const getEmails = async (
       //   }
       // }
     }
-    
+
     return {
       emails: gmailResponse.emails,
       nextPageToken: gmailResponse.nextPageToken,
@@ -540,8 +540,8 @@ export const getUnreadEmails = async (forceRefresh = false): Promise<Email[]> =>
 };
 
 export const getPrimaryEmails = async (
-  forceRefresh = false, 
-  maxResults = 100, 
+  forceRefresh = false,
+  maxResults = 100,
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
   // Use 24h filtered inbox query to match the folder counter
@@ -552,32 +552,32 @@ export const getPrimaryEmails = async (
 };
 
 export const getSocialEmails = async (
-  forceRefresh = false, 
-  maxResults = 10, 
+  forceRefresh = false,
+  maxResults = 10,
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
   return getEmailsByLabelIds(['CATEGORY_SOCIAL'], forceRefresh, maxResults, pageToken);
 };
 
 export const getUpdatesEmails = async (
-  forceRefresh = false, 
-  maxResults = 10, 
+  forceRefresh = false,
+  maxResults = 10,
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
   return getEmailsByLabelIds(['CATEGORY_UPDATES'], forceRefresh, maxResults, pageToken);
 };
 
 export const getForumsEmails = async (
-  forceRefresh = false, 
-  maxResults = 10, 
+  forceRefresh = false,
+  maxResults = 10,
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
   return getEmails(forceRefresh, 'in:inbox category:forums', maxResults, pageToken);
 };
 
 export const getAllInboxEmails = async (
-  forceRefresh = false, 
-  maxResults = INBOX_FETCH_BATCH_SIZE, 
+  forceRefresh = false,
+  maxResults = INBOX_FETCH_BATCH_SIZE,
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
   // Fetch inbox threads with server-side filtering to exclude labeled emails
@@ -586,8 +586,8 @@ export const getAllInboxEmails = async (
 };
 
 export const getSentEmails = async (
-  forceRefresh = false, 
-  maxResults = 100, 
+  forceRefresh = false,
+  maxResults = 100,
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
   // Use labelIds for sent emails
@@ -613,7 +613,7 @@ export const getDraftEmails = async (_forceRefresh = false): Promise<Email[]> =>
     }
 
     const drafts: Email[] = [];
-    
+
     // Fetch draft details using users.drafts.get
     for (const draft of response.result.drafts) {
       if (!draft.id) continue;
@@ -638,7 +638,7 @@ export const getDraftEmails = async (_forceRefresh = false): Promise<Email[]> =>
         const fromHeader = headers.find((h: any) => h.name.toLowerCase() === 'from')?.value || '';
         const toHeader = headers.find((h: any) => h.name.toLowerCase() === 'to')?.value || '';
         const dateHeader = headers.find((h: any) => h.name.toLowerCase() === 'date')?.value || new Date().toISOString();
-        
+
         let fromName = fromHeader;
         let fromEmail = fromHeader;
         const fromMatch = fromHeader.match(/(.*)<(.*)>/);
@@ -661,7 +661,7 @@ export const getDraftEmails = async (_forceRefresh = false): Promise<Email[]> =>
         drafts.push({
           id: message.id || draft.id,
           from: { name: fromName, email: fromEmail },
-            to: [{ name: toName, email: toEmail }],
+          to: [{ name: toName, email: toEmail }],
           subject: subject,
           body: body,
           preview: preview,
@@ -680,7 +680,7 @@ export const getDraftEmails = async (_forceRefresh = false): Promise<Email[]> =>
         console.warn(`Failed to fetch draft ${draft.id}:`, messageError);
       }
     }
-    
+
     return drafts;
   } catch (error) {
     console.error('Error fetching drafts:', error);
@@ -689,8 +689,8 @@ export const getDraftEmails = async (_forceRefresh = false): Promise<Email[]> =>
 };
 
 export const getTrashEmails = async (
-  forceRefresh = false, 
-  maxResults = 20, 
+  forceRefresh = false,
+  maxResults = 20,
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
   // Use labelIds for trash emails
@@ -698,24 +698,24 @@ export const getTrashEmails = async (
 };
 
 export const getImportantEmails = async (
-  forceRefresh = false, 
-  maxResults = 20, 
+  forceRefresh = false,
+  maxResults = 20,
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
   return getEmailsByLabelIds(['IMPORTANT'], forceRefresh, maxResults, pageToken);
 };
 
 export const getStarredEmails = async (
-  forceRefresh = false, 
-  maxResults = 20, 
+  forceRefresh = false,
+  maxResults = 20,
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
   return getEmailsByLabelIds(['STARRED'], forceRefresh, maxResults, pageToken);
 };
 
 export const getSpamEmails = async (
-  forceRefresh = false, 
-  maxResults = 20, 
+  forceRefresh = false,
+  maxResults = 20,
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
   // Use labelIds for spam emails
@@ -723,8 +723,8 @@ export const getSpamEmails = async (
 };
 
 export const getArchiveEmails = async (
-  forceRefresh = false, 
-  maxResults = 20, 
+  forceRefresh = false,
+  maxResults = 20,
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
   // Archive: everything that's not in Inbox, Spam, Trash
@@ -732,8 +732,8 @@ export const getArchiveEmails = async (
 };
 
 export const getAllMailEmails = async (
-  forceRefresh = false, 
-  maxResults = 20, 
+  forceRefresh = false,
+  maxResults = 20,
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
   // All Mail: Gmail's "archive + inbox", excluding Spam/Trash
@@ -743,9 +743,9 @@ export const getAllMailEmails = async (
 // Helper function to fetch emails by labelIds (more efficient than search queries)
 // FIXED: Added pagination loop, centralized filtering, and retry logic
 export const getEmailsByLabelIds = async (
-  labelIds: string[], 
-  _forceRefresh = false, 
-  maxResults = 100, 
+  labelIds: string[],
+  _forceRefresh = false,
+  maxResults = 100,
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
   try {
@@ -760,10 +760,10 @@ export const getEmailsByLabelIds = async (
     const emails: Email[] = [];
     let currentPageToken = pageToken;
     const seenThreadIds = new Set<string>(); // Track thread IDs to prevent duplicates
-    
+
     // Use threads.list instead of messages.list to fetch threads
     const threadsApi = (window.gapi.client.gmail.users.threads as any);
-    
+
     const requestParams: any = {
       userId: 'me',
       maxResults: maxResults,
@@ -783,11 +783,11 @@ export const getEmailsByLabelIds = async (
         resultSizeEstimate: response.result.resultSizeEstimate || 0
       };
     }
-    
+
     // Fetch threads sequentially to avoid rate limits
     for (const thread of response.result.threads) {
       if (!thread.id) continue;
-      
+
       // Skip if we've already processed this thread (deduplication)
       if (seenThreadIds.has(thread.id)) {
         console.log(`⚠️ Skipping duplicate thread: ${thread.id}`);
@@ -798,7 +798,7 @@ export const getEmailsByLabelIds = async (
       let threadData;
       let retryCount = 0;
       const MAX_RETRIES = 1;
-      
+
       // Retry logic for failed thread fetches
       while (retryCount <= MAX_RETRIES) {
         try {
@@ -820,27 +820,27 @@ export const getEmailsByLabelIds = async (
           await new Promise(resolve => setTimeout(resolve, 100 * retryCount));
         }
       }
-      
+
       if (!threadData) continue;
 
       try {
         if (!threadData.result || !threadData.result.messages || threadData.result.messages.length === 0) continue;
-        
+
         // THREAD-LEVEL FILTERING: For inbox, use centralized filter
         if (isInboxFetch && !threadBelongsInInbox(threadData.result.messages)) {
           continue; // Skip this thread
         }
-        
+
         // For SENT threads, use the FIRST message (the one you sent)
         // For other threads, use the LATEST message
         const isSentThread = labelIds.includes('SENT');
-        const targetMessage = isSentThread 
+        const targetMessage = isSentThread
           ? threadData.result.messages[0]  // First message for sent
           : threadData.result.messages[threadData.result.messages.length - 1];  // Latest for others
         const msg = { result: targetMessage };
-        
+
         // Check if ANY message in the thread has UNREAD label (for proper unread status)
-        const hasUnreadInThread = threadData.result.messages.some((m: any) => 
+        const hasUnreadInThread = threadData.result.messages.some((m: any) =>
           m.labelIds?.includes('UNREAD')
         );
 
@@ -852,7 +852,7 @@ export const getEmailsByLabelIds = async (
         const fromHeader = headers.find((h: any) => h.name.toLowerCase() === 'from')?.value || '';
         const toHeader = headers.find((h: any) => h.name.toLowerCase() === 'to')?.value || '';
         const dateHeader = headers.find((h: any) => h.name.toLowerCase() === 'date')?.value || new Date().toISOString();
-        
+
         let fromName = fromHeader;
         let fromEmail = fromHeader;
         const fromMatch = fromHeader.match(/(.*)<(.*)>/);
@@ -915,9 +915,9 @@ export const getEmailsByLabelIds = async (
 type LabelIdentifier = string | { labelId?: string | null; labelName?: string | null };
 
 export const getLabelEmails = async (
-  identifier: LabelIdentifier, 
-  forceRefresh = false, 
-  maxResults = 10, 
+  identifier: LabelIdentifier,
+  forceRefresh = false,
+  maxResults = 10,
   pageToken?: string
 ): Promise<PaginatedEmailServiceResponse> => {
   const resolved = typeof identifier === 'string'
@@ -944,8 +944,8 @@ export const getLabelEmails = async (
 
 export const getEmailById = async (id: string): Promise<Email | undefined> => {
   // Check if we have a valid cached email for current profile
-  if (emailCache.details[id] && 
-      isCacheValidForProfile(emailCache.details[id].timestamp, emailCache.details[id].profileId)) {
+  if (emailCache.details[id] &&
+    isCacheValidForProfile(emailCache.details[id].timestamp, emailCache.details[id].profileId)) {
     console.log(`Using cached email for ID: ${id}`);
     return emailCache.details[id].email;
   }
@@ -954,7 +954,7 @@ export const getEmailById = async (id: string): Promise<Email | undefined> => {
     // Try to fetch from Gmail
     console.log(`Fetching email with ID: ${id} from Gmail API`);
     const email = await fetchGmailMessageById(id);
-    
+
     if (email) {
       // Update cache
       emailCache.details[id] = {
@@ -962,7 +962,7 @@ export const getEmailById = async (id: string): Promise<Email | undefined> => {
         timestamp: Date.now(),
         profileId: currentCacheProfileId || undefined
       };
-      
+
       // Also update thread cache if threadId is present
       if (email.threadId) {
         emailCache.threads[email.threadId] = {
@@ -972,7 +972,7 @@ export const getEmailById = async (id: string): Promise<Email | undefined> => {
         };
       }
     }
-    
+
     return email;
   } catch (error) {
     console.error('Error fetching email from Gmail:', error);
@@ -986,8 +986,8 @@ export const getEmailById = async (id: string): Promise<Email | undefined> => {
  */
 export const getEmailByThreadId = async (threadId: string): Promise<Email | undefined> => {
   // Check if we have a valid cached email for this thread and current profile
-  if (emailCache.threads[threadId] && 
-      isCacheValidForProfile(emailCache.threads[threadId].timestamp, emailCache.threads[threadId].profileId)) {
+  if (emailCache.threads[threadId] &&
+    isCacheValidForProfile(emailCache.threads[threadId].timestamp, emailCache.threads[threadId].profileId)) {
     console.log(`Using cached email for thread ID: ${threadId}`);
     return emailCache.threads[threadId].email;
   }
@@ -996,7 +996,7 @@ export const getEmailByThreadId = async (threadId: string): Promise<Email | unde
     // Try to fetch from Gmail
     console.log(`Fetching email for thread ID: ${threadId} from Gmail API`);
     const email = await fetchLatestMessageInThread(threadId);
-    
+
     if (email) {
       // Update thread cache
       emailCache.threads[threadId] = {
@@ -1004,7 +1004,7 @@ export const getEmailByThreadId = async (threadId: string): Promise<Email | unde
         timestamp: Date.now(),
         profileId: currentCacheProfileId || undefined
       };
-      
+
       // Also update message cache
       emailCache.details[email.id] = {
         email,
@@ -1012,7 +1012,7 @@ export const getEmailByThreadId = async (threadId: string): Promise<Email | unde
         profileId: currentCacheProfileId || undefined
       };
     }
-    
+
     return email;
   } catch (error) {
     console.error(`Error fetching email for thread ID ${threadId}:`, error);
@@ -1039,29 +1039,29 @@ export const getThreadEmails = async (threadId: string): Promise<Email[]> => {
  * Save email as draft
  */
 export const saveDraft = async (
-  email: Omit<Email, 'id' | 'date' | 'isRead' | 'preview'>, 
+  email: Omit<Email, 'id' | 'date' | 'isRead' | 'preview'>,
   attachments?: Array<{ name: string; mimeType: string; data: string; cid?: string }>,
   draftId?: string, // For updating existing drafts
   ccRecipients?: string
-): Promise<{success: boolean; draftId?: string}> => {
+): Promise<{ success: boolean; draftId?: string }> => {
   try {
     // Try to save via Gmail
     const to = email.to.map(recipient => recipient.email).join(',');
     const cc = ccRecipients || "";
-    
+
     const result = await saveGmailDraft(to, cc, email.subject, email.body, attachments, draftId);
-    
+
     if (result.success) {
       // Invalidate the drafts cache to ensure the saved draft appears on next refresh
       if (emailCache.list && emailCache.list.query.includes('in:draft')) {
         emailCache.list.timestamp = 0;
       }
-      return { 
+      return {
         success: true,
-        draftId: result.draftId 
+        draftId: result.draftId
       };
     }
-    
+
     throw new Error('Failed to save draft via Gmail');
   } catch (error) {
     console.error('Error saving draft:', error);
@@ -1076,12 +1076,12 @@ export const saveDraft = async (
 export const deleteDraft = async (draftId: string): Promise<void> => {
   try {
     await deleteGmailDraft(draftId);
-    
+
     // Invalidate the drafts cache to ensure the deleted draft is removed immediately
     if (emailCache.list && emailCache.list.query.includes('in:draft')) {
       emailCache.list.timestamp = 0;
     }
-    
+
     console.log(`Successfully deleted draft ${draftId}`);
   } catch (error) {
     console.error('Error deleting draft:', error);
@@ -1095,10 +1095,10 @@ export const deleteDraft = async (draftId: string): Promise<void> => {
 export const deleteEmail = async (emailId: string): Promise<void> => {
   try {
     await markGmailMessageAsTrash(emailId);
-    
+
     // Clear all caches to ensure immediate removal from all views
     clearEmailCache();
-    
+
     console.log(`Successfully moved email ${emailId} to trash and cleared caches`);
   } catch (error) {
     console.error('Error deleting email:', error);
@@ -1126,8 +1126,9 @@ export const sendReply = async (
   replyContent: string,
   replyToAll: boolean = false,
   additionalCc?: string,
-  bcc?: string
-): Promise<{success: boolean; threadId?: string}> => {
+  bcc?: string,
+  attachments?: Array<{ name: string; mimeType: string; data: string; cid?: string }>
+): Promise<{ success: boolean; threadId?: string }> => {
   try {
     // Get current user's profile
     const userProfile = await getUserProfile();
@@ -1137,29 +1138,29 @@ export const sendReply = async (
     }
 
     // Create reply subject with "Re: " prefix if it doesn't already have it
-    const subject = originalEmail.subject.startsWith('Re: ') 
-      ? originalEmail.subject 
+    const subject = originalEmail.subject.startsWith('Re: ')
+      ? originalEmail.subject
       : `Re: ${originalEmail.subject}`;
 
     // Determine recipients
     const toRecipients = [originalEmail.from];
     const ccList: string[] = [];
-    
+
     if (replyToAll && originalEmail.to && originalEmail.to.length > 0) {
       // For reply all, add original TO recipients to CC (excluding the current user)
       const additionalCcFromReplyAll = originalEmail.to
         .filter(recipient => recipient.email !== userProfile.email && recipient.email !== originalEmail.from.email)
         .map(recipient => recipient.email);
-      
+
       ccList.push(...additionalCcFromReplyAll);
     }
-    
+
     // Add any additional CC recipients from user input
     if (additionalCc) {
       const userCcEmails = additionalCc.split(',').map(e => e.trim()).filter(Boolean);
       ccList.push(...userCcEmails);
     }
-    
+
     // Remove duplicates
     const ccRecipients = [...new Set(ccList)].join(',');
 
@@ -1175,14 +1176,12 @@ export const sendReply = async (
       threadId: originalEmail.threadId,
       isImportant: false,
       labelIds: [],
-      attachments: [] // Replies typically don't include original attachments
-      ,
       internalDate: undefined
     };
 
     // Send the reply using the existing sendEmail function
-    return await sendEmail(replyEmail, undefined, originalEmail.threadId, ccRecipients, bcc);
-    
+    return await sendEmail(replyEmail, attachments, originalEmail.threadId, ccRecipients, bcc);
+
   } catch (error) {
     console.error('Error sending reply:', error);
     return { success: false };
@@ -1193,18 +1192,19 @@ export const sendReplyAll = async (
   originalEmail: Email,
   replyContent: string,
   additionalCc?: string,
-  bcc?: string
-): Promise<{success: boolean; threadId?: string}> => {
-  return await sendReply(originalEmail, replyContent, true, additionalCc, bcc);
+  bcc?: string,
+  attachments?: Array<{ name: string; mimeType: string; data: string; cid?: string }>
+): Promise<{ success: boolean; threadId?: string }> => {
+  return await sendReply(originalEmail, replyContent, true, additionalCc, bcc, attachments);
 };
 
 export const sendEmail = async (
-  email: Omit<Email, 'id' | 'date' | 'isRead' | 'preview'>, 
+  email: Omit<Email, 'id' | 'date' | 'isRead' | 'preview'>,
   attachments?: Array<{ name: string; mimeType: string; data: string; cid?: string }>,
   conversationThreadId?: string,
   ccRecipients?: string,
   bccRecipients?: string
-): Promise<{success: boolean; threadId?: string}> => {
+): Promise<{ success: boolean; threadId?: string }> => {
   try {
     // Try to send via Gmail
     const to = email.to.map(recipient => recipient.email).join(',');
@@ -1212,18 +1212,18 @@ export const sendEmail = async (
     const cc = ccRecipients || "";
     const bcc = bccRecipients || "";
     const result = await sendGmailMessage(to, cc, email.subject, email.body, attachments, conversationThreadId, bcc);
-    
+
     if (result.success) {
       // Invalidate the list cache to ensure the sent email appears on next refresh
       if (emailCache.list) {
         emailCache.list.timestamp = 0;
       }
-      return { 
+      return {
         success: true,
-        threadId: result.threadId 
+        threadId: result.threadId
       };
     }
-    
+
     throw new Error('Failed to send email via Gmail');
   } catch (error) {
     console.error('Error sending email:', error);
@@ -1231,7 +1231,7 @@ export const sendEmail = async (
   }
 };
 
-export const markAsRead = async (id: string): Promise<{success: boolean}> => {
+export const markAsRead = async (id: string): Promise<{ success: boolean }> => {
   try {
     // Capture pre-change state for optimistic adjustments
     let wasUnreadAndRecent = false;
@@ -1243,12 +1243,12 @@ export const markAsRead = async (id: string): Promise<{success: boolean}> => {
     }
     // Try to mark as read via Gmail API first
     await markGmailMessageAsRead(id);
-    
+
     // Only update cache after successful API call
     if (emailCache.details[id]) {
       emailCache.details[id].email.isRead = true;
     }
-    
+
     // If the email list is cached, update it too
     if (emailCache.list) {
       const email = emailCache.list.emails.find(e => e.id === id);
@@ -1261,7 +1261,7 @@ export const markAsRead = async (id: string): Promise<{success: boolean}> => {
     if (wasUnreadAndRecent) {
       window.dispatchEvent(new CustomEvent('recent-counts-adjust', { detail: { inboxUnread24hDelta: -1 } }));
     }
-    
+
     return { success: true };
   } catch (error) {
     console.error('Error marking email as read:', error);
@@ -1275,25 +1275,25 @@ export const markAsRead = async (id: string): Promise<{success: boolean}> => {
 export const markEmailAsTrash = async (messageId: string): Promise<void> => {
   try {
     console.log(`Marking email ${messageId} as trash`);
-    
+
     // Call the Gmail API to move the message to trash
     await markGmailMessageAsTrash(messageId);
-    
+
     // Invalidate the email list cache to ensure the change is reflected immediately
     invalidateEmailListCache('trash operation');
-    
+
     // Remove from details cache if it exists
     if (emailCache.details[messageId]) {
       delete emailCache.details[messageId];
     }
-    
+
     // Remove from threads cache if it exists
     Object.keys(emailCache.threads).forEach(threadId => {
       if (emailCache.threads[threadId].email.id === messageId) {
         delete emailCache.threads[threadId];
       }
     });
-    
+
     console.log(`Successfully marked email ${messageId} as trash`);
   } catch (error) {
     console.error('Error marking email as trash:', error);
@@ -1307,15 +1307,15 @@ export const markEmailAsTrash = async (messageId: string): Promise<void> => {
 export const markEmailAsRead = async (messageId: string): Promise<void> => {
   try {
     console.log(`Marking email ${messageId} as read via email service`);
-    
+
     // Call the Gmail API to mark the message as read
     await markGmailMessageAsRead(messageId);
-    
+
     // Update local cache
     if (emailCache.details[messageId]) {
       emailCache.details[messageId].email.isRead = true;
     }
-    
+
     // If the email list is cached, update it too
     if (emailCache.list) {
       const email = emailCache.list.emails.find(e => e.id === messageId);
@@ -1323,7 +1323,7 @@ export const markEmailAsRead = async (messageId: string): Promise<void> => {
         email.isRead = true;
       }
     }
-    
+
     console.log(`Successfully marked email ${messageId} as read`);
   } catch (error) {
     console.error('Error marking email as read:', error);
@@ -1334,7 +1334,7 @@ export const markEmailAsRead = async (messageId: string): Promise<void> => {
 /**
  * Mark an email as unread
  */
-export const markAsUnread = async (id: string): Promise<{success: boolean}> => {
+export const markAsUnread = async (id: string): Promise<{ success: boolean }> => {
   try {
     // Capture pre-change state for optimistic adjustments
     let willBeUnreadAndRecent = false;
@@ -1347,12 +1347,12 @@ export const markAsUnread = async (id: string): Promise<{success: boolean}> => {
     }
     // Try to mark as unread via Gmail API first
     await markGmailMessageAsUnread(id);
-    
+
     // Only update cache after successful API call
     if (emailCache.details[id]) {
       emailCache.details[id].email.isRead = false;
     }
-    
+
     // If the email list is cached, update it too
     if (emailCache.list) {
       const email = emailCache.list.emails.find(e => e.id === id);
@@ -1364,7 +1364,7 @@ export const markAsUnread = async (id: string): Promise<{success: boolean}> => {
     if (willBeUnreadAndRecent) {
       window.dispatchEvent(new CustomEvent('recent-counts-adjust', { detail: { inboxUnread24hDelta: 1 } }));
     }
-    
+
     return { success: true };
   } catch (error) {
     console.error('Error marking email as unread:', error);
@@ -1383,39 +1383,39 @@ export const applyLabelsToEmail = async (
 ): Promise<void> => {
   try {
     console.log(`Applying labels to email ${messageId}:`, { add: addLabelIds, remove: removeLabelIds });
-    
+
     // Call the Gmail API to apply labels to the message
     await applyGmailLabels(messageId, addLabelIds, removeLabelIds);
-    
+
     // Invalidate email list cache to ensure the change is reflected immediately
     invalidateEmailListCache('label update');
-    
+
     // Remove from details cache if it exists
     if (emailCache.details[messageId]) {
       delete emailCache.details[messageId];
     }
-    
+
     // Remove from threads cache if it exists
     Object.keys(emailCache.threads).forEach(threadId => {
       if (emailCache.threads[threadId].email.id === messageId) {
         delete emailCache.threads[threadId];
       }
     });
-    
+
     // Trigger inbox refetch if a user label was added (thread should be removed from inbox)
-    const hasUserLabelAdded = addLabelIds.length > 0 && !addLabelIds.every(id => 
+    const hasUserLabelAdded = addLabelIds.length > 0 && !addLabelIds.every(id =>
       ['INBOX', 'UNREAD', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'IMPORTANT', 'STARRED', 'CHAT'].includes(id) ||
       id.startsWith('CATEGORY_')
     );
-    
+
     if (hasUserLabelAdded) {
       console.log('🔄 User label applied - triggering inbox refetch');
       // Dispatch custom event to trigger refetch in EmailPageLayout
-      window.dispatchEvent(new CustomEvent('inbox-refetch-required', { 
+      window.dispatchEvent(new CustomEvent('inbox-refetch-required', {
         detail: { messageId, addedLabels: addLabelIds }
       }));
     }
-    
+
     console.log(`Successfully applied labels to email ${messageId}`);
   } catch (error) {
     console.error('Error applying labels to email:', error);
@@ -1434,36 +1434,36 @@ export const batchApplyLabelsToEmails = async (
 ): Promise<void> => {
   try {
     console.log(`📦 Batch applying labels to ${messageIds.length} emails:`, { add: addLabelIds, remove: removeLabelIds });
-    
+
     // Import batch function dynamically to avoid circular deps
     const { batchApplyGmailLabels } = await import('../integrations/gapiService');
-    
+
     // Call the batch Gmail API
     await batchApplyGmailLabels(messageIds, addLabelIds, removeLabelIds);
-    
+
     // Invalidate email list cache (both memory + localStorage)
     invalidateEmailListCache('batch label update');
-    
+
     // Remove from details cache
     messageIds.forEach(id => {
       if (emailCache.details[id]) {
         delete emailCache.details[id];
       }
     });
-    
+
     // Trigger inbox refetch if user labels were added
-    const hasUserLabelAdded = addLabelIds.length > 0 && !addLabelIds.every(id => 
+    const hasUserLabelAdded = addLabelIds.length > 0 && !addLabelIds.every(id =>
       ['INBOX', 'UNREAD', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'IMPORTANT', 'STARRED', 'CHAT'].includes(id) ||
       id.startsWith('CATEGORY_')
     );
-    
+
     if (hasUserLabelAdded) {
       console.log('🔄 User labels applied in batch - triggering inbox refetch');
-      window.dispatchEvent(new CustomEvent('inbox-refetch-required', { 
+      window.dispatchEvent(new CustomEvent('inbox-refetch-required', {
         detail: { messageIds, addedLabels: addLabelIds }
       }));
     }
-    
+
     console.log(`✅ Successfully batch applied labels to ${messageIds.length} emails`);
   } catch (error) {
     console.error('Error batch applying labels to emails:', error);
@@ -1486,16 +1486,16 @@ export const getUserProfile = async (): Promise<{ name: string; email: string; p
 /**
  * Mark an email as important (starred)
  */
-export const markAsImportant = async (id: string): Promise<{success: boolean}> => {
+export const markAsImportant = async (id: string): Promise<{ success: boolean }> => {
   try {
     // Apply Gmail IMPORTANT label
     await markGmailMessageAsImportant(id);
-    
+
     // Only update cache after successful API call
     if (emailCache.details[id]) {
       emailCache.details[id].email.isImportant = true;
     }
-    
+
     // If the email list is cached, update it too
     if (emailCache.list) {
       const email = emailCache.list.emails.find(e => e.id === id);
@@ -1503,7 +1503,7 @@ export const markAsImportant = async (id: string): Promise<{success: boolean}> =
         email.isImportant = true;
       }
     }
-    
+
     return { success: true };
   } catch (error) {
     console.error('Error marking email as important:', error);
@@ -1514,16 +1514,16 @@ export const markAsImportant = async (id: string): Promise<{success: boolean}> =
 /**
  * Mark an email as unimportant (unstarred)
  */
-export const markAsUnimportant = async (id: string): Promise<{success: boolean}> => {
+export const markAsUnimportant = async (id: string): Promise<{ success: boolean }> => {
   try {
     // Remove Gmail IMPORTANT label
     await markGmailMessageAsUnimportant(id);
-    
+
     // Only update cache after successful API call
     if (emailCache.details[id]) {
       emailCache.details[id].email.isImportant = false;
     }
-    
+
     // If the email list is cached, update it too
     if (emailCache.list) {
       const email = emailCache.list.emails.find(e => e.id === id);
@@ -1531,7 +1531,7 @@ export const markAsUnimportant = async (id: string): Promise<{success: boolean}>
         email.isImportant = false;
       }
     }
-    
+
     return { success: true };
   } catch (error) {
     console.error('Error marking email as unimportant:', error);
@@ -1542,7 +1542,7 @@ export const markAsUnimportant = async (id: string): Promise<{success: boolean}>
 /**
  * Star / Unstar (STARRED label)
  */
-export const markAsStarred = async (id: string): Promise<{success: boolean}> => {
+export const markAsStarred = async (id: string): Promise<{ success: boolean }> => {
   try {
     await markGmailMessageAsStarred(id);
     if (emailCache.details[id]) {
@@ -1559,7 +1559,7 @@ export const markAsStarred = async (id: string): Promise<{success: boolean}> => 
   }
 };
 
-export const markAsUnstarred = async (id: string): Promise<{success: boolean}> => {
+export const markAsUnstarred = async (id: string): Promise<{ success: boolean }> => {
   try {
     await markGmailMessageAsUnstarred(id);
     if (emailCache.details[id]) {
@@ -1582,15 +1582,15 @@ export const markAsUnstarred = async (id: string): Promise<{success: boolean}> =
 export const emptyTrash = async (): Promise<void> => {
   try {
     console.log('🗑️ Emptying trash...');
-    
+
     await emptyGmailTrash();
-    
+
     // Clear relevant caches - specifically the inbox/all emails cache since trash affects overall counts
     emailCache.list = undefined;
-    
+
     // Clear all local storage caches that might contain trash emails
     clearEmailCache();
-    
+
     console.log('✅ Trash emptied successfully and caches cleared');
   } catch (error) {
     console.error('❌ Error emptying trash:', error);

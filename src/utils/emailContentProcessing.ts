@@ -12,18 +12,25 @@ export interface ProcessedEmailContent {
  * Strip common quoted text patterns and separators (Gmail, Outlook, etc.)
  * Preserves forwarded content (intentional context) while removing reply history
  */
+// Transparent 1x1 GIF to replace cid: URLs before DOM parsing (prevents ERR_UNKNOWN_URL_SCHEME)
+const CID_SAFE_PLACEHOLDER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
 export const stripQuotedText = (htmlContent: string): { cleanBody: string; quotedContent?: string } => {
   if (!htmlContent) return { cleanBody: '' };
 
+  // 🔧 Pre-sanitize: Replace cid: URLs BEFORE DOM parsing to prevent browser fetch attempts
+  // This eliminates ERR_UNKNOWN_URL_SCHEME console errors
+  const safeHtml = htmlContent.replace(/cid:[^"'\s>]+/gi, CID_SAFE_PLACEHOLDER);
+
   // For very large messages (>50KB), use regex-based approach for performance
-  if (htmlContent.length > 50000) {
-    return stripQuotedTextLarge(htmlContent);
+  if (safeHtml.length > 50000) {
+    return stripQuotedTextLarge(safeHtml);
   }
 
   // DOM-based approach for smaller messages (more accurate)
   try {
     const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = htmlContent;
+    tempDiv.innerHTML = safeHtml;
 
     let quotedContent = '';
 

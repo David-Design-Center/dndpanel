@@ -20,3 +20,24 @@ export const CLIENT_CONFIG = {
   GAPI_API_KEY: import.meta.env.VITE_GAPI_API_KEY, // This is safe - it's public
   BACKEND_API_URL: import.meta.env.VITE_BACKEND_API_URL,
 };
+
+// ============================================================================
+// FEATURE FLAGS (Temporary toggles for debugging / support cases)
+// ============================================================================
+export const FEATURE_FLAGS = {
+  /**
+   * 🔧 USE_DIRECT_GMAIL_LABELS
+   * 
+   * When TRUE: Fetches labels directly from Gmail API using users.labels.get()
+   *            for EACH label (including custom labels). Bypasses Supabase sync.
+   *            Logs detailed API responses to console for Google Support debugging.
+   * 
+   * When FALSE: Uses Supabase-based gmail-sync (production behavior).
+   * 
+   * Purpose: Google Support case debugging - proves counters come from Gmail API.
+   * 
+   * ⚠️ WARNING: Keep FALSE in production. Direct API calls are slower and
+   *             may hit per-user quota limits with many labels.
+   */
+  USE_DIRECT_GMAIL_LABELS: true,
+};

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
-import { X, Paperclip, Plus, SendHorizontal, Maximize2, Minimize2 } from 'lucide-react';
+import { X, Paperclip, SendHorizontal, Maximize2, Minimize2, ChevronDown, Trash2 } from 'lucide-react';
 import { sendEmail, getThreadEmails, clearEmailCache, saveDraft, deleteDraft } from '../services/emailService';
 import { emailRepository } from '../services/emailRepository';
 import { sanitizeEmailHtml } from '../utils/sanitize';
@@ -21,7 +21,7 @@ import { formatDistanceToNow, parseISO, format } from 'date-fns';
 import { useProfile } from '../contexts/ProfileContext';
 import { useContacts } from '../contexts/ContactsContext';
 import { useCompose } from '../contexts/ComposeContext';
-import { useToast } from '../components/ui/use-toast';
+import { toast } from 'sonner';
 
 // Utility functions for text/HTML conversion
 const convertPlainTextToHtml = (text: string): string => {
@@ -50,16 +50,13 @@ function Compose() {
   const { currentProfile } = useProfile();
   const { searchContacts, setShouldLoadContacts } = useContacts();
   const { closeCompose, draftId: contextDraftId, isExpanded, toggleExpand } = useCompose();
-  const { toast } = useToast();
   const [searchParams] = useSearchParams();
   const [toRecipients, setToRecipients] = useState<string[]>([]);
   const [toInput, setToInput] = useState('');
   const [to, setTo] = useState(''); // Keep for backward compatibility
   const [ccRecipients, setCcRecipients] = useState<string[]>([]); // Start empty, will be set in useEffect
-  const [showCc, setShowCc] = useState(true); // Show CC by default since we have hardcoded recipient
   const [ccInput, setCcInput] = useState('');
   const [bccRecipients, setBccRecipients] = useState<string[]>([]);
-  const [showBcc, setShowBcc] = useState(false);
   const [bccInput, setBccInput] = useState('');
   const [showContactDropdown, setShowContactDropdown] = useState(false);
   const [showCcContactDropdown, setShowCcContactDropdown] = useState(false);
@@ -72,13 +69,13 @@ function Compose() {
   const [isSending, setIsSending] = useState(false);
   const [previewFile, setPreviewFile] = useState<AttachmentItem | null>(null);
   const [, setShowPriceRequestModal] = useState(false);
-  
+
   // Thread-related state
   const [isReply, setIsReply] = useState(false);
   const [threadEmails, setThreadEmails] = useState<Email[]>([]);
   const [threadLoading, setThreadLoading] = useState(false);
   const [currentThreadId, setCurrentThreadId] = useState<string | undefined>(undefined);
-  
+
   // Draft auto-save states
   const [currentDraftId, setCurrentDraftId] = useState<string | undefined>(undefined);
   const [messageIdForUI, setMessageIdForUI] = useState<string | undefined>(undefined); // Track message ID for UI removal
@@ -86,14 +83,14 @@ function Compose() {
   const [isAutoSaving, setIsAutoSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  
+
   // Attachment panel state
   const [, setInvoices] = useState<any[]>([]);
   const [, setOrders] = useState<any[]>([]);
   const [] = useState<'invoices' | 'orders'>('invoices');
   const [, setIsLoadingAttachmentData] = useState(false);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
-  
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const location = useLocation();
@@ -127,22 +124,22 @@ function Compose() {
   // Check if we're replying to an email or have pre-filled data
   useEffect(() => {
     if (location.state) {
-      const { 
-        to: replyTo, 
+      const {
+        to: replyTo,
         cc: replyCC,
-        subject: replySubject, 
+        subject: replySubject,
         body: plainTextBody,
         originalBody: htmlBody,
-        replyToId: incomingReplyToId, 
+        replyToId: incomingReplyToId,
         threadId,
         attachments: incomingAttachments,
         draftId,
-        isDraft 
+        isDraft
       } = location.state as any;
-      
+
       if (replyTo) setTo(replyTo);
       if (replySubject) setSubject(replySubject);
-      
+
       // Handle CC recipients from reply all
       if (replyCC) {
         const incomingCcRecipients = replyCC.split(',').map((email: string) => email.trim()).filter((email: string) => email);
@@ -152,13 +149,13 @@ function Compose() {
           return Array.from(new Set(combined)); // Remove duplicates
         });
       }
-      
+
       // If this is a draft being edited, set the draft ID
       if (isDraft && draftId) {
         setCurrentDraftId(draftId);
         setIsDraftDirty(false); // Start clean since we're loading existing draft
       }
-      
+
       // Set the user's editable text
       if (plainTextBody) {
         if (isDraft) {
@@ -175,20 +172,20 @@ function Compose() {
           setNewBodyHtml(htmlBody);
         }
       }
-      
+
       // Set the original HTML content (for final sending) - but not for drafts
       if (htmlBody && !isDraft) setOriginalEmailHtml(htmlBody);
-      
+
       // If this is a reply or draft with thread, fetch the thread emails
       if (incomingReplyToId || threadId) {
         setIsReply(true);
-        
+
         if (threadId) {
           setCurrentThreadId(threadId);
           fetchThreadEmails(threadId);
         }
       }
-      
+
       // Handle incoming attachments (from invoice generator)
       if (incomingAttachments && Array.isArray(incomingAttachments)) {
         setAttachments(incomingAttachments.map((att: any) => ({
@@ -217,7 +214,7 @@ function Compose() {
     // 2. This is a brand new compose (no location.state and no draft being loaded)
     // 3. Body is currently empty
     const isNewCompose = !location.state && !contextDraftId && !searchParams.get('draftId');
-    
+
     if (isNewCompose && currentProfile?.signature && !newBodyHtml) {
       console.log('✍️ Initializing new email with signature');
       setNewBodyHtml('<br><br>' + currentProfile.signature);
@@ -237,10 +234,10 @@ function Compose() {
   const loadDraftFromGmail = async (messageId: string) => {
     try {
       console.log('📧 Looking for draft with message ID:', messageId);
-      
+
       // Store the message ID for UI removal later
       setMessageIdForUI(messageId);
-      
+
       // First, list all drafts to find the one with this message ID
       const draftsListResponse = await window.gapi.client.gmail.users.drafts.list({
         userId: 'me',
@@ -249,10 +246,10 @@ function Compose() {
 
       const drafts = draftsListResponse.result.drafts || [];
       console.log(`📋 Found ${drafts.length} drafts total`);
-      
+
       // Find the draft that matches this message ID
       const matchingDraft = drafts.find((d: any) => d.message?.id === messageId);
-      
+
       if (!matchingDraft) {
         console.error('❌ No draft found with message ID:', messageId);
         // Fallback: try using the messageId as draftId directly
@@ -262,7 +259,7 @@ function Compose() {
 
       const draftId = matchingDraft.id;
       console.log('✅ Found draft ID:', draftId);
-      
+
       await loadDraftById(draftId);
     } catch (error) {
       console.error('❌ Failed to find draft:', error);
@@ -296,19 +293,19 @@ function Compose() {
         const inReplyToHeader = getHeader('In-Reply-To');
         const referencesHeader = getHeader('References');
 
-        console.log('📧 Draft headers:', { 
-          to: toHeader, 
-          cc: ccHeader, 
+        console.log('📧 Draft headers:', {
+          to: toHeader,
+          cc: ccHeader,
           subject: subjectHeader,
           inReplyTo: inReplyToHeader,
           references: referencesHeader,
           threadId: draftMessage.threadId
         });
-        
+
         // Check if this is a reply draft (has threadId different from message id)
         // AND check if thread has other messages
         const hasRealThread = draftMessage.threadId && draftMessage.threadId !== draftMessage.id;
-        
+
         if (hasRealThread) {
           // Verify the thread actually has other messages besides this draft
           try {
@@ -317,12 +314,12 @@ function Compose() {
               id: draftMessage.threadId,
               format: 'metadata'
             });
-            
+
             const messages = threadResponse.result?.messages || [];
-            const nonDraftMessages = messages.filter((msg: any) => 
+            const nonDraftMessages = messages.filter((msg: any) =>
               !msg.labelIds?.includes('DRAFT')
             );
-            
+
             if (nonDraftMessages.length > 0) {
               console.log('📝 Reply draft detected (thread has', nonDraftMessages.length, 'messages), redirecting to thread view');
               navigate(`/inbox/email/${draftMessage.threadId}?draft=${draftId}`);
@@ -345,12 +342,11 @@ function Compose() {
           setTo(toHeader); // Keep for backward compatibility
         }
         if (subjectHeader) setSubject(subjectHeader);
-        
+
         // Set CC recipients
         if (ccHeader) {
           const ccEmails = ccHeader.split(',').map((email: string) => email.trim()).filter((email: string) => email);
           setCcRecipients(ccEmails);
-          setShowCc(true);
         }
 
         // Extract body content
@@ -408,18 +404,18 @@ function Compose() {
         // Process inline images - convert cid: references to data URLs
         if (bodyHtml && payload?.parts) {
           const inlineImages: { [cid: string]: string } = {};
-          
+
           // Extract inline images from parts
           const extractInlineImages = async (parts: any[]) => {
             for (const part of parts) {
               const headers = part.headers || [];
               const contentIdHeader = headers.find((h: any) => h.name.toLowerCase() === 'content-id');
-              
+
               // Check if this is an inline image (has Content-ID)
               if (contentIdHeader && part.mimeType?.startsWith('image/')) {
                 // Extract CID (remove < and >)
                 let cid = contentIdHeader.value.replace(/[<>]/g, '');
-                
+
                 // Check if we have inline data or need to fetch it
                 if (part.body?.data) {
                   // We have the data inline
@@ -435,7 +431,7 @@ function Compose() {
                       messageId: draftMessage.id,
                       id: part.body.attachmentId
                     });
-                    
+
                     if (response.result?.data) {
                       const base64Data = response.result.data.replace(/-/g, '+').replace(/_/g, '/');
                       const dataUrl = `data:${part.mimeType};base64,${base64Data}`;
@@ -447,23 +443,23 @@ function Compose() {
                   }
                 }
               }
-              
+
               // Recursively check nested parts
               if (part.parts) {
                 await extractInlineImages(part.parts);
               }
             }
           };
-          
+
           await extractInlineImages(payload.parts);
-          
+
           // Replace cid: references with data URLs
           Object.entries(inlineImages).forEach(([cid, dataUrl]) => {
             // Try both with and without "cid:" prefix
             bodyHtml = bodyHtml.replace(new RegExp(`cid:${cid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'gi'), dataUrl);
             bodyHtml = bodyHtml.replace(new RegExp(cid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), dataUrl);
           });
-          
+
           console.log('📧 Processed', Object.keys(inlineImages).length, 'inline images');
         }
 
@@ -505,7 +501,7 @@ function Compose() {
 
     try {
       setIsAutoSaving(true);
-      
+
       // Process attachments for draft saving
       const processedAttachments = await Promise.all(
         attachments.map(async (attachment) => {
@@ -521,7 +517,7 @@ function Compose() {
                 // Extract base64 data without the prefix
                 const base64data = reader.result as string;
                 const base64Content = base64data.split(',')[1];
-                
+
                 resolve({
                   name: attachment.name,
                   mimeType: attachment.mimeType,
@@ -539,18 +535,18 @@ function Compose() {
               data: attachment.data
             };
           }
-          
+
           throw new Error('Invalid attachment format');
         })
       );
 
       // Prepare draft content
       let finalBodyHtml = '';
-      
+
       if (newBodyHtml.trim()) {
         finalBodyHtml = newBodyHtml;
       }
-      
+
       if (originalEmailHtml) {
         if (finalBodyHtml) {
           finalBodyHtml += '<br><br>' + originalEmailHtml;
@@ -558,9 +554,9 @@ function Compose() {
           finalBodyHtml = originalEmailHtml;
         }
       }
-      
+
       // Signature is now added at compose initialization, not at save/send time
-      
+
       // Fallback if no content
       if (!finalBodyHtml) {
         finalBodyHtml = '<div style="font-family: Arial, sans-serif; color: #333;"></div>';
@@ -568,19 +564,19 @@ function Compose() {
 
       // Prepare CC recipients string for saving
       const ccRecipientsString = ccRecipients.filter(email => email.trim()).join(',');
-      
+
       // Prepare TO recipients - include both toRecipients array AND current toInput if valid
       let allToRecipients = [...toRecipients];
-      
+
       // If user has typed an email but hasn't pressed Enter/comma/space yet, include it
       if (toInput.trim() && toInput.includes('@') && !allToRecipients.includes(toInput.trim())) {
         allToRecipients.push(toInput.trim());
       }
-      
-      const toRecipientsForDraft = allToRecipients.length > 0 
+
+      const toRecipientsForDraft = allToRecipients.length > 0
         ? allToRecipients.map(email => ({ name: '', email }))
         : (to && to.trim() ? [{ name: '', email: to }] : []); // Fallback to old format if array is empty
-      
+
       console.log('💾 Saving draft - TO recipients:', toRecipientsForDraft);
       console.log('💾 Saving draft - toRecipients array:', toRecipients);
       console.log('💾 Saving draft - toInput:', toInput);
@@ -600,38 +596,38 @@ function Compose() {
         const wasNewDraft = !currentDraftId;
         const oldDraftId = currentDraftId;
         const draftIdChanged = oldDraftId && oldDraftId !== result.draftId;
-        
+
         setCurrentDraftId(result.draftId);
         setIsDraftDirty(false);
         setLastSavedAt(new Date());
-        
+
         console.log('✅ Draft saved:', {
           wasNew: wasNewDraft,
           idChanged: draftIdChanged,
           oldId: oldDraftId,
           newId: result.draftId
         });
-        
+
         // Update UI and counters
         if (wasNewDraft) {
           // New draft created - emit event to add to UI and increment counter
-          window.dispatchEvent(new CustomEvent('draft-created', { 
-            detail: { draftId: result.draftId } 
+          window.dispatchEvent(new CustomEvent('draft-created', {
+            detail: { draftId: result.draftId }
           }));
           console.log('📤 Emitted draft-created event for:', result.draftId);
         } else if (draftIdChanged) {
           // Gmail changed the draft ID during update - delete old, show new
           console.log('⚠️ Gmail changed draft ID during update - cleaning up old draft');
-          
+
           // Delete the old draft ID from UI
           emailRepository.deleteEmail(oldDraftId);
-          window.dispatchEvent(new CustomEvent('email-deleted', { 
-            detail: { emailId: contextDraftId || oldDraftId } 
+          window.dispatchEvent(new CustomEvent('email-deleted', {
+            detail: { emailId: contextDraftId || oldDraftId }
           }));
-          
+
           // Add the new draft ID
-          window.dispatchEvent(new CustomEvent('draft-created', { 
-            detail: { draftId: result.draftId } 
+          window.dispatchEvent(new CustomEvent('draft-created', {
+            detail: { draftId: result.draftId }
           }));
         } else {
           // Same draft ID - just an update, no UI change needed
@@ -648,12 +644,12 @@ function Compose() {
   // Trigger auto-save when content changes
   const handleContentChange = () => {
     setIsDraftDirty(true);
-    
+
     // Clear existing timeout
     if (autoSaveTimeoutRef.current) {
       clearTimeout(autoSaveTimeoutRef.current);
     }
-    
+
     // Set new timeout for auto-save (3 seconds after user stops typing)
     autoSaveTimeoutRef.current = setTimeout(() => {
       autoSaveDraft();
@@ -671,35 +667,35 @@ function Compose() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     // Include both toRecipients array AND current toInput if valid
     let allToRecipients = [...toRecipients];
-    
+
     // If user has typed an email but hasn't pressed Enter/comma/space yet, include it
     if (toInput.trim() && toInput.includes('@') && !allToRecipients.includes(toInput.trim())) {
       allToRecipients.push(toInput.trim());
     }
-    
+
     // Combine toRecipients array into comma-separated string
     const combinedTo = allToRecipients.join(', ');
-    
+
     if (!combinedTo && allToRecipients.length === 0) {
       alert('Please specify at least one recipient');
       return;
     }
 
     // Validate CC recipients (email format)
-    const invalidCcEmails = ccRecipients.filter(email => 
+    const invalidCcEmails = ccRecipients.filter(email =>
       email.trim() && !email.includes('@')
     );
-    
+
     if (invalidCcEmails.length > 0) {
       alert(`Invalid CC email addresses: ${invalidCcEmails.join(', ')}`);
       return;
     }
-    
+
     setIsSending(true);
-    
+
     try {
       // Process attachments - convert both File objects and generated attachments to the expected format
       const processedAttachments = await Promise.all(
@@ -716,7 +712,7 @@ function Compose() {
                 // Extract base64 data without the prefix
                 const base64data = reader.result as string;
                 const base64Content = base64data.split(',')[1];
-                
+
                 resolve({
                   name: attachment.name,
                   mimeType: attachment.mimeType,
@@ -734,19 +730,19 @@ function Compose() {
               data: attachment.data
             };
           }
-          
+
           throw new Error('Invalid attachment format');
         })
       );
-      
+
       // Combine user's HTML content with original HTML content
       let finalBodyHtml = '';
-      
+
       if (newBodyHtml.trim()) {
         // User's content is already in HTML format from rich text editor
         finalBodyHtml = newBodyHtml;
       }
-      
+
       if (originalEmailHtml) {
         if (finalBodyHtml) {
           finalBodyHtml += '<br><br>' + originalEmailHtml;
@@ -754,18 +750,18 @@ function Compose() {
           finalBodyHtml = originalEmailHtml;
         }
       }
-      
+
       // Signature is now added at compose initialization, not at save/send time
-      
+
       // Fallback if no content
       if (!finalBodyHtml) {
         finalBodyHtml = '<div style="font-family: Arial, sans-serif; color: #333;"></div>';
       }
-      
+
       // Prepare CC recipients string (filter out empty values)
       const ccRecipientsString = ccRecipients.filter(email => email.trim()).join(',');
 
-      await sendEmail({
+      const sendResult = await sendEmail({
         from: {
           name: 'Me',
           email: 'me@example.com'
@@ -778,21 +774,28 @@ function Compose() {
         body: finalBodyHtml,
         internalDate: new Date().toISOString() // Add this line
       }, processedAttachments, currentThreadId, ccRecipientsString);
-      
+
+      // Check if send was successful
+      if (!sendResult.success) {
+        toast.error('Failed to send email. Please try again.');
+        setIsSending(false);
+        return;
+      }
+
       // Delete the draft if it exists (since we just sent the email)
       if (currentDraftId) {
         try {
           await deleteDraft(currentDraftId);
           console.log('✅ Draft deleted after sending email');
-          
+
           // Emit event to remove from UI and update counter
           // Use messageIdForUI (the message ID from the email list)
           const emailIdToRemove = messageIdForUI || contextDraftId || currentDraftId;
           console.log('🗑️ Removing draft from UI - draftId:', currentDraftId, 'messageId:', emailIdToRemove);
-          
+
           emailRepository.deleteEmail(emailIdToRemove);
-          window.dispatchEvent(new CustomEvent('email-deleted', { 
-            detail: { emailId: emailIdToRemove } 
+          window.dispatchEvent(new CustomEvent('email-deleted', {
+            detail: { emailId: emailIdToRemove }
           }));
           console.log('📤 Emitted email-deleted event after sending with message ID:', emailIdToRemove);
         } catch (draftError) {
@@ -800,41 +803,42 @@ function Compose() {
           // Continue anyway since the email was sent successfully
         }
       }
-      
+
       // Clear email cache to ensure fresh data when returning to thread
       clearEmailCache();
-      
-      // Show success toast
-      toast({ 
-        title: 'Email sent',
-        duration: 3000
-      });
-      
+
+      // Show success toast with recipient info
+      const recipientCount = allToRecipients.length;
+      const recipientDisplay = recipientCount === 1 
+        ? allToRecipients[0] 
+        : `${recipientCount} recipients`;
+      toast.success(`Email sent successfully to ${recipientDisplay}`);
+
       // Close compose window immediately
       closeCompose();
-      
+
       // Reset sending state
       setIsSending(false);
-      
+
       // Determine navigation destination
       const isThreadReply = !!currentThreadId;
       const isDraftEmail = !!contextDraftId; // Sent from a draft
-      
+
       // If sent from draft, always go to inbox (the draft thread might be stale)
       // Otherwise, stay in thread if replying
-      const navigationDestination = isDraftEmail 
-        ? '/inbox' 
+      const navigationDestination = isDraftEmail
+        ? '/inbox'
         : (isThreadReply ? `/email/${currentThreadId}` : '/inbox');
-      
+
       console.log('📍 Navigation:', { isDraftEmail, isThreadReply, destination: navigationDestination });
-      
+
       // For thread replies (not from drafts), navigate immediately with refresh state
       // For new emails or drafts, show success message for 2 seconds
       if (isThreadReply && !isDraftEmail) {
         // Navigate immediately to thread with refresh state
         setTimeout(() => {
-          navigate(navigationDestination, { 
-            state: { refresh: true } 
+          navigate(navigationDestination, {
+            state: { refresh: true }
           });
         }, 500); // Shorter delay for thread replies
       } else {
@@ -843,14 +847,10 @@ function Compose() {
           navigate(navigationDestination);
         }, 1000);
       }
-      
+
     } catch (error) {
       console.error('Error sending email:', error);
-      toast({ 
-        title: 'Failed to send email', 
-        description: 'Please try again',
-        variant: 'destructive'
-      });
+      toast.error('Failed to send email. Please try again.');
       setIsSending(false);
     }
   };
@@ -935,7 +935,7 @@ function Compose() {
   const handleToInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setToInput(value);
-    
+
     // Search contacts
     if (value.trim().length > 0) {
       const contacts = searchContacts(value, 5);
@@ -1007,9 +1007,9 @@ function Compose() {
   const removeCcRecipient = (email: string) => {
     // Allow David and Marti to remove any CC recipients
     // For other users, don't allow removing the hardcoded David email
-    if (email === 'david.v@dnddesigncenter.com' && 
-        currentProfile?.name !== 'David' && 
-        currentProfile?.name !== 'Marti') {
+    if (email === 'david.v@dnddesigncenter.com' &&
+      currentProfile?.name !== 'David' &&
+      currentProfile?.name !== 'Marti') {
       return; // Only David and Marti can remove David's CC
     }
     setCcRecipients(prev => prev.filter(recipient => recipient !== email));
@@ -1023,14 +1023,14 @@ function Compose() {
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setIsGeneratingPDF(true);
-    
+
     try {
       const data = JSON.parse(e.dataTransfer.getData('application/json'));
-  const { item, type } = data;
-      
+      const { item, type } = data;
+
       console.log(`Generating PDF for ${type}:`, item);
 
-  const sb = sharedSupabase;
+      const sb = sharedSupabase;
 
       let pdfBlob: Blob;
       let filename: string;
@@ -1164,10 +1164,10 @@ function Compose() {
       } else {
         throw new Error('Unknown item type');
       }
-      
+
       // Convert blob to file for attachment
-  const pdfFile = new File([pdfBlob], filename, { type: 'application/pdf' });
-      
+      const pdfFile = new File([pdfBlob], filename, { type: 'application/pdf' });
+
       // Create attachment with actual PDF file
       const attachment: AttachmentItem = {
         name: filename,
@@ -1176,7 +1176,7 @@ function Compose() {
         size: pdfFile.size,
         dataUrl: URL.createObjectURL(pdfBlob), // For preview
       };
-      
+
       setAttachments(prev => [...prev, attachment]);
       console.log(`Successfully attached ${filename}`);
     } catch (error) {
@@ -1214,7 +1214,7 @@ function Compose() {
         }
 
         const { data: invoicesData, error: invoicesError } = await invoicesQuery;
-        
+
         if (invoicesError) {
           console.error('Error fetching invoices:', invoicesError);
         } else {
@@ -1274,207 +1274,223 @@ function Compose() {
     <>
       <div className={`fixed z-50 flex flex-col transition-all duration-300 ease-in-out ${isExpanded ? 'inset-4' : 'bottom-4 right-4 w-[600px]'}`}>
         {/* Main Compose Window - Gmail-style popup */}
-        <div 
+        <div
           className={`bg-white rounded-lg shadow-2xl overflow-hidden flex flex-col transition-all duration-300 ease-in-out ${isExpanded ? 'h-full' : 'h-[580px]'}`}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
         >
-            {/* PDF Generation Overlay */}
-            {isGeneratingPDF && (
-              <div className="absolute inset-0 bg-white bg-opacity-90 flex items-center justify-center z-10">
-                <div className="text-center">
-                  <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500 mx-auto mb-2"></div>
-                  <p className="text-gray-700 text-sm font-medium">Generating PDF...</p>
-                </div>
+          {/* PDF Generation Overlay */}
+          {isGeneratingPDF && (
+            <div className="absolute inset-0 bg-white bg-opacity-90 flex items-center justify-center z-10">
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500 mx-auto mb-2"></div>
+                <p className="text-gray-700 text-sm font-medium">Generating PDF...</p>
               </div>
-            )}
-            
-            <div className="px-3 py-2 bg-gray-100 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm font-medium">
-                  {currentDraftId ? 'Edit Draft' : 'New Message'}
-                </h2>
-                {toRecipients.length > 0 && (
-                  <span className="text-xs text-gray-500">- {toRecipients[0].substring(0, 20)}{toRecipients[0].length > 20 ? '...' : ''}{toRecipients.length > 1 ? ` +${toRecipients.length - 1}` : ''}</span>
-                )}
-              </div>
-              <div className="flex space-x-1">
-                <button 
+            </div>
+          )}
+          {/* Outlook-style Header */}
+          <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
+            <div className="flex items-center gap-4">
+              {/* Send Button */}
+              <div className="flex">
+                <button
                   type="button"
-                  onClick={toggleExpand}
-                  className="p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded"
-                  title={isExpanded ? 'Minimize' : 'Expand'}
+                  onClick={handleSubmit}
+                  disabled={isSending || !toRecipients.length}
+                  className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:cursor-not-allowed text-white text-sm font-medium rounded-l transition-colors"
                 >
-                  {isExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                  <SendHorizontal size={14} />
+                  Send
                 </button>
-                <button 
+              </div>
+
+              {/* From selector */}
+              <div className="flex items-center gap-1 text-sm text-gray-700">
+                <span className="text-gray-500">From:</span>
+                <button
                   type="button"
-                  onClick={handleCancel}
-                  className="p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded"
-                  title="Close"
+                  className="flex items-center gap-1 hover:text-gray-900 transition-colors"
                 >
-                  <X size={16} />
+                  <span>{currentProfile?.userEmail || 'me@example.com'}</span>
                 </button>
               </div>
             </div>
-          
+
+            {/* Right side icons */}
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                title="Discard"
+              >
+                <Trash2 size={18} />
+              </button>
+              <button
+                type="button"
+                onClick={toggleExpand}
+                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                title={isExpanded ? 'Minimize' : 'Expand'}
+              >
+                {isExpanded ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+              </button>
+            </div>
+          </div>
+
           {/* Compose Form */}
           {(
-          <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
-            {/* Fixed header section with recipient fields */}
-            <div className="flex-shrink-0 p-3 space-y-1 overflow-y-auto max-h-[280px]">
-              {/* From (read-only) */}
-              <div className="flex items-center border-b border-gray-200 py-1.5 gap-2">
-                <span className="text-gray-500 text-xs w-14">From:</span>
-                <span className="text-xs text-gray-800">{currentProfile?.userEmail || 'me@example.com'}</span>
-              </div>
-              
-              {/* Date (read-only) */}
-              <div className="flex items-center border-b border-gray-200 py-1.5 gap-2">
-                <span className="text-gray-500 text-xs w-14">Date:</span>
-                <span className="text-xs text-gray-800">{format(new Date(), 'MMM d, yyyy, h:mm a')}</span>
-              </div>
-              
-              {/* TO Section */}
-              <div className="relative">
-                <div className="flex items-center border-b border-gray-200 py-1.5 gap-2">
-                  <span className="text-gray-500 text-xs w-14">To:</span>
-                  <div className="flex-1 flex flex-wrap items-center gap-1">
-                    {/* Display existing TO recipients */}
-                    {toRecipients.map((email, index) => (
-                      <div key={index} className="flex items-center bg-gray-100 text-gray-800 px-1.5 py-0.5 rounded-full text-[10px]">
-                        <span>{email}</span>
-                        <button
-                          type="button"
-                          onClick={() => setToRecipients(toRecipients.filter((_, i) => i !== index))}
-                          className="ml-1 text-gray-600 hover:text-gray-800"
-                        >
-                          <X size={10} />
-                        </button>
-                      </div>
-                    ))}
-                    {/* TO Input field */}
-                    <input
-                      type="text"
-                      value={toInput}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        setToInput(value);
-                        handleToInputChange(e);
-                        
-                        // Auto-convert to badge when space, comma, or Enter is detected
-                        if (value.endsWith(' ') || value.endsWith(',')) {
-                          const email = value.slice(0, -1).trim();
-                          if (email && email.includes('@') && !toRecipients.includes(email)) {
-                            setToRecipients([...toRecipients, email]);
-                            setToInput('');
-                            setTo([...toRecipients, email].join(', '));
+            <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+              {/* Recipient fields section - Outlook style */}
+              <div className="flex-shrink-0 px-4 py-2 space-y-3 overflow-y-auto max-h-[280px]">
+                {/* TO Section */}
+                <div className="relative">
+                  <div className="flex items-start gap-3 py-2">
+                    <button
+                      type="button"
+                      className="px-3 py-1 text-sm text-gray-700 border border-gray-300 rounded hover:bg-gray-50 flex-shrink-0"
+                    >
+                      To
+                    </button>
+                    <div className="flex-1 flex flex-wrap items-center gap-1.5 border-b border-gray-300 pb-2 min-h-[32px]">
+                      {/* Display existing TO recipients */}
+                      {toRecipients.map((email, index) => (
+                        <div key={index} className="flex items-center bg-gray-100 text-gray-800 px-2 py-0.5 rounded text-sm">
+                          <span>{email}</span>
+                          <button
+                            type="button"
+                            onClick={() => setToRecipients(toRecipients.filter((_, i) => i !== index))}
+                            className="ml-1.5 text-gray-500 hover:text-gray-800"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ))}
+                      {/* TO Input field */}
+                      <input
+                        type="text"
+                        value={toInput}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setToInput(value);
+                          handleToInputChange(e);
+
+                          // Auto-convert to badge when space, comma, or Enter is detected
+                          if (value.endsWith(' ') || value.endsWith(',')) {
+                            const email = value.slice(0, -1).trim();
+                            if (email && email.includes('@') && !toRecipients.includes(email)) {
+                              setToRecipients([...toRecipients, email]);
+                              setToInput('');
+                              setTo([...toRecipients, email].join(', '));
+                            }
                           }
-                        }
-                      }}
-                      onFocus={handleToInputFocus}
-                      onBlur={() => {
-                        // Convert to badge on blur if valid email
-                        const email = toInput.trim();
-                        if (email && email.includes('@') && !toRecipients.includes(email)) {
-                          setToRecipients([...toRecipients, email]);
-                          setToInput('');
-                          setTo([...toRecipients, email].join(', '));
-                        }
-                        handleToInputBlur();
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
+                        }}
+                        onFocus={handleToInputFocus}
+                        onBlur={() => {
+                          // Convert to badge on blur if valid email
                           const email = toInput.trim();
                           if (email && email.includes('@') && !toRecipients.includes(email)) {
                             setToRecipients([...toRecipients, email]);
                             setToInput('');
                             setTo([...toRecipients, email].join(', '));
                           }
-                        } else {
-                          handleToInputKeyDown(e);
-                        }
-                      }}
-                      className="flex-1 min-w-[100px] outline-none text-xs py-0.5"
-                      placeholder={toRecipients.length === 0 ? "" : ""}
-                    />
+                          handleToInputBlur();
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            const email = toInput.trim();
+                            if (email && email.includes('@') && !toRecipients.includes(email)) {
+                              setToRecipients([...toRecipients, email]);
+                              setToInput('');
+                              setTo([...toRecipients, email].join(', '));
+                            }
+                          } else {
+                            handleToInputKeyDown(e);
+                          }
+                        }}
+                        className="flex-1 min-w-[120px] outline-none text-sm py-0.5 bg-transparent"
+                        placeholder=""
+                      />
+                    </div>
                   </div>
-                </div>
-                
-                {/* Contact dropdown */}
-                {showContactDropdown && (
-                  <div className="absolute top-full left-0 right-0 z-[999] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
-                    {filteredContacts.length > 0 ? (
-                      filteredContacts.map((contact, index) => (
-                        <div
-                          key={`${contact.email}-${index}`}
-                          onClick={() => handleContactSelect(contact)}
-                          className="flex items-center px-2 py-1.5 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
-                        >
-                          {contact.photoUrl ? (
-                            <img
-                              src={contact.photoUrl}
-                              alt={contact.name}
-                              className="w-6 h-6 rounded-full mr-2 flex-shrink-0"
-                            />
-                          ) : (
-                            <div className="w-6 h-6 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-medium mr-2 flex-shrink-0">
-                              {getProfileInitial(contact.name, contact.email)}
-                            </div>
-                          )}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1">
-                              <span className="text-xs font-medium text-gray-900 truncate">
-                                {contact.name}
-                              </span>
-                              {contact.isFrequentlyContacted && (
-                                <span className="px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full flex-shrink-0">
-                                  Frequent
+
+                  {/* Contact dropdown */}
+                  {showContactDropdown && (
+                    <div className="absolute top-full left-14 right-0 z-[999] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
+                      {filteredContacts.length > 0 ? (
+                        filteredContacts.map((contact, index) => (
+                          <div
+                            key={`${contact.email}-${index}`}
+                            onClick={() => handleContactSelect(contact)}
+                            className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                          >
+                            {contact.photoUrl ? (
+                              <img
+                                src={contact.photoUrl}
+                                alt={contact.name}
+                                className="w-7 h-7 rounded-full mr-2.5 flex-shrink-0"
+                              />
+                            ) : (
+                              <div className="w-7 h-7 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-medium mr-2.5 flex-shrink-0">
+                                {getProfileInitial(contact.name, contact.email)}
+                              </div>
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1">
+                                <span className="text-sm font-medium text-gray-900 truncate">
+                                  {contact.name}
                                 </span>
-                              )}
+                                {contact.isFrequentlyContacted && (
+                                  <span className="px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full flex-shrink-0">
+                                    Frequent
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-gray-500 truncate">{contact.email}</p>
                             </div>
-                            <p className="text-[10px] text-gray-500 truncate">{contact.email}</p>
                           </div>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="px-2 py-2 text-gray-500 text-xs">No contacts found</div>
-                    )}
-                  </div>
-                )}
-              </div>
-              
-              {/* CC Section */}
-              {showCc && (
+                        ))
+                      ) : (
+                        <div className="px-3 py-2 text-gray-500 text-sm">No contacts found</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* CC Section - Always visible */}
                 <div className="relative">
-                  <div className="flex items-center border-b border-gray-200 py-1.5 gap-2">
-                    <span className="text-gray-500 text-xs w-14">CC:</span>
-                    <div className="flex-1 flex flex-wrap items-center gap-1">
+                  <div className="flex items-start gap-3 py-2">
+                    <button
+                      type="button"
+                      className="px-3 py-1 text-sm text-gray-700 border border-gray-300 rounded hover:bg-gray-50 flex-shrink-0"
+                    >
+                      Cc
+                    </button>
+                    <div className="flex-1 flex flex-wrap items-center gap-1.5 border-b border-gray-300 pb-2 min-h-[32px]">
                       {/* Display existing CC recipients */}
                       {ccRecipients.map((email, index) => (
-                        <div key={index} className="flex items-center bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded-full text-[10px]">
+                        <div key={index} className="flex items-center bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-sm">
                           <span className={email === 'david.v@dnddesigncenter.com' && currentProfile?.name !== 'David' ? 'text-blue-600 font-medium' : ''}>
-                            {email === 'david.v@dnddesigncenter.com' && currentProfile?.name !== 'David' 
-                              ? email + ' (owner)' 
+                            {email === 'david.v@dnddesigncenter.com' && currentProfile?.name !== 'David'
+                              ? email + ' (owner)'
                               : email}
                           </span>
                           {/* Show remove button based on user permissions */}
-                          {(email !== 'david.v@dnddesigncenter.com' || 
-                            currentProfile?.name === 'David' || 
+                          {(email !== 'david.v@dnddesigncenter.com' ||
+                            currentProfile?.name === 'David' ||
                             currentProfile?.name === 'Marti' ||
                             currentProfile?.userEmail === 'info@effidigi.com') && (
-                            <button
-                              type="button"
-                              onClick={() => removeCcRecipient(email)}
-                              className="ml-1 text-blue-600 hover:text-blue-800"
-                            >
-                              <X size={10} />
-                            </button>
-                          )}
+                              <button
+                                type="button"
+                                onClick={() => removeCcRecipient(email)}
+                                className="ml-1.5 text-blue-600 hover:text-blue-800"
+                              >
+                                <X size={12} />
+                              </button>
+                            )}
                         </div>
                       ))}
-                      
+
                       {/* CC Input field */}
                       <input
                         type="text"
@@ -1482,7 +1498,7 @@ function Compose() {
                         onChange={(e) => {
                           const value = e.target.value;
                           handleCcInputChange(e);
-                          
+
                           // Auto-convert to badge when space or comma is detected
                           if (value.endsWith(' ') || value.endsWith(',')) {
                             const email = value.slice(0, -1).trim();
@@ -1514,36 +1530,36 @@ function Compose() {
                             handleCcInputKeyDown(e);
                           }
                         }}
-                        className="flex-1 min-w-[100px] outline-none text-xs py-0.5"
-                        placeholder={ccRecipients.length === 0 ? "" : ""}
+                        className="flex-1 min-w-[120px] outline-none text-sm py-0.5 bg-transparent"
+                        placeholder=""
                       />
                     </div>
                   </div>
-                  
+
                   {/* CC Contact dropdown */}
                   {showCcContactDropdown && (
-                    <div className="absolute top-full left-0 right-0 z-[998] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
+                    <div className="absolute top-full left-14 right-0 z-[998] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
                       {filteredCcContacts.length > 0 ? (
                         filteredCcContacts.map((contact, index) => (
                           <div
                             key={`cc-${contact.email}-${index}`}
                             onClick={() => handleCcContactSelect(contact)}
-                            className="flex items-center px-2 py-1.5 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                            className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
                           >
                             {contact.photoUrl ? (
                               <img
                                 src={contact.photoUrl}
                                 alt={contact.name}
-                                className="w-6 h-6 rounded-full mr-2 flex-shrink-0"
+                                className="w-7 h-7 rounded-full mr-2.5 flex-shrink-0"
                               />
                             ) : (
-                              <div className="w-6 h-6 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-medium mr-2 flex-shrink-0">
+                              <div className="w-7 h-7 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-medium mr-2.5 flex-shrink-0">
                                 {getProfileInitial(contact.name, contact.email)}
                               </div>
                             )}
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-1">
-                                <span className="text-xs font-medium text-gray-900 truncate">
+                                <span className="text-sm font-medium text-gray-900 truncate">
                                   {contact.name}
                                 </span>
                                 {contact.isFrequentlyContacted && (
@@ -1552,59 +1568,36 @@ function Compose() {
                                   </span>
                                 )}
                               </div>
-                              <p className="text-[10px] text-gray-500 truncate">{contact.email}</p>
+                              <p className="text-xs text-gray-500 truncate">{contact.email}</p>
                             </div>
                           </div>
                         ))
                       ) : (
-                        <div className="px-2 py-2 text-gray-500 text-xs">No contacts found</div>
+                        <div className="px-3 py-2 text-gray-500 text-sm">No contacts found</div>
                       )}
                     </div>
                   )}
                 </div>
-              )}
-              
-              {/* Show/Hide CC/BCC toggles */}
-              {(!showCc || !showBcc) && (
-                <div className="flex items-center gap-3">
-                  {!showCc && (
-                    <button
-                      type="button"
-                      onClick={() => setShowCc(true)}
-                      className="text-blue-600 hover:text-blue-800 text-xs flex items-center gap-0.5"
-                    >
-                      <Plus size={12} />
-                      CC
-                    </button>
-                  )}
-                  {!showBcc && (
-                    <button
-                      type="button"
-                      onClick={() => setShowBcc(true)}
-                      className="text-blue-600 hover:text-blue-800 text-xs flex items-center gap-0.5"
-                    >
-                      <Plus size={12} />
-                      BCC
-                    </button>
-                  )}
-                </div>
-              )}
-              
-              {/* BCC Section */}
-              {showBcc && (
+
+                {/* BCC Section - Always visible */}
                 <div className="relative">
-                  <div className="flex items-center border-b border-gray-200 py-1.5 gap-2">
-                    <span className="text-gray-500 text-xs w-14">BCC:</span>
-                    <div className="flex-1 flex flex-wrap items-center gap-1">
+                  <div className="flex items-start gap-3 py-2">
+                    <button
+                      type="button"
+                      className="px-3 py-1 text-sm text-gray-700 border border-gray-300 rounded hover:bg-gray-50 flex-shrink-0"
+                    >
+                      Bcc
+                    </button>
+                    <div className="flex-1 flex flex-wrap items-center gap-1.5 border-b border-gray-300 pb-2 min-h-[32px]">
                       {bccRecipients.map((email, index) => (
-                        <div key={index} className="flex items-center bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded-full text-[10px]">
+                        <div key={index} className="flex items-center bg-purple-100 text-purple-800 px-2 py-0.5 rounded text-sm">
                           <span>{email}</span>
                           <button
                             type="button"
                             onClick={() => setBccRecipients(bccRecipients.filter((_, i) => i !== index))}
-                            className="ml-1 text-purple-600 hover:text-purple-800"
+                            className="ml-1.5 text-purple-600 hover:text-purple-800"
                           >
-                            <X size={10} />
+                            <X size={12} />
                           </button>
                         </div>
                       ))}
@@ -1639,51 +1632,51 @@ function Compose() {
                             }
                           }
                         }}
-                        className="flex-1 min-w-[100px] outline-none text-xs py-0.5"
+                        className="flex-1 min-w-[120px] outline-none text-sm py-0.5 bg-transparent"
                         placeholder=""
                       />
                     </div>
                   </div>
                 </div>
-              )}
-              
-              <div className="flex items-center border-b border-gray-200 py-1.5 gap-2">
-                <span className="text-gray-500 text-xs w-14">Subject:</span>
-                <input
-                  type="text"
-                  value={subject}
-                  onChange={(e) => {
-                    setSubject(e.target.value);
-                    handleContentChange();
-                  }}
-                  className="flex-1 outline-none text-xs py-0.5"
-                />
+
+                {/* Subject field */}
+                <div className="flex items-center py-2">
+                  <input
+                    type="text"
+                    value={subject}
+                    onChange={(e) => {
+                      setSubject(e.target.value);
+                      handleContentChange();
+                    }}
+                    className="flex-1 outline-none text-sm py-1 border-b border-gray-300 bg-transparent"
+                    placeholder="Add a subject"
+                  />
+                </div>
               </div>
-            </div>
-            
-            {/* Flex editor section - fills remaining space */}
-            <div className="flex-1 min-h-0 flex flex-col">
-              <div className="flex-1 min-h-0">
-                <RichTextEditor
-                  value={newBodyHtml}
-                  onChange={(value) => {
-                    setNewBodyHtml(value);
-                    handleContentChange();
-                  }}
-                  minHeight="100%"
-                  disabled={isSending}
-                  showPriceRequestButton={false}
-                  onOpenPriceRequest={handleOpenPriceRequest}
-                  showFileAttachmentButton={true}
-                  onFileAttachment={handleRichTextFileAttachment}
-                  compact={false}
-                />
+
+              {/* Flex editor section - fills remaining space */}
+              <div className="flex-1 min-h-0 flex flex-col">
+                <div className="flex-1 min-h-0">
+                  <RichTextEditor
+                    value={newBodyHtml}
+                    onChange={(value) => {
+                      setNewBodyHtml(value);
+                      handleContentChange();
+                    }}
+                    minHeight="100%"
+                    disabled={isSending}
+                    showPriceRequestButton={false}
+                    onOpenPriceRequest={handleOpenPriceRequest}
+                    showFileAttachmentButton={true}
+                    onFileAttachment={handleRichTextFileAttachment}
+                    compact={false}
+                  />
+                </div>
               </div>
-            </div>
-            
-            {/* Attachment thumbnails section */}
-            {attachments.length > 0 && (
-              <div className="flex-shrink-0 bg-gray-50 border-t border-gray-200 p-2">
+
+              {/* Attachment thumbnails section */}
+              {attachments.length > 0 && (
+                <div className="flex-shrink-0 bg-gray-50 border-t border-gray-200 p-2">
                   <div className="flex items-center gap-1 mb-1">
                     <Paperclip size={12} className="text-gray-500" />
                     <span className="text-[10px] font-medium text-gray-600">
@@ -1691,136 +1684,57 @@ function Compose() {
                     </span>
                   </div>
                   <div className="flex flex-wrap gap-1">
-                        {attachments.map((attachment, index) => (
-                          <div
-                            key={index}
-                            className="group relative bg-white border border-gray-200 rounded p-1 hover:border-gray-300 transition-colors cursor-pointer"
-                            onClick={() => handleAttachmentPreview(attachment)}
-                          >
-                            <div className="flex items-center gap-1">
-                              <div className="flex-shrink-0">
-                                <FileThumbnail
-                                  attachment={{
-                                    name: attachment.name,
-                                    mimeType: attachment.mimeType,
-                                    size: attachment.size || attachment.file?.size || 0,
-                                    attachmentId: attachment.attachmentId,
-                                    partId: attachment.partId
-                                  }}
-                                  emailId="compose"
-                                  userEmail="me@example.com"
-                                  size="small"
-                                  showPreviewButton={false}
-                                />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-xs font-medium text-gray-900 truncate max-w-[80px]">
-                                  {attachment.name}
-                                </p>
-                                <p className="text-xs text-gray-500">
-                                  {attachment.size ? formatFileSize(attachment.size) : 
-                                   attachment.file ? formatFileSize(attachment.file.size) : 'Unknown'}
-                                </p>
-                              </div>
-                            </div>
-                            
-                            {/* Remove button - only visible on hover */}
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                removeAttachment(index);
+                    {attachments.map((attachment, index) => (
+                      <div
+                        key={index}
+                        className="group relative bg-white border border-gray-200 rounded p-1 hover:border-gray-300 transition-colors cursor-pointer"
+                        onClick={() => handleAttachmentPreview(attachment)}
+                      >
+                        <div className="flex items-center gap-1">
+                          <div className="flex-shrink-0">
+                            <FileThumbnail
+                              attachment={{
+                                name: attachment.name,
+                                mimeType: attachment.mimeType,
+                                size: attachment.size || attachment.file?.size || 0,
+                                attachmentId: attachment.attachmentId,
+                                partId: attachment.partId
                               }}
-                              className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center hover:bg-red-600"
-                              title="Remove attachment"
-                            >
-                              <X size={10} />
-                            </button>
+                              emailId="compose"
+                              userEmail="me@example.com"
+                              size="small"
+                              showPreviewButton={false}
+                            />
                           </div>
-                        ))}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium text-gray-900 truncate max-w-[80px]">
+                              {attachment.name}
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              {attachment.size ? formatFileSize(attachment.size) :
+                                attachment.file ? formatFileSize(attachment.file.size) : 'Unknown'}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Remove button - only visible on hover */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeAttachment(index);
+                          }}
+                          className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center hover:bg-red-600"
+                          title="Remove attachment"
+                        >
+                          <X size={10} />
+                        </button>
                       </div>
-              </div>
-            )}
-            
-            {/* Footer with buttons */}
-            <div className="px-3 py-2 bg-gray-50 border-t border-gray-200 flex items-center justify-between flex-shrink-0">
-              <div className="flex items-center gap-2">
-                <button
-                  type="submit"
-                  disabled={isSending}
-                  className="p-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white rounded-full transition-colors flex items-center justify-center"
-                  title={isSending ? 'Sending...' : 'Send'}
-                >
-                  {isSending ? (
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  ) : (
-                    <SendHorizontal size={16} />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleManualSaveDraft}
-                  disabled={isAutoSaving || !isDraftDirty}
-                  className="px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 text-gray-700 text-xs font-medium rounded transition-colors"
-                >
-                  {isAutoSaving ? 'Saving...' : 'Save Draft'}
-                </button>
-                {currentDraftId && (
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      if (window.confirm('Discard this draft?')) {
-                        try {
-                          await deleteDraft(currentDraftId);
-                          
-                          // Use messageIdForUI (the email's message ID) for UI removal
-                          // This is what the email list knows about, not the draft ID
-                          const emailIdToRemove = messageIdForUI || contextDraftId || currentDraftId;
-                          
-                          console.log('🗑️ Discarding draft - draftId:', currentDraftId, 'messageId:', emailIdToRemove);
-                          
-                          // Remove from email repository
-                          emailRepository.deleteEmail(emailIdToRemove);
-                          
-                          // Emit event with the message ID so UI can remove it
-                          window.dispatchEvent(new CustomEvent('email-deleted', { 
-                            detail: { emailId: emailIdToRemove } 
-                          }));
-                          
-                          console.log('📤 Emitted email-deleted event with message ID:', emailIdToRemove);
-                          
-                          closeCompose();
-                        } catch (error) {
-                          console.error('Error deleting draft:', error);
-                        }
-                      }
-                    }}
-                    className="px-3 py-1.5 text-red-600 hover:bg-red-50 text-xs font-medium rounded transition-colors"
-                  >
-                    Discard
-                  </button>
-                )}
-              </div>
-              
-              {/* Draft status indicator */}
-              <div className="text-[10px] text-gray-500">
-                {isAutoSaving && (
-                  <span className="flex items-center gap-1">
-                    <div className="w-2 h-2 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-                    Saving...
-                    </span>
-                  )}
-                  {!isAutoSaving && lastSavedAt && (
-                    <span>
-                      Draft saved {formatDistanceToNow(lastSavedAt, { addSuffix: true })}
-                    </span>
-                  )}
-                  {!isAutoSaving && !lastSavedAt && isDraftDirty && (
-                    <span className="text-amber-600 text-[10px]">Unsaved</span>
-                  )}
-              </div>
-            </div>
-          </form>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </form>
           )}
         </div>
       </div>
@@ -1830,11 +1744,11 @@ function Compose() {
         <div className="mt-8">
           <div className="border-t border-gray-200 pt-6">
             <h3 className="text-lg font-semibold text-gray-800 mb-4">Email Thread</h3>
-            
+
             {/* All Thread Attachments Summary */}
             {threadEmails.length > 0 && (
               (() => {
-                const allAttachments = threadEmails.flatMap(email => 
+                const allAttachments = threadEmails.flatMap(email =>
                   email.attachments?.map(att => ({ ...att, emailFrom: email.from.name, emailDate: email.date })) || []
                 );
                 return allAttachments.length > 0 ? (
@@ -1882,7 +1796,7 @@ function Compose() {
                 ) : null;
               })()
             )}
-            
+
             {threadLoading ? (
               <div className="flex justify-center items-center py-8">
                 <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-primary-500"></div>
@@ -1919,11 +1833,11 @@ function Compose() {
                       </div>
                     </div>
                     <div className="p-4">
-                      <div 
+                      <div
                         className="prose max-w-none text-sm email-body-content"
                         dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(email.body) }}
                       />
-                      
+
                       {/* Enhanced Attachment Display */}
                       {email.attachments && email.attachments.length > 0 && (
                         <div className="mt-4 border-t border-gray-200 pt-4">
@@ -1966,7 +1880,7 @@ function Compose() {
                                     </div>
                                   )}
                                 </div>
-                                
+
                                 {/* File info */}
                                 <div className="flex-1 min-w-0">
                                   <p className="text-sm font-medium text-gray-900 truncate">{attachment.name}</p>
@@ -1977,9 +1891,9 @@ function Compose() {
                                     )}
                                   </p>
                                 </div>
-                                
+
                                 {/* Download button */}
-                                <button 
+                                <button
                                   type="button"
                                   onClick={() => {
                                     // Handle download - for now just log, but you could implement download logic here
@@ -2027,7 +1941,7 @@ function Compose() {
                 />
               </div>
             )}
-            
+
             {/* PDF Preview */}
             {previewFile.mimeType === 'application/pdf' && previewFile.file && (
               <div className="flex items-center justify-center">
@@ -2038,33 +1952,33 @@ function Compose() {
                 />
               </div>
             )}
-            
+
             {/* Text/Code Preview */}
-            {(previewFile.mimeType.startsWith('text/') || 
+            {(previewFile.mimeType.startsWith('text/') ||
               previewFile.mimeType === 'application/json' ||
               previewFile.mimeType === 'application/xml') && previewFile.file && (
-              <div className="bg-gray-50 rounded p-4 max-h-[70vh] overflow-auto">
-                <pre className="text-sm whitespace-pre-wrap">
-                  {/* File content would be loaded here */}
-                  <span className="text-gray-500">Text preview available when file is opened</span>
-                </pre>
-              </div>
-            )}
-            
+                <div className="bg-gray-50 rounded p-4 max-h-[70vh] overflow-auto">
+                  <pre className="text-sm whitespace-pre-wrap">
+                    {/* File content would be loaded here */}
+                    <span className="text-gray-500">Text preview available when file is opened</span>
+                  </pre>
+                </div>
+              )}
+
             {/* Other file types */}
-            {!previewFile.mimeType.startsWith('image/') && 
-             previewFile.mimeType !== 'application/pdf' &&
-             !previewFile.mimeType.startsWith('text/') &&
-             previewFile.mimeType !== 'application/json' &&
-             previewFile.mimeType !== 'application/xml' && (
-              <div className="text-center text-gray-500 py-8">
-                <Paperclip size={48} className="mx-auto mb-4" />
-                <p>Preview not available for this file type.</p>
-                <p className="text-sm mt-2">{previewFile.name}</p>
-                <p className="text-xs text-gray-400 mt-1">{previewFile.mimeType}</p>
-              </div>
-            )}
-            
+            {!previewFile.mimeType.startsWith('image/') &&
+              previewFile.mimeType !== 'application/pdf' &&
+              !previewFile.mimeType.startsWith('text/') &&
+              previewFile.mimeType !== 'application/json' &&
+              previewFile.mimeType !== 'application/xml' && (
+                <div className="text-center text-gray-500 py-8">
+                  <Paperclip size={48} className="mx-auto mb-4" />
+                  <p>Preview not available for this file type.</p>
+                  <p className="text-sm mt-2">{previewFile.name}</p>
+                  <p className="text-xs text-gray-400 mt-1">{previewFile.mimeType}</p>
+                </div>
+              )}
+
             {/* File Info */}
             <div className="mt-4 pt-4 border-t border-gray-200">
               <div className="flex justify-between items-center text-sm text-gray-600">

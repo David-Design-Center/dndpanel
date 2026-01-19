@@ -1,35 +1,38 @@
-import { useState, useRef, useMemo } from 'react';
+import { RefObject, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Email } from '@/types';
 import { X, Search, ChevronDown, ChevronRight, Folder, Tag } from 'lucide-react';
-import { toast } from 'sonner';
-import { createGmailFilter } from '@/integrations/gapiService';
-import { cleanEmailAddress } from '@/utils/emailFormatting';
-import { cleanEncodingIssues } from '@/utils/textEncoding';
-import { useLabel } from '@/contexts/LabelContext';
-import { useProfile } from '@/contexts/ProfileContext';
 import { buildLabelTree, filterLabelTree, NestedLabel } from '@/utils/labelTreeUtils';
+import { useLabel } from '@/contexts/LabelContext';
 
 interface CreateFilterModalProps {
   isOpen: boolean;
+  modalRef: RefObject<HTMLDivElement>;
+  senderName: string;
+  senderEmail: string;
+  selectedFilterLabel: string;
+  onSelectLabel: (labelId: string, labelName: string) => void;
   onClose: () => void;
-  email: Email;
-  onFilterCreated?: () => void;
+  onCreateFilter: () => void;
 }
 
+/**
+ * Modal for creating email filter rules (move messages from sender to folder)
+ * Updated Jan 2026: Now uses hierarchical tree view like Move function
+ */
 export function CreateFilterModal({
   isOpen,
+  modalRef,
+  senderName,
+  senderEmail,
+  selectedFilterLabel,
+  onSelectLabel,
   onClose,
-  email,
-  onFilterCreated
+  onCreateFilter,
 }: CreateFilterModalProps) {
   const { labels } = useLabel();
-  const { currentProfile } = useProfile();
   const [filterLabelQuery, setFilterLabelQuery] = useState('');
-  const [selectedFilterLabel, setSelectedFilterLabel] = useState('');
-  const [selectedLabelId, setSelectedLabelId] = useState('');
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
-  const modalRef = useRef<HTMLDivElement>(null);
+  const [selectedLabelId, setSelectedLabelId] = useState('');
 
   // Build hierarchical tree from labels
   const labelTree = useMemo(() => buildLabelTree(labels), [labels]);
@@ -40,84 +43,9 @@ export function CreateFilterModal({
     [labelTree, filterLabelQuery]
   );
 
-  // 🔧 SELF-FILTER BUG FIX (Jan 2026): Get current user's email
-  const currentUserEmail = cleanEmailAddress(currentProfile?.userEmail || '').toLowerCase();
+  if (!isOpen) return null;
 
-  // 🔧 COUNTERPARTY LOGIC: Find the external sender, not the current user
-  // Check if "from" is the current user (I sent/replied last)
-  const fromEmail = cleanEmailAddress(email.from?.email || '');
-  const isFromMe = fromEmail.toLowerCase() === currentUserEmail;
-
-  // Get the counterparty: if I'm the sender, use first recipient; otherwise use the from address
-  // For multi-recipient threads, prefer the first non-me participant
-  const getCounterpartyEmail = (): string => {
-    if (!isFromMe) {
-      // From is not me, use from email
-      return fromEmail;
-    }
-    // I'm the sender, find first recipient that's not me
-    const recipients = [...(email.to || []), ...(email.cc || [])];
-    for (const recipient of recipients) {
-      const recipientEmail = cleanEmailAddress(recipient.email || '');
-      if (recipientEmail && recipientEmail.toLowerCase() !== currentUserEmail) {
-        return recipientEmail;
-      }
-    }
-    return fromEmail; // Fallback
-  };
-
-  const getCounterpartyName = (): string => {
-    if (!isFromMe) {
-      return email.from?.name || email.from?.email || '';
-    }
-    const recipients = [...(email.to || []), ...(email.cc || [])];
-    for (const recipient of recipients) {
-      const recipientEmail = cleanEmailAddress(recipient.email || '');
-      if (recipientEmail && recipientEmail.toLowerCase() !== currentUserEmail) {
-        return recipient.name || recipient.email || '';
-      }
-    }
-    return email.from?.name || email.from?.email || '';
-  };
-
-  const counterpartyEmail = getCounterpartyEmail();
-  const counterpartyName = getCounterpartyName();
-
-  const handleCreateFilterWithLabel = async () => {
-    if (!counterpartyEmail) {
-      toast.error('Missing sender email');
-      return;
-    }
-    
-    // 🔧 SELF-FILTER BUG FIX: Final check - prevent creating filter for own email
-    if (counterpartyEmail.toLowerCase() === currentUserEmail) {
-      toast.error('Cannot create rule for your own email address. This would affect all your sent emails.');
-      return;
-    }
-    if (!selectedFilterLabel || !selectedLabelId) {
-      toast.error('Please select a folder');
-      return;
-    }
-
-    try {
-      toast.message('Creating rule…');
-
-      await createGmailFilter(
-        { from: counterpartyEmail },
-        { 
-          addLabelIds: [selectedLabelId],
-          removeLabelIds: ['INBOX']
-        }
-      );
-
-      toast.success('Rule created. Future emails will be moved to folder.');
-      onFilterCreated?.();
-      onClose();
-    } catch (err) {
-      console.error('Failed to create Gmail filter:', err);
-      toast.error('Could not create rule. Please check Gmail auth and try again.');
-    }
-  };
+  const displaySender = senderName || senderEmail;
 
   const handleToggleExpand = (nodeId: string) => {
     setExpandedNodes(prev => {
@@ -133,10 +61,8 @@ export function CreateFilterModal({
 
   const handleSelectLabel = (labelId: string, labelName: string) => {
     setSelectedLabelId(labelId);
-    setSelectedFilterLabel(labelName);
+    onSelectLabel(labelId, labelName);
   };
-
-  if (!isOpen) return null;
 
   return createPortal(
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[10000]">
@@ -144,7 +70,7 @@ export function CreateFilterModal({
         ref={modalRef}
         className="bg-white rounded-lg shadow-xl w-96 max-w-[90vw] max-h-[90vh] overflow-hidden"
       >
-        {/* Header */}
+        {/* Modal Header */}
         <div className="px-6 py-4 border-b border-gray-200">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold text-gray-900">Create a rule</h2>
@@ -156,16 +82,15 @@ export function CreateFilterModal({
             </button>
           </div>
         </div>
-        
-        {/* Body */}
+
+        {/* Modal Body */}
         <div className="px-6 py-4">
           <div className="mb-4">
             <p className="text-sm text-gray-700 mb-4">
-              Always move messages from <span className="font-semibold">
-                {counterpartyEmail}
-              </span> to this folder:
+              Always move messages from <span className="font-semibold">{senderEmail}</span> to this folder:
             </p>
-            
+
+            {/* Label Selection UI */}
             <div className="border border-gray-200 rounded-lg">
               {/* Search Bar */}
               <div className="p-2 border-b border-gray-100">
@@ -182,6 +107,7 @@ export function CreateFilterModal({
                     <button
                       onClick={() => setFilterLabelQuery('')}
                       className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 hover:bg-gray-100 rounded"
+                      aria-label="Clear search"
                     >
                       <X size={12} className="text-gray-400" />
                     </button>
@@ -207,8 +133,8 @@ export function CreateFilterModal({
             </div>
           </div>
         </div>
-        
-        {/* Footer */}
+
+        {/* Modal Footer */}
         <div className="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
           <button
             onClick={onClose}
@@ -217,7 +143,7 @@ export function CreateFilterModal({
             Cancel
           </button>
           <button
-            onClick={handleCreateFilterWithLabel}
+            onClick={onCreateFilter}
             disabled={!selectedFilterLabel}
             className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
           >

@@ -220,13 +220,13 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     setEmailCounts
   });
   
-  // Destructure for backwards compatibility
+/*
   const {
     unreadCount,
     draftsCount,
     trashCount
   } = emailCountsHook;
-  
+  */
   // ========== EXTENDED SELECTION CONTEXT ==========
   // Compute currentQuery and totalInFolder for bulk "Select All" feature
   const currentLabelForSelection = useMemo(() => {
@@ -966,6 +966,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
 
   // const currentHasMore = getCurrentHasMore(); // no longer needed directly in render; used implicitly for next-page fetch
 
+/*
   console.log('📧 Current state:', {
     activeTab,
     filteredEmailsLength: filteredEmails.length,
@@ -974,7 +975,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     isSearching,
     draftsCount,
     trashCount
-  });
+  }); */
 
   // Draft counter now uses Gmail API labels directly (via LabelContext)
   // No need to emit events - FoldersColumn reads from label.messagesTotal

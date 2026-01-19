@@ -1,11 +1,11 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react';
-import { 
-  Bold, 
-  Italic, 
-  Underline, 
-  List, 
-  ListOrdered, 
-  Link, 
+import {
+  Bold,
+  Italic,
+  Underline,
+  List,
+  ListOrdered,
+  Link,
   AlignLeft,
   AlignCenter,
   AlignRight,
@@ -95,18 +95,18 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
   const enhanceImages = useCallback(() => {
     const editor = editorRef.current;
     if (!editor) return;
-    
+
     const images = editor.querySelectorAll('img');
     images.forEach(img => {
       const imgElement = img as HTMLImageElement;
-      
+
       // Add retry mechanism for image loading
       if (!imgElement.hasAttribute('data-retry-setup')) {
         imgElement.setAttribute('data-retry-setup', 'true');
-        
+
         let retryCount = 0;
         const maxRetries = 3;
-        
+
         const retryLoad = () => {
           if (retryCount < maxRetries) {
             retryCount++;
@@ -117,7 +117,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
             imgElement.src = `${src}${separator}_retry=${Date.now()}`;
           }
         };
-        
+
         imgElement.onerror = retryLoad;
       }
     });
@@ -126,23 +126,23 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
   const enhanceLinks = useCallback(() => {
     const editor = editorRef.current;
     if (!editor) return;
-    
+
     const links = editor.querySelectorAll('a[href]');
     links.forEach(link => {
       const linkElement = link as HTMLAnchorElement;
-      
+
       // Set target to open in new window
       linkElement.target = '_blank';
       linkElement.rel = 'noopener noreferrer';
-      
+
       // Add tooltip with URL and instruction
       const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
       const modifierKey = isMac ? 'Cmd' : 'Ctrl';
       linkElement.title = `${linkElement.href}\n\n${modifierKey}+Click to open in new tab`;
-      
+
       // Make it clickable during editing
       linkElement.style.cursor = 'pointer';
-      
+
       // Remove any existing click handlers and add new one
       linkElement.onclick = (e) => {
         if (e.ctrlKey || e.metaKey) {
@@ -151,7 +151,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
           window.open(linkElement.href, '_blank', 'noopener,noreferrer');
         }
       };
-      
+
       // Add hover effect to show it's clickable
       linkElement.onmouseenter = () => {
         linkElement.style.backgroundColor = 'rgba(59, 130, 246, 0.1)';
@@ -159,7 +159,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
         linkElement.style.padding = '1px 2px';
         linkElement.style.margin = '-1px -2px';
       };
-      
+
       linkElement.onmouseleave = () => {
         linkElement.style.backgroundColor = '';
         linkElement.style.borderRadius = '';
@@ -186,7 +186,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
     if (editorRef.current) {
       const content = editorRef.current.innerHTML;
       onChange(content);
-      
+
       // Enhance any links and images that may have been added
       setTimeout(() => {
         enhanceLinks();
@@ -204,11 +204,11 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
       const selection = window.getSelection();
       let unorderedList = false;
       let orderedList = false;
-      
+
       if (selection && selection.rangeCount > 0) {
         const range = selection.getRangeAt(0);
         let node: Node | null = range.commonAncestorContainer;
-        
+
         // Walk up the DOM tree to find list elements
         while (node && node !== editorRef.current) {
           if (node.nodeType === Node.ELEMENT_NODE) {
@@ -243,7 +243,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
   // Execute formatting command
   const executeCommand = useCallback((command: string, value?: string) => {
     if (disabled) return;
-    
+
     try {
       document.execCommand(command, false, value);
       editorRef.current?.focus();
@@ -257,7 +257,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
   // Enhanced list creation function
   const createList = useCallback((listType: 'ul' | 'ol') => {
     if (disabled) return;
-    
+
     const editor = editorRef.current;
     if (!editor) return;
 
@@ -266,14 +266,14 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
 
     // Execute the appropriate command
     const command = listType === 'ul' ? 'insertUnorderedList' : 'insertOrderedList';
-    
+
     try {
       // First, ensure we're focused on the editor
       editor.focus();
-      
+
       // Execute the command
       document.execCommand(command, false);
-      
+
       // Force update of the content to ensure proper list styling
       setTimeout(() => {
         // Find all lists and ensure they have proper styling
@@ -287,18 +287,18 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
           (list as HTMLElement).style.paddingLeft = '1.5em';
           (list as HTMLElement).style.margin = '0.5em 0';
         });
-        
+
         // Ensure list items have proper display
         const listItems = editor.querySelectorAll('li');
         listItems.forEach(li => {
           (li as HTMLElement).style.display = 'list-item';
           (li as HTMLElement).style.margin = '0.25em 0';
         });
-        
+
         updateToolbarState();
         handleInput();
       }, 10);
-      
+
     } catch (error) {
       console.warn('List creation failed:', error);
     }
@@ -337,7 +337,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
   // Handle link insertion
   const insertLink = useCallback(() => {
     if (disabled) return;
-    
+
     const url = prompt('Enter the URL:');
     if (url) {
       executeCommand('createLink', url);
@@ -348,7 +348,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
   // Handle signature insertion
   const insertSignature = useCallback(() => {
     if (disabled || !signature) return;
-    
+
     const editor = editorRef.current;
     if (!editor) return;
 
@@ -357,19 +357,19 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
     if (selection && selection.rangeCount > 0) {
       const range = selection.getRangeAt(0);
       range.deleteContents();
-      
+
       // Create a temporary div to parse the signature HTML
       const tempDiv = document.createElement('div');
       tempDiv.innerHTML = signature;
-      
+
       // Insert the signature content
       const fragment = document.createDocumentFragment();
       while (tempDiv.firstChild) {
         fragment.appendChild(tempDiv.firstChild);
       }
-      
+
       range.insertNode(fragment);
-      
+
       // Move cursor to end of inserted content
       range.collapse(false);
       selection.removeAllRanges();
@@ -378,7 +378,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
       // If no selection, append to the end
       editor.innerHTML += signature;
     }
-    
+
     // Trigger change event
     handleInput();
   }, [disabled, signature, handleInput]);
@@ -386,19 +386,19 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
   // Gmail-compatible image processing - unified with email sending logic
   const createGmailCompatibleImage = useCallback((imageSrc: string, fileName: string, sizeValue: string) => {
     const sizeConfig = imageSizes.find(size => size.value === sizeValue) || imageSizes[1];
-    
+
     // Create wrapper div for alignment control
     const wrapper = document.createElement('div');
     wrapper.style.cssText = [
       'margin: 10px 0',
       'display: block'
     ].join('; ') + ';';
-    
+
     // Create image element with Gmail-optimized attributes
     const img = document.createElement('img');
     img.src = imageSrc;
     img.alt = fileName;
-    
+
     // Gmail-compatible inline styles (removed margin: auto for alignment control)
     const styles = [
       `max-width: ${sizeConfig.width}`,
@@ -411,28 +411,28 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
       'vertical-align: top',
       'outline: none'
     ];
-    
+
     img.style.cssText = styles.join('; ') + ';';
-    
+
     // Add data attributes for identification and processing
     img.setAttribute('data-size', sizeValue);
     img.setAttribute('data-filename', fileName);
     img.setAttribute('data-gmail-inline', 'true'); // Mark as Gmail inline image
     img.className = `inline-image-${sizeValue}`;
-    
+
     // Set title for accessibility
     img.title = fileName;
-    
+
     // Append image to wrapper
     wrapper.appendChild(img);
-    
+
     return wrapper;
   }, [imageSizes]);
 
   // Handle text highlighting
   const applyHighlight = useCallback((color: string) => {
     if (disabled) return;
-    
+
     try {
       executeCommand('hiliteColor', color);
       setShowHighlightColors(false);
@@ -446,7 +446,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
   // Remove highlight
   const removeHighlight = useCallback(() => {
     if (disabled) return;
-    
+
     try {
       executeCommand('hiliteColor', 'transparent');
       setShowHighlightColors(false);
@@ -477,11 +477,11 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
       e.preventDefault();
       e.stopPropagation();
     }
-    
+
     if (disabled) {
       return;
     }
-    
+
     // Call the prop function to open the panel
     onOpenPriceRequest?.();
   }, [disabled, onOpenPriceRequest]);
@@ -561,14 +561,14 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
             if (imageSrc && editorRef.current) {
               // Create Gmail-compatible image wrapper
               const imageWrapper = createGmailCompatibleImage(imageSrc, 'Pasted image', selectedImageSize);
-              
+
               // Insert image wrapper at cursor position
               const selection = window.getSelection();
               if (selection && selection.rangeCount > 0) {
                 const range = selection.getRangeAt(0);
                 range.deleteContents();
                 range.insertNode(imageWrapper);
-                
+
                 // Move cursor after image wrapper
                 range.setStartAfter(imageWrapper);
                 range.setEndAfter(imageWrapper);
@@ -578,7 +578,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
                 // Fallback: append to end
                 editorRef.current.appendChild(imageWrapper);
               }
-              
+
               handleInput();
               editorRef.current.focus();
             }
@@ -588,12 +588,12 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
         return; // Exit early for image paste
       }
     }
-    
+
     // Handle text paste
     e.preventDefault();
     const text = e.clipboardData.getData('text/plain');
     executeCommand('insertText', text);
-    
+
     // Enhance any links that might have been pasted
     setTimeout(() => enhanceLinks(), 100);
   }, [executeCommand, handleInput, selectedImageSize, createGmailCompatibleImage]);
@@ -628,20 +628,20 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
   // Change size of selected image
   const changeSelectedImageSize = useCallback((newSize: string) => {
     if (disabled) return;
-    
+
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) return;
-    
+
     const range = selection.getRangeAt(0);
     let element = range.commonAncestorContainer;
-    
+
     // Find the selected image
     let imageElement: HTMLImageElement | null = null;
-    
+
     if (element.nodeType === Node.TEXT_NODE) {
       element = element.parentNode as Element;
     }
-    
+
     if (element instanceof HTMLImageElement) {
       imageElement = element;
     } else if (element instanceof Element) {
@@ -659,20 +659,20 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
         }
       }
     }
-    
+
     if (imageElement) {
       // Update the image size
       const sizeConfig = imageSizes.find(size => size.value === newSize) || imageSizes[1];
-      
+
       // Remove old size classes
       imageSizes.forEach(size => {
         imageElement!.classList.remove(`inline-image-${size.value}`);
       });
-      
+
       // Add new size class and update styles
       imageElement.className = `inline-image-${newSize}`;
       imageElement.setAttribute('data-size', newSize);
-      
+
       // Update inline styles for Gmail compatibility (no margin since wrapper handles alignment)
       const styles = [
         `max-width: ${sizeConfig.width}`,
@@ -685,12 +685,12 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
         'vertical-align: top',
         'outline: none'
       ];
-      
+
       imageElement.style.cssText = styles.join('; ') + ';';
-      
+
       setSelectedImageSize(newSize);
       handleInput();
-      
+
       console.log(`📐 Changed image size to: ${newSize}`);
     }
   }, [disabled, handleInput, imageSizes]);
@@ -724,504 +724,468 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
   return (
     <>
       <div className={cn("overflow-hidden rich-text-editor h-full flex flex-col", className)}>
-      {/* Toolbar */}
-      {compact ? (
-        // Compact toolbar - single row, minimal buttons
-        <div className="flex items-center gap-0.5 px-2 py-1 border-b border-gray-200 bg-gray-50 rich-text-toolbar">
-          <Toggle
-            size="sm"
-            pressed={isFormatted.bold}
-            onPressedChange={() => executeCommand('bold')}
-            disabled={disabled}
-            title="Bold"
-            className="h-6 w-6 p-0"
-          >
-            <Bold size={12} />
-          </Toggle>
-          <Toggle
-            size="sm"
-            pressed={isFormatted.italic}
-            onPressedChange={() => executeCommand('italic')}
-            disabled={disabled}
-            title="Italic"
-            className="h-6 w-6 p-0"
-          >
-            <Italic size={12} />
-          </Toggle>
-          <Toggle
-            size="sm"
-            pressed={isFormatted.underline}
-            onPressedChange={() => executeCommand('underline')}
-            disabled={disabled}
-            title="Underline"
-            className="h-6 w-6 p-0"
-          >
-            <Underline size={12} />
-          </Toggle>
-          
-          <div className="w-px h-4 bg-gray-300 mx-1" />
-          
-          <Toggle
-            size="sm"
-            pressed={isFormatted.unorderedList}
-            onPressedChange={() => createList('ul')}
-            disabled={disabled}
-            title="Bullet List"
-            className="h-6 w-6 p-0"
-          >
-            <List size={12} />
-          </Toggle>
-          <Toggle
-            size="sm"
-            pressed={isFormatted.orderedList}
-            onPressedChange={() => createList('ol')}
-            disabled={disabled}
-            title="Numbered List"
-            className="h-6 w-6 p-0"
-          >
-            <ListOrdered size={12} />
-          </Toggle>
-          
-          <div className="w-px h-4 bg-gray-300 mx-1" />
-          
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            onClick={insertLink}
-            disabled={disabled}
-            title="Insert Link"
-            className="h-6 w-6 p-0"
-          >
-            <Link size={12} />
-          </Button>
-          
-          {showFileAttachmentButton && onFileAttachment && (
-            <>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                onChange={(e) => {
-                  if (e.target.files && onFileAttachment) {
-                    onFileAttachment(e.target.files);
-                  }
-                }}
-                className="hidden"
-                accept="*/*"
-              />
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={disabled}
-                title="Attach File"
-                className="h-6 w-6 p-0"
-              >
-                <Paperclip size={12} />
-              </Button>
-            </>
-          )}
-        </div>
-      ) : (
-      <div className="flex items-center gap-1 p-2 border-b border-gray-200 bg-gray-50 flex-wrap rich-text-toolbar">
-        {/* Text formatting */}
-        <div className="flex items-center gap-1 border-r border-gray-300 pr-2 mr-2">
-          <Toggle
-            size="sm"
-            pressed={isFormatted.bold}
-            onPressedChange={() => executeCommand('bold')}
-            disabled={disabled}
-            title="Bold (Ctrl+B)"
-          >
-            <Bold size={14} />
-          </Toggle>
-          <Toggle
-            size="sm"
-            pressed={isFormatted.italic}
-            onPressedChange={() => executeCommand('italic')}
-            disabled={disabled}
-            title="Italic (Ctrl+I)"
-          >
-            <Italic size={14} />
-          </Toggle>
-          <Toggle
-            size="sm"
-            pressed={isFormatted.underline}
-            onPressedChange={() => executeCommand('underline')}
-            disabled={disabled}
-            title="Underline (Ctrl+U)"
-          >
-            <Underline size={14} />
-          </Toggle>
-          
-          {/* Text Highlight */}
-          <div className="relative highlight-color-picker">
-            <Button
-              type="button"
+        {/* Toolbar */}
+        {compact ? (
+          // Compact toolbar - single row, minimal buttons
+          <div className="flex items-center gap-0.5 px-2 py-1 border-b border-gray-200 bg-gray-50 rich-text-toolbar">
+            <Toggle
               size="sm"
-              variant="ghost"
-              onClick={() => setShowHighlightColors(!showHighlightColors)}
+              pressed={isFormatted.bold}
+              onPressedChange={() => executeCommand('bold')}
               disabled={disabled}
-              title="Text Highlight"
-              className="h-8 px-2 relative"
+              title="Bold"
+              className="h-6 w-6 p-0"
             >
-              <Highlighter size={14} />
-              <ChevronDown size={10} className="ml-1" />
-            </Button>
-            
-            {showHighlightColors && (
-              <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-3 z-10 min-w-[200px]">
-                <div className="text-xs font-medium text-gray-700 mb-2">Highlight Colors</div>
-                <div className="grid grid-cols-4 gap-2 mb-2">
-                  {highlightColors.map((color) => (
-                    <button
-                      key={color.name}
-                      type="button"
-                      onClick={() => applyHighlight(color.value)}
-                      className="w-6 h-6 rounded border border-gray-300 hover:scale-110 transition-transform"
-                      style={{ backgroundColor: color.display }}
-                      title={`Highlight with ${color.name}`}
-                    />
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  onClick={removeHighlight}
-                  className="w-full text-xs px-2 py-1 text-gray-600 hover:bg-gray-100 rounded border border-gray-200"
-                >
-                  Remove Highlight
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
+              <Bold size={12} />
+            </Toggle>
+            <Toggle
+              size="sm"
+              pressed={isFormatted.italic}
+              onPressedChange={() => executeCommand('italic')}
+              disabled={disabled}
+              title="Italic"
+              className="h-6 w-6 p-0"
+            >
+              <Italic size={12} />
+            </Toggle>
+            <Toggle
+              size="sm"
+              pressed={isFormatted.underline}
+              onPressedChange={() => executeCommand('underline')}
+              disabled={disabled}
+              title="Underline"
+              className="h-6 w-6 p-0"
+            >
+              <Underline size={12} />
+            </Toggle>
 
-        {/* Lists */}
-        <div className="flex items-center gap-1 border-r border-gray-300 pr-2 mr-2">
-          <Toggle
-            size="sm"
-            pressed={isFormatted.unorderedList}
-            onPressedChange={() => createList('ul')}
-            disabled={disabled}
-            title="Bullet List"
-          >
-            <List size={14} />
-          </Toggle>
-          <Toggle
-            size="sm"
-            pressed={isFormatted.orderedList}
-            onPressedChange={() => createList('ol')}
-            disabled={disabled}
-            title="Numbered List"
-          >
-            <ListOrdered size={14} />
-          </Toggle>
-        </div>
+            <div className="w-px h-4 bg-gray-300 mx-1" />
 
-        {/* Alignment */}
-        <div className="flex items-center gap-1 border-r border-gray-300 pr-2 mr-2">
-          <Toggle
-            size="sm"
-            pressed={isFormatted.alignLeft}
-            onPressedChange={() => executeCommand('justifyLeft')}
-            disabled={disabled}
-            title="Align Left"
-          >
-            <AlignLeft size={14} />
-          </Toggle>
-          <Toggle
-            size="sm"
-            pressed={isFormatted.alignCenter}
-            onPressedChange={() => executeCommand('justifyCenter')}
-            disabled={disabled}
-            title="Align Center"
-          >
-            <AlignCenter size={14} />
-          </Toggle>
-          <Toggle
-            size="sm"
-            pressed={isFormatted.alignRight}
-            onPressedChange={() => executeCommand('justifyRight')}
-            disabled={disabled}
-            title="Align Right"
-          >
-            <AlignRight size={14} />
-          </Toggle>
-        </div>
+            <Toggle
+              size="sm"
+              pressed={isFormatted.unorderedList}
+              onPressedChange={() => createList('ul')}
+              disabled={disabled}
+              title="Bullet List"
+              className="h-6 w-6 p-0"
+            >
+              <List size={12} />
+            </Toggle>
+            <Toggle
+              size="sm"
+              pressed={isFormatted.orderedList}
+              onPressedChange={() => createList('ol')}
+              disabled={disabled}
+              title="Numbered List"
+              className="h-6 w-6 p-0"
+            >
+              <ListOrdered size={12} />
+            </Toggle>
 
-        {/* Additional formatting */}
-        <div className="flex items-center gap-1">
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            onClick={insertLink}
-            disabled={disabled}
-            title="Insert Link (Ctrl+K)"
-            className="h-8 px-2"
-          >
-            <Link size={14} />
-          </Button>
-          
-          {/* Signature Button */}
-          {showSignatureButton && signature && (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={insertSignature}
-              disabled={disabled}
-              title="Insert Signature"
-              className="h-8 px-2"
-            >
-              <FileSignature size={14} />
-            </Button>
-          )}
-          
-          {/* Image with Size Picker */}
-          <div className="relative image-size-picker">
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={handleImageMenuOpen}
-              disabled={disabled}
-              title="Insert Image"
-              className="h-8 px-2 relative"
-            >
-              <Image size={14} />
-              <ChevronDown size={10} className="ml-1" />
-            </Button>
-            
-            {showImageSizes && (
-              <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-3 z-10 min-w-[180px] image-size-picker">
-                <div className="text-xs font-medium text-gray-700 mb-2">Image Size</div>
-                <div className="space-y-1">
-                  {imageSizes.map((size) => (
-                    <button
-                      key={size.value}
-                      type="button"
-                      onClick={() => {
-                        setSelectedImageSize(size.value);
-                        setShowImageSizes(false);
-                        
-                        // Check if there's a selected image to resize
-                        const selection = window.getSelection();
-                        if (selection && selection.rangeCount > 0) {
-                          const range = selection.getRangeAt(0);
-                          let element = range.commonAncestorContainer;
-                          
-                          if (element.nodeType === Node.TEXT_NODE) {
-                            element = element.parentNode as Element;
-                          }
-                          
-                          // Check if an image is selected
-                          const hasSelectedImage = element instanceof HTMLImageElement || 
-                            (element instanceof Element && element.querySelector('img')) ||
-                            (editorRef.current?.querySelectorAll('img') && 
-                             Array.from(editorRef.current.querySelectorAll('img')).some(img => 
-                               selection.containsNode(img, true)));
-                          
-                          if (hasSelectedImage) {
-                            // Change existing image size
-                            changeSelectedImageSize(size.value);
-                          } else {
-                            // Insert new image
-                            insertImage();
-                          }
-                        } else {
-                          // Insert new image
-                          insertImage();
-                        }
-                      }}
-                      className={cn(
-                        "w-full text-left text-xs px-2 py-2 rounded hover:bg-gray-100 transition-colors",
-                        selectedImageSize === size.value && "bg-blue-50 text-blue-700"
-                      )}
-                    >
-                      <div className="font-medium">{size.name}</div>
-                      <div className="text-gray-500">{size.width}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-          
-          {/* Globe Icon for URL Image */}
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            onClick={handleInsertImageUrl}
-            disabled={disabled}
-            title="Insert Image from URL"
-            className="h-8 px-2"
-          >
-            <Globe size={14} />
-          </Button>
-          
-          {/* File Attachment Button */}
-          {showFileAttachmentButton && (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={handleFileAttachment}
-              disabled={disabled}
-              title="Attach File (PDF, DOC, CSV, etc.)"
-              className="h-8 px-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50"
-            >
-              <Paperclip size={14} />
-            </Button>
-          )}
-          
-          {/* Price Request Button */}
-          {showPriceRequestButton && (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={handleOpenPriceRequest}
-              disabled={disabled}
-              title="Insert Price Request Table"
-              className="h-8 px-2 text-purple-600 hover:text-purple-800 hover:bg-purple-50"
-            >
-              <FileSpreadsheet size={14} />
-            </Button>
-          )}
-        </div>
-      </div>
-      )}
+            <div className="w-px h-4 bg-gray-300 mx-1" />
 
-      {/* URL Image Dialog */}
-      {showImageUrlDialog && (
-        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold mb-4">Insert Image from URL</h3>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Image URL
-                </label>
+            {showFileAttachmentButton && onFileAttachment && (
+              <>
                 <input
-                  type="url"
-                  value={imageUrl}
-                  onChange={(e) => setImageUrl(e.target.value)}
-                  placeholder="https://example.com/image.jpg"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  autoFocus
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Size
-                </label>
-                <select
-                  value={selectedImageSize}
-                  onChange={(e) => setSelectedImageSize(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {imageSizes.map((size) => (
-                    <option key={size.value} value={size.value}>
-                      {size.name} ({size.width})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex justify-end space-x-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSavedRange(null);
-                    setShowImageUrlDialog(false);
-                    setImageUrl('');
-                  }}
-                  className="px-4 py-2 text-gray-600 hover:text-gray-800"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (imageUrl && editorRef.current) {
-                      const imageWrapper = createGmailCompatibleImage(imageUrl, 'URL Image', selectedImageSize);
-                      
-                      // Restore the saved selection range
-                      if (savedRange && editorRef.current) {
-                        const selection = window.getSelection();
-                        selection?.removeAllRanges();
-                        selection?.addRange(savedRange);
-                        
-                        const range = savedRange;
-                        range.deleteContents();
-                        range.insertNode(imageWrapper);
-                        range.setStartAfter(imageWrapper);
-                        range.setEndAfter(imageWrapper);
-                        
-                        // Update selection
-                        if (selection) {
-                          selection.removeAllRanges();
-                          selection.addRange(range);
-                        }
-                      } else {
-                        editorRef.current.appendChild(imageWrapper);
-                      }
-                      handleInput();
-                      editorRef.current.focus();
-                      setImageUrl('');
-                      setShowImageUrlDialog(false);
-                      setSavedRange(null);
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  onChange={(e) => {
+                    if (e.target.files && onFileAttachment) {
+                      onFileAttachment(e.target.files);
                     }
                   }}
-                  disabled={!imageUrl.trim()}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="hidden"
+                  accept="*/*"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={disabled}
+                  title="Attach File"
+                  className="h-6 w-6 p-0"
                 >
-                  Insert Image
-                </button>
+                  <Paperclip size={12} />
+                </Button>
+              </>
+            )}
+          </div>
+        ) : (
+          <div className="flex items-center gap-1 p-2 border-b border-gray-200 bg-gray-50 flex-wrap rich-text-toolbar">
+            {/* Text formatting */}
+            <div className="flex items-center gap-1 border-r border-gray-300 pr-2 mr-2">
+              <Toggle
+                size="sm"
+                pressed={isFormatted.bold}
+                onPressedChange={() => executeCommand('bold')}
+                disabled={disabled}
+                title="Bold (Ctrl+B)"
+              >
+                <Bold size={14} />
+              </Toggle>
+              <Toggle
+                size="sm"
+                pressed={isFormatted.italic}
+                onPressedChange={() => executeCommand('italic')}
+                disabled={disabled}
+                title="Italic (Ctrl+I)"
+              >
+                <Italic size={14} />
+              </Toggle>
+              <Toggle
+                size="sm"
+                pressed={isFormatted.underline}
+                onPressedChange={() => executeCommand('underline')}
+                disabled={disabled}
+                title="Underline (Ctrl+U)"
+              >
+                <Underline size={14} />
+              </Toggle>
+
+              {/* Text Highlight */}
+              <div className="relative highlight-color-picker">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setShowHighlightColors(!showHighlightColors)}
+                  disabled={disabled}
+                  title="Text Highlight"
+                  className="h-8 px-2 relative"
+                >
+                  <Highlighter size={14} />
+                  <ChevronDown size={10} className="ml-1" />
+                </Button>
+
+                {showHighlightColors && (
+                  <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-3 z-10 min-w-[200px]">
+                    <div className="text-xs font-medium text-gray-700 mb-2">Highlight Colors</div>
+                    <div className="grid grid-cols-4 gap-2 mb-2">
+                      {highlightColors.map((color) => (
+                        <button
+                          key={color.name}
+                          type="button"
+                          onClick={() => applyHighlight(color.value)}
+                          className="w-6 h-6 rounded border border-gray-300 hover:scale-110 transition-transform"
+                          style={{ backgroundColor: color.display }}
+                          title={`Highlight with ${color.name}`}
+                        />
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={removeHighlight}
+                      className="w-full text-xs px-2 py-1 text-gray-600 hover:bg-gray-100 rounded border border-gray-200"
+                    >
+                      Remove Highlight
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Lists */}
+            <div className="flex items-center gap-1 border-r border-gray-300 pr-2 mr-2">
+              <Toggle
+                size="sm"
+                pressed={isFormatted.unorderedList}
+                onPressedChange={() => createList('ul')}
+                disabled={disabled}
+                title="Bullet List"
+              >
+                <List size={14} />
+              </Toggle>
+              <Toggle
+                size="sm"
+                pressed={isFormatted.orderedList}
+                onPressedChange={() => createList('ol')}
+                disabled={disabled}
+                title="Numbered List"
+              >
+                <ListOrdered size={14} />
+              </Toggle>
+            </div>
+
+            {/* Alignment */}
+            <div className="flex items-center gap-1 border-r border-gray-300 pr-2 mr-2">
+              <Toggle
+                size="sm"
+                pressed={isFormatted.alignLeft}
+                onPressedChange={() => executeCommand('justifyLeft')}
+                disabled={disabled}
+                title="Align Left"
+              >
+                <AlignLeft size={14} />
+              </Toggle>
+              <Toggle
+                size="sm"
+                pressed={isFormatted.alignCenter}
+                onPressedChange={() => executeCommand('justifyCenter')}
+                disabled={disabled}
+                title="Align Center"
+              >
+                <AlignCenter size={14} />
+              </Toggle>
+              <Toggle
+                size="sm"
+                pressed={isFormatted.alignRight}
+                onPressedChange={() => executeCommand('justifyRight')}
+                disabled={disabled}
+                title="Align Right"
+              >
+                <AlignRight size={14} />
+              </Toggle>
+            </div>
+
+            {/* Additional formatting */}
+            <div className="flex items-center gap-1">
+
+              {/* Signature Button */}
+              {showSignatureButton && signature && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={insertSignature}
+                  disabled={disabled}
+                  title="Insert Signature"
+                  className="h-8 px-2"
+                >
+                  <FileSignature size={14} />
+                </Button>
+              )}
+
+              {/* Image with Size Picker */}
+              <div className="relative image-size-picker">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={handleImageMenuOpen}
+                  disabled={disabled}
+                  title="Insert Image"
+                  className="h-8 px-2 relative"
+                >
+                  <Image size={14} />
+                  <ChevronDown size={10} className="ml-1" />
+                </Button>
+
+                {showImageSizes && (
+                  <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-3 z-10 min-w-[180px] image-size-picker">
+                    <div className="text-xs font-medium text-gray-700 mb-2">Image Size</div>
+                    <div className="space-y-1">
+                      {imageSizes.map((size) => (
+                        <button
+                          key={size.value}
+                          type="button"
+                          onClick={() => {
+                            setSelectedImageSize(size.value);
+                            setShowImageSizes(false);
+
+                            // Check if there's a selected image to resize
+                            const selection = window.getSelection();
+                            if (selection && selection.rangeCount > 0) {
+                              const range = selection.getRangeAt(0);
+                              let element = range.commonAncestorContainer;
+
+                              if (element.nodeType === Node.TEXT_NODE) {
+                                element = element.parentNode as Element;
+                              }
+
+                              // Check if an image is selected
+                              const hasSelectedImage = element instanceof HTMLImageElement ||
+                                (element instanceof Element && element.querySelector('img')) ||
+                                (editorRef.current?.querySelectorAll('img') &&
+                                  Array.from(editorRef.current.querySelectorAll('img')).some(img =>
+                                    selection.containsNode(img, true)));
+
+                              if (hasSelectedImage) {
+                                // Change existing image size
+                                changeSelectedImageSize(size.value);
+                              } else {
+                                // Insert new image
+                                insertImage();
+                              }
+                            } else {
+                              // Insert new image
+                              insertImage();
+                            }
+                          }}
+                          className={cn(
+                            "w-full text-left text-xs px-2 py-2 rounded hover:bg-gray-100 transition-colors",
+                            selectedImageSize === size.value && "bg-blue-50 text-blue-700"
+                          )}
+                        >
+                          <div className="font-medium">{size.name}</div>
+                          <div className="text-gray-500">{size.width}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* File Attachment Button */}
+              {showFileAttachmentButton && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={handleFileAttachment}
+                  disabled={disabled}
+                  title="Attach File (PDF, DOC, CSV, etc.)"
+                  className="h-8 px-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50"
+                >
+                  <Paperclip size={14} />
+                </Button>
+              )}
+
+              {/* Price Request Button */}
+              {showPriceRequestButton && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={handleOpenPriceRequest}
+                  disabled={disabled}
+                  title="Insert Price Request Table"
+                  className="h-8 px-2 text-purple-600 hover:text-purple-800 hover:bg-purple-50"
+                >
+                  <FileSpreadsheet size={14} />
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* URL Image Dialog */}
+        {showImageUrlDialog && (
+          <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+              <h3 className="text-lg font-semibold mb-4">Insert Image from URL</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Image URL
+                  </label>
+                  <input
+                    type="url"
+                    value={imageUrl}
+                    onChange={(e) => setImageUrl(e.target.value)}
+                    placeholder="https://example.com/image.jpg"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Size
+                  </label>
+                  <select
+                    value={selectedImageSize}
+                    onChange={(e) => setSelectedImageSize(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {imageSizes.map((size) => (
+                      <option key={size.value} value={size.value}>
+                        {size.name} ({size.width})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex justify-end space-x-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSavedRange(null);
+                      setShowImageUrlDialog(false);
+                      setImageUrl('');
+                    }}
+                    className="px-4 py-2 text-gray-600 hover:text-gray-800"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (imageUrl && editorRef.current) {
+                        const imageWrapper = createGmailCompatibleImage(imageUrl, 'URL Image', selectedImageSize);
+
+                        // Restore the saved selection range
+                        if (savedRange && editorRef.current) {
+                          const selection = window.getSelection();
+                          selection?.removeAllRanges();
+                          selection?.addRange(savedRange);
+
+                          const range = savedRange;
+                          range.deleteContents();
+                          range.insertNode(imageWrapper);
+                          range.setStartAfter(imageWrapper);
+                          range.setEndAfter(imageWrapper);
+
+                          // Update selection
+                          if (selection) {
+                            selection.removeAllRanges();
+                            selection.addRange(range);
+                          }
+                        } else {
+                          editorRef.current.appendChild(imageWrapper);
+                        }
+                        handleInput();
+                        editorRef.current.focus();
+                        setImageUrl('');
+                        setShowImageUrlDialog(false);
+                        setSavedRange(null);
+                      }
+                    }}
+                    disabled={!imageUrl.trim()}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Insert Image
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Editor */}
-      <div
-        ref={editorRef}
-        contentEditable={!disabled}
-        onInput={handleInput}
-        onPaste={handlePaste}
-        onKeyDown={handleKeyDown}
-        className={cn(
-          "p-4 focus:outline-none flex-1 overflow-y-auto",
-          "prose prose-sm max-w-none",
-          "text-gray-900 leading-relaxed",
-          disabled && "opacity-50 cursor-not-allowed"
         )}
-        style={{ fontSize: '12px' }}
-        suppressContentEditableWarning={true}
-      />
-      
-      {/* Hidden file input for images */}
-      <input
-        ref={imageInputRef}
-        type="file"
-        accept="image/*"
-        onChange={handleImageFile}
-        style={{ display: 'none' }}
-      />
-      
-      {/* Hidden file input for attachments */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip,.rar,.ppt,.pptx"
-        onChange={handleFileSelect}
-        multiple
-        style={{ display: 'none' }}
-      />
+
+        {/* Editor */}
+        <div
+          ref={editorRef}
+          contentEditable={!disabled}
+          onInput={handleInput}
+          onPaste={handlePaste}
+          onKeyDown={handleKeyDown}
+          className={cn(
+            "p-4 focus:outline-none flex-1 overflow-y-auto",
+            "prose prose-sm max-w-none",
+            "text-gray-900 leading-relaxed",
+            disabled && "opacity-50 cursor-not-allowed"
+          )}
+          style={{ fontSize: '12px' }}
+          suppressContentEditableWarning={true}
+        />
+
+        {/* Hidden file input for images */}
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleImageFile}
+          style={{ display: 'none' }}
+        />
+
+        {/* Hidden file input for attachments */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip,.rar,.ppt,.pptx"
+          onChange={handleFileSelect}
+          multiple
+          style={{ display: 'none' }}
+        />
       </div>
     </>
   );
