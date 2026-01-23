@@ -33,6 +33,7 @@ export function CreateLabelModal({
   const [nestUnder, setNestUnder] = useState(false);
   const [parentLabel, setParentLabel] = useState('');
   const [autoFilterFuture, setAutoFilterFuture] = useState(false);
+  const [skipInbox, setSkipInbox] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
 
   // 🔧 SELF-FILTER BUG FIX (Dec 2025): Get current user's email
@@ -94,13 +95,13 @@ export function CreateLabelModal({
             return;
           }
 
-          await createGmailFilter(
-            { from: sender },
-            { 
-              addLabelIds: [match.id],
-              removeLabelIds: ['INBOX']
-            }
-          );
+          const action: { addLabelIds: string[]; removeLabelIds?: string[] } = { 
+            addLabelIds: [match.id]
+          };
+          if (skipInbox) {
+            action.removeLabelIds = ['INBOX'];
+          }
+          await createGmailFilter({ from: sender }, action);
 
           toast.success(`Auto-rule created! Future emails from ${sender} will be moved to "${fullName}"`);
         } catch (filterErr) {
@@ -189,6 +190,19 @@ export function CreateLabelModal({
                 Also auto-move future emails from {cleanEmailAddress(email.from?.email) || 'this sender'}
               </label>
             </div>
+
+            {autoFilterFuture && (
+              <div className="flex items-center space-x-2 ml-6">
+                <Checkbox
+                  id="skip-inbox-create"
+                  checked={skipInbox}
+                  onCheckedChange={(checked) => setSkipInbox(!!checked)}
+                />
+                <label htmlFor="skip-inbox-create" className="text-sm text-gray-600">
+                  Skip Inbox
+                </label>
+              </div>
+            )}
           </div>
         </div>
         

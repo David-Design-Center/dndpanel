@@ -1078,7 +1078,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     return { email: currentFromEmail, name: email?.from?.name || '' };
   };
 
-  const handleCreateFilterWithLabel = async () => {
+  const handleCreateFilterWithLabel = async (skipInbox: boolean = false) => {
     const counterparty = getFilterCounterparty();
     const counterpartyEmail = counterparty.email;
     
@@ -1112,10 +1112,13 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       }
 
       // 2) Create the Gmail filter
-      await createGmailFilter(
-        { from: counterpartyEmail },
-        { addLabelIds: [match.id] }
-      );
+      const action: { addLabelIds: string[]; removeLabelIds?: string[] } = { 
+        addLabelIds: [match.id] 
+      };
+      if (skipInbox) {
+        action.removeLabelIds = ['INBOX'];
+      }
+      await createGmailFilter({ from: counterpartyEmail }, action);
 
       sonnerToast.success(`Rule created! Emails from "${counterpartyEmail}" will be moved to "${selectedFilterLabel}"`);
       await fetchEmailAndThread();

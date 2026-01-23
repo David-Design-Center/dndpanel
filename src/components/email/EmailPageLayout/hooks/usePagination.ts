@@ -22,6 +22,7 @@ export interface UsePaginationOptions {
   pageType: 'inbox' | 'unread' | 'sent' | 'drafts' | 'trash' | 'spam' | 'important' | 'starred' | 'allmail';
   setLoading: (loading: boolean) => void;
   emailListRef: React.RefObject<HTMLDivElement>;
+  isLabelRecentlyDeleted?: (labelId: string) => boolean; // Check if we're navigating from a deleted label
 }
 
 export interface UsePaginationReturn {
@@ -45,7 +46,8 @@ export function usePagination(options: UsePaginationOptions): UsePaginationRetur
     labelIdParam,
     pageType,
     setLoading,
-    emailListRef
+    emailListRef,
+    isLabelRecentlyDeleted
   } = options;
 
   // ✅ Check current route - only load emails when on email pages
@@ -333,6 +335,25 @@ export function usePagination(options: UsePaginationOptions): UsePaginationRetur
     const basePathChanged = prevBasePathRef.current !== basePath;
     const isInitialLoad = prevTabRef.current === undefined && prevLabelRef.current === undefined;
 
+    // ✅ Check if we're navigating away from a recently deleted label
+    // In this case, skip the reload - the label-deleted event handler already cleared the list
+    const previousLabelId = prevLabelIdRef.current;
+    const navigatingFromDeletedLabel = previousLabelId && isLabelRecentlyDeleted?.(previousLabelId);
+    
+    if (navigatingFromDeletedLabel && labelChanged) {
+      console.log('🗑️ Pagination: Navigating from deleted label, skipping reload', {
+        previousLabelId,
+        newLabelName: labelName,
+        newLabelId: labelIdParam
+      });
+      // Update refs but don't reload
+      prevTabRef.current = activeTab;
+      prevLabelRef.current = labelName;
+      prevLabelIdRef.current = labelIdParam || null;
+      prevBasePathRef.current = basePath;
+      return;
+    }
+
     console.log('📋 Pagination useEffect triggered:', {
       activeTab,
       labelName,
@@ -369,7 +390,7 @@ export function usePagination(options: UsePaginationOptions): UsePaginationRetur
       console.log('📋 Loading first page of emails...', isInitialLoad ? '(initial load)' : '(tab/label changed)');
       loadPaginatedEmails(undefined, false);
     }
-  }, [activeTab, labelName, labelIdParam, isGmailSignedIn, isGmailInitializing, location.pathname, resetPagination, loadPaginatedEmails, setLoading]);
+  }, [activeTab, labelName, labelIdParam, isGmailSignedIn, isGmailInitializing, location.pathname, resetPagination, loadPaginatedEmails, setLoading, isLabelRecentlyDeleted]);
 
   return {
     paginatedEmails,

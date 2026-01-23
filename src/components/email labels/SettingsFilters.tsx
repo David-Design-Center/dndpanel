@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useProfile } from '../../contexts/ProfileContext';
 import { useFilterCreation } from '../../contexts/FilterCreationContext';
+import { useContacts } from '../../contexts/ContactsContext';
 import { GmailLabel } from '../../types';
 import { 
   listGmailFilters, 
@@ -65,6 +66,7 @@ interface FilterFormData {
     neverMarkAsImportant?: boolean;
     alwaysMarkAsImportant?: boolean;
     delete?: boolean;
+    skipInbox?: boolean;
   };
 }
 
@@ -166,6 +168,7 @@ function SettingsFilters() {
   const { isGmailSignedIn } = useAuth();
   const { currentProfile } = useProfile();
   const { filterCreation, clearFilterCreation, markCreateOpened } = useFilterCreation();
+  const { setShouldLoadContacts } = useContacts();
   
   // State for filters
   const [filters, setFilters] = useState<any[]>([]);
@@ -199,7 +202,8 @@ function SettingsFilters() {
     },
     action: {
       addLabelIds: [],
-      delete: false
+      delete: false,
+      skipInbox: false
     }
   });
   
@@ -304,6 +308,7 @@ function SettingsFilters() {
       
       // Open the create form
       setShowCreateForm(true);
+      setShouldLoadContacts(true);
       
       // Mark as opened so it doesn't keep reopening
       markCreateOpened();
@@ -430,6 +435,7 @@ function SettingsFilters() {
       const action: any = {};
       if (formData.action.addLabelIds && formData.action.addLabelIds.length > 0) action.addLabelIds = formData.action.addLabelIds;
       if (formData.action.delete) action.delete = true;
+      if (formData.action.skipInbox) action.removeLabelIds = ['INBOX'];
       
       await createGmailFilter(criteria, action);
       
@@ -444,7 +450,8 @@ function SettingsFilters() {
         },
         action: {
           addLabelIds: [],
-          delete: false
+          delete: false,
+          skipInbox: false
         }
       });
       setShowCreateForm(false);
@@ -554,7 +561,10 @@ function SettingsFilters() {
     <div className="bg-white p-6 rounded-lg shadow-sm">
       <div className="flex items-center justify-between mb-6 pb-6">
         <Button
-          onClick={() => setShowCreateForm(!showCreateForm)}
+          onClick={() => {
+            setShowCreateForm(!showCreateForm);
+            if (!showCreateForm) setShouldLoadContacts(true);
+          }}
           disabled={isLoading}
           className="flex items-center"
         >
@@ -679,6 +689,18 @@ function SettingsFilters() {
                       className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                     />
                     <Label htmlFor="delete" className="cursor-pointer">Delete</Label>
+                  </div>
+
+                  {/* Skip Inbox Action */}
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      id="skipInbox"
+                      checked={formData.action.skipInbox}
+                      onChange={(e) => updateAction('skipInbox', e.target.checked)}
+                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    />
+                    <Label htmlFor="skipInbox" className="cursor-pointer">Skip Inbox</Label>
                   </div>
                 </div>
               </div>

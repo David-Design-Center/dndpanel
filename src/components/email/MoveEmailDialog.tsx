@@ -44,6 +44,7 @@ export function MoveEmailDialog({
   targetFolderName 
 }: MoveEmailDialogProps) {
   const [createFilter, setCreateFilter] = useState(false);
+  const [skipInbox, setSkipInbox] = useState(false);
   const [isCreatingFilter, setIsCreatingFilter] = useState(false);
   const { currentProfile } = useProfile();
 
@@ -76,14 +77,14 @@ export function MoveEmailDialog({
               }
             );
           } else if (targetFolderId) {
-            // For Custom Folder: Skip inbox and apply label
-            await createGmailFilter(
-              { from: sender },
-              { 
-                addLabelIds: [targetFolderId],
-                removeLabelIds: ['INBOX']
-              }
-            );
+            // For Custom Folder: Apply label, optionally skip inbox
+            const action: { addLabelIds: string[]; removeLabelIds?: string[] } = {
+              addLabelIds: [targetFolderId]
+            };
+            if (skipInbox) {
+              action.removeLabelIds = ['INBOX'];
+            }
+            await createGmailFilter({ from: sender }, action);
           }
         }
         
@@ -110,10 +111,12 @@ export function MoveEmailDialog({
     
     onConfirm(createFilter);
     setCreateFilter(false); // Reset for next time
+    setSkipInbox(false); // Reset for next time
   };
 
   const handleCancel = () => {
     setCreateFilter(false);
+    setSkipInbox(false);
     onClose();
   };
 
@@ -137,7 +140,7 @@ export function MoveEmailDialog({
   
   const checkboxDescription = isTrash
     ? `Future emails from ${senderEmails.length === 1 ? 'this sender' : 'these senders'} will be automatically deleted.`
-    : `Future emails from ${senderEmails.length === 1 ? 'this sender' : 'these senders'} will skip inbox and go directly to ${folderDisplayName}.`;
+    : `Future emails from ${senderEmails.length === 1 ? 'this sender' : 'these senders'} will go to ${folderDisplayName}.`;
 
   const confirmButtonText = isCreatingFilter 
     ? 'Creating rule...' 
@@ -153,24 +156,44 @@ export function MoveEmailDialog({
 
         {/* 🔧 SELF-FILTER BUG FIX: Show checkbox only if there are external senders */}
         {canCreateFilter ? (
-        <div className="flex items-start space-x-3 py-4">
-          <Checkbox
-            id="create-filter"
-            checked={createFilter}
-            onCheckedChange={(checked) => setCreateFilter(checked === true)}
-            disabled={isCreatingFilter}
-          />
-          <div className="grid gap-1.5 leading-none">
-            <label
-              htmlFor="create-filter"
-              className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-            >
-              {checkboxLabel}
-            </label>
-            <p className="text-sm text-muted-foreground">
-              {checkboxDescription}
-            </p>
+        <div className="space-y-3 py-4">
+          <div className="flex items-start space-x-3">
+            <Checkbox
+              id="create-filter"
+              checked={createFilter}
+              onCheckedChange={(checked) => setCreateFilter(checked === true)}
+              disabled={isCreatingFilter}
+            />
+            <div className="grid gap-1.5 leading-none">
+              <label
+                htmlFor="create-filter"
+                className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+              >
+                {checkboxLabel}
+              </label>
+              <p className="text-sm text-muted-foreground">
+                {checkboxDescription}
+              </p>
+            </div>
           </div>
+
+          {/* Skip Inbox checkbox - only show for folder moves when createFilter is checked */}
+          {createFilter && !isTrash && (
+            <div className="flex items-center space-x-3 ml-6">
+              <Checkbox
+                id="skip-inbox-move"
+                checked={skipInbox}
+                onCheckedChange={(checked) => setSkipInbox(checked === true)}
+                disabled={isCreatingFilter}
+              />
+              <label
+                htmlFor="skip-inbox-move"
+                className="text-sm text-muted-foreground cursor-pointer"
+              >
+                Skip Inbox
+              </label>
+            </div>
+          )}
         </div>
         ) : allSendersAreSelf ? (
           <div className="py-4 px-3 bg-amber-50 border border-amber-200 rounded-md">

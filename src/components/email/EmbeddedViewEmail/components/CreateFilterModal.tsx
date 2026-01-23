@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { X, Search, ChevronDown, ChevronRight, Folder, Tag } from 'lucide-react';
 import { buildLabelTree, filterLabelTree, NestedLabel } from '@/utils/labelTreeUtils';
 import { useLabel } from '@/contexts/LabelContext';
+import { Checkbox } from '@/components/ui/checkbox';
 
 interface CreateFilterModalProps {
   isOpen: boolean;
@@ -12,7 +13,7 @@ interface CreateFilterModalProps {
   selectedFilterLabel: string;
   onSelectLabel: (labelId: string, labelName: string) => void;
   onClose: () => void;
-  onCreateFilter: () => void;
+  onCreateFilter: (skipInbox: boolean) => void;
 }
 
 /**
@@ -33,6 +34,7 @@ export function CreateFilterModal({
   const [filterLabelQuery, setFilterLabelQuery] = useState('');
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [selectedLabelId, setSelectedLabelId] = useState('');
+  const [skipInbox, setSkipInbox] = useState(false);
 
   // Build hierarchical tree from labels
   const labelTree = useMemo(() => buildLabelTree(labels), [labels]);
@@ -131,6 +133,18 @@ export function CreateFilterModal({
                 )}
               </div>
             </div>
+
+            {/* Skip Inbox checkbox */}
+            <div className="flex items-center space-x-2 mt-4">
+              <Checkbox
+                id="skip-inbox-filter"
+                checked={skipInbox}
+                onCheckedChange={(checked) => setSkipInbox(!!checked)}
+              />
+              <label htmlFor="skip-inbox-filter" className="text-sm text-gray-600">
+                Skip Inbox
+              </label>
+            </div>
           </div>
         </div>
 
@@ -143,7 +157,7 @@ export function CreateFilterModal({
             Cancel
           </button>
           <button
-            onClick={onCreateFilter}
+            onClick={() => onCreateFilter(skipInbox)}
             disabled={!selectedFilterLabel}
             className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
           >

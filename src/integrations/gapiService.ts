@@ -20,6 +20,7 @@ import {
   deleteGmailLabel as gmailDeleteLabel,
   applyGmailLabels as gmailApplyLabels,
   batchApplyGmailLabels as gmailBatchApplyLabels,
+  type LabelProgressCallback,
 } from './gmail/operations/labels';
 
 // Import mutations
@@ -1719,11 +1720,14 @@ export const deleteGmailDraft = async (draftId: string): Promise<void> => {
  * Fetch Gmail labels
  */
 /**
- * Fetch all Gmail labels
+ * Fetch all Gmail labels with optional progressive loading
  * ⚠️ DELEGATED TO: src/integrations/gmail/operations/labels.ts
+ * @param onProgress - Optional callback invoked after each batch with cumulative labels
  */
-export const fetchGmailLabels = async (): Promise<GmailLabel[]> => {
-  return gmailFetchLabels();
+export const fetchGmailLabels = async (
+  onProgress?: LabelProgressCallback
+): Promise<GmailLabel[]> => {
+  return gmailFetchLabels(onProgress);
 };
 
 /**

@@ -24,6 +24,18 @@ import { emitLoadingProgress } from "@/utils/loadingProgress";
 import { subscribeLabelUpdateEvent } from "../utils/labelUpdateEvents";
 import { supabase } from "../lib/supabase";
 import { FEATURE_FLAGS } from "../config/server";
+import { GMAIL_SYSTEM_LABELS } from "../constants/gmailLabels";
+
+// Static system labels with zero counters - shown immediately before API loads
+const INITIAL_SYSTEM_LABELS: GmailLabel[] = [
+  { id: GMAIL_SYSTEM_LABELS.INBOX, name: 'INBOX', type: 'system', messagesUnread: 0, messagesTotal: 0, threadsUnread: 0, threadsTotal: 0 },
+  { id: GMAIL_SYSTEM_LABELS.SENT, name: 'SENT', type: 'system', messagesUnread: 0, messagesTotal: 0, threadsUnread: 0, threadsTotal: 0 },
+  { id: GMAIL_SYSTEM_LABELS.DRAFT, name: 'DRAFT', type: 'system', messagesUnread: 0, messagesTotal: 0, threadsUnread: 0, threadsTotal: 0 },
+  { id: GMAIL_SYSTEM_LABELS.TRASH, name: 'TRASH', type: 'system', messagesUnread: 0, messagesTotal: 0, threadsUnread: 0, threadsTotal: 0 },
+  { id: GMAIL_SYSTEM_LABELS.SPAM, name: 'SPAM', type: 'system', messagesUnread: 0, messagesTotal: 0, threadsUnread: 0, threadsTotal: 0 },
+  { id: GMAIL_SYSTEM_LABELS.IMPORTANT, name: 'IMPORTANT', type: 'system', messagesUnread: 0, messagesTotal: 0, threadsUnread: 0, threadsTotal: 0 },
+  { id: GMAIL_SYSTEM_LABELS.STARRED, name: 'STARRED', type: 'system', messagesUnread: 0, messagesTotal: 0, threadsUnread: 0, threadsTotal: 0 },
+];
 
 interface LabelContextType {
   labels: GmailLabel[];
@@ -55,6 +67,7 @@ interface LabelContextType {
   refreshRecentCounts: (opts?: { force?: boolean }) => Promise<void>;
   labelsLastUpdated: number | null; // Timestamp of when labels were last fetched
   isLabelHydrated: (labelId?: string | null) => boolean;
+  isLabelRecentlyDeleted: (labelId: string) => boolean; // Check if label was just deleted (to skip pagination reset)
 }
 
 const LabelContext = createContext<LabelContextType | undefined>(undefined);
@@ -84,7 +97,8 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // This ensures exact match with Gmail app and eliminates redundant API calls
 
 export function LabelProvider({ children }: { children: React.ReactNode }) {
-  const [labels, setLabelsInternal] = useState<GmailLabel[]>([]);
+  // Initialize with static system labels so folders render immediately with 0 counters
+  const [labels, setLabelsInternal] = useState<GmailLabel[]>(INITIAL_SYSTEM_LABELS);
   const [loadingLabels, setLoadingLabels] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [labelsLastUpdated, setLabelsLastUpdated] = useState<number | null>(
@@ -112,6 +126,11 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
   const inboxReadyRef = useRef<boolean>(false);
   const labelsCountRef = useRef<number>(0); // Track labels count for stale closure checks
   const [hydratedLabelsVersion, setHydratedLabelsVersion] = useState(0);
+
+  // Track recently deleted label IDs so pagination can skip reloading when navigating away
+  const recentlyDeletedLabelIdsRef = useRef<Set<string>>(new Set());
+  // Clear deleted labels after 10 seconds (enough time for navigation to complete)
+  const clearDeletedLabelTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ✅ Local delta tracking for custom label unread counts (cleared on manual refresh)
   // Key = labelId, Value = delta to add to the API count
@@ -353,12 +372,20 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
 
     try {
       // =========================================================================
-      // DIAGNOSTIC MODE: Direct Gmail API - Zero mixing with Supabase
+      // DIAGNOSTIC MODE: Direct Gmail API with Progressive Loading
       // Purpose: Google Support case - prove counters come directly from Gmail API
       // =========================================================================
       if (FEATURE_FLAGS.USE_DIRECT_GMAIL_LABELS) {
-        console.log("🔬 DIAGNOSTIC MODE: Using direct Gmail API for labels (bypassing Supabase)");
-        inFlightRequest.current = fetchGmailLabels();
+        console.log("🔬 DIAGNOSTIC MODE: Using direct Gmail API for labels with progressive loading");
+        
+        // Progressive callback - updates state as each batch completes
+        const handleProgress = (progressLabels: GmailLabel[]) => {
+          console.log(`📊 Progressive update: ${progressLabels.length} labels`);
+          setLabels(progressLabels);
+          setLabelsLastUpdated(Date.now());
+        };
+        
+        inFlightRequest.current = fetchGmailLabels(handleProgress);
         
         const gmailLabels = await inFlightRequest.current;
         lastLoadedAt.current = Date.now();
@@ -390,7 +417,7 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       // Clear in-flight marker
       inFlightRequest.current = null;
     }
-  }, [loadLabelsFromSupabase, isGmailSignedIn]);
+  }, [loadLabelsFromSupabase, isGmailSignedIn, setLabels]);
 
   // hydrateUserLabelCounts removed (dead code)
 
@@ -747,27 +774,40 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       const labelToDelete = labels.find((l) => l.id === id);
       const labelName = labelToDelete?.name || "";
 
-      // Optimistically remove from local state immediately for instant UI update
+      // ✅ WAIT for API to confirm deletion BEFORE optimistic update
+      // This prevents race conditions where we navigate away before deletion completes
+      await deleteGmailLabel(id);
+
+      // ✅ Track this label as recently deleted so pagination skips reload
+      recentlyDeletedLabelIdsRef.current.add(id);
+      
+      // Clear the tracking after 10 seconds
+      if (clearDeletedLabelTimeout.current) {
+        clearTimeout(clearDeletedLabelTimeout.current);
+      }
+      clearDeletedLabelTimeout.current = setTimeout(() => {
+        recentlyDeletedLabelIdsRef.current.delete(id);
+      }, 10000);
+
+      // ✅ NOW apply optimistic update (after API success)
       setLabels((prev) => prev.filter((label) => label.id !== id));
 
-      // Dispatch event to notify other components (EmailPageLayout, FoldersColumn)
-      // This allows them to navigate away if viewing the deleted label
+      // ✅ Dispatch event AFTER API success to notify other components
+      // This allows them to navigate away safely
       window.dispatchEvent(
         new CustomEvent("label-deleted", {
           detail: { labelId: id, labelName },
         })
       );
 
-      await deleteGmailLabel(id);
-
-      // Refresh to ensure sync (in case of nested labels or other changes)
-      await refreshLabels();
+      // ✅ NO refreshLabels() needed - the label is already removed from state
+      // Calling refreshLabels would cause folder list to flash/reset
     } catch (err) {
       console.error("Error deleting Gmail label:", err);
       setDeleteLabelError(
         err instanceof Error ? err.message : "Failed to delete label"
       );
-      // Revert optimistic update on error
+      // Only refresh on error to restore state if something went wrong
       await refreshLabels();
       throw err;
     } finally {
@@ -971,6 +1011,7 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
     refreshRecentCounts, // ✅ Method to refresh recent counts
     labelsLastUpdated, // ✅ Timestamp of when labels were last fetched
     isLabelHydrated,
+    isLabelRecentlyDeleted: (labelId: string) => recentlyDeletedLabelIdsRef.current.has(labelId),
   };
 
   return (

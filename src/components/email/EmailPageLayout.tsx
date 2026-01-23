@@ -51,7 +51,7 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   const { isGmailSignedIn, loading: authLoading, isGmailInitializing } = useAuth();
   const { selectEmail, setSystemFolderFilterHandler, selectedEmailId, clearSelection: clearViewSelection } = useLayoutState();
   const { openCompose } = useCompose();
-  const { refreshLabels, incrementLabelUnreadCount, labels } = useLabel();
+  const { refreshLabels, incrementLabelUnreadCount, labels, isLabelRecentlyDeleted } = useLabel();
 
   // Ref to preserve scroll position during state updates
   const emailListRef = useRef<HTMLDivElement>(null);
@@ -127,7 +127,8 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
     labelIdParam,
     pageType,
     setLoading,
-    emailListRef
+    emailListRef,
+    isLabelRecentlyDeleted
   });
   
   // Destructure for backwards compatibility

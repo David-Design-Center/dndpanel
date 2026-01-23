@@ -18,6 +18,9 @@ const LABEL_DETAIL_MAX_RETRIES = 3;
 const LABEL_DETAIL_BACKOFF_MS = 350;
 const LABEL_PROGRESS_LOG_INTERVAL_MS = 750;
 
+// Batch size for progressive loading (increased from 5 to 10)
+const PROGRESSIVE_BATCH_SIZE = 10;
+
 const SYSTEM_LABELS_WITH_COUNTS = new Set([
   "INBOX",
   "SENT",
@@ -27,6 +30,16 @@ const SYSTEM_LABELS_WITH_COUNTS = new Set([
   "STARRED",
   "IMPORTANT",
 ]);
+
+// Priority order for system labels (fetched first)
+const PRIORITY_SYSTEM_LABELS = ["INBOX", "DRAFT", "SENT", "TRASH", "SPAM", "STARRED", "IMPORTANT"];
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Progress callback type for progressive label loading
+ */
+export type LabelProgressCallback = (labels: GmailLabel[]) => void;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -42,18 +55,23 @@ const isGmailSignedIn = (): boolean => {
 };
 
 /**
- * Fetch Gmail labels
+ * Fetch Gmail labels with optional progressive loading
  * 
  * When FEATURE_FLAGS.USE_DIRECT_GMAIL_LABELS is TRUE:
  *   - Fetches ALL labels (system + custom) via individual users.labels.get() calls
  *   - Logs detailed API responses to console for Google Support debugging
- *   - Batches in groups of 5, sequential batches
+ *   - Supports progressive loading via onProgress callback
+ *   - Priority: System labels first (INBOX, DRAFT, SENT), then custom labels
  * 
  * When FEATURE_FLAGS.USE_DIRECT_GMAIL_LABELS is FALSE:
  *   - Only fetches system labels with counts (original behavior)
  *   - Custom labels hydrate later via Supabase sync
+ * 
+ * @param onProgress - Optional callback invoked after each batch with cumulative labels
  */
-export const fetchGmailLabels = async (): Promise<GmailLabel[]> => {
+export const fetchGmailLabels = async (
+  onProgress?: LabelProgressCallback
+): Promise<GmailLabel[]> => {
   try {
     if (!isGmailSignedIn()) {
       throw new Error("Not signed in to Gmail");
@@ -69,29 +87,60 @@ export const fetchGmailLabels = async (): Promise<GmailLabel[]> => {
     }
 
     // =========================================================================
-    // DIAGNOSTIC MODE: Fetch ALL labels with detailed logging
+    // DIAGNOSTIC MODE: Fetch ALL labels with progressive loading
     // Purpose: Google Support case - prove counters come directly from Gmail API
     // =========================================================================
     if (FEATURE_FLAGS.USE_DIRECT_GMAIL_LABELS) {
       console.log("═══════════════════════════════════════════════════════════════");
-      console.log("🔬 DIAGNOSTIC MODE: Direct Gmail API Label Fetch");
+      console.log("🔬 DIAGNOSTIC MODE: Direct Gmail API Label Fetch (Progressive)");
       console.log("📅 Timestamp:", new Date().toISOString());
       console.log("📊 Total labels to fetch:", response.result.labels.length);
       console.log("═══════════════════════════════════════════════════════════════");
 
       const allLabels = response.result.labels;
-      const labelDetails: any[] = [];
+      
+      // ✅ PHASE 1: Immediately emit all labels with 0 counters
+      const initialLabels: GmailLabel[] = allLabels.map((label: any) => ({
+        id: label.id,
+        name: label.name,
+        messageListVisibility: label.messageListVisibility,
+        labelListVisibility: label.labelListVisibility,
+        type: label.type,
+        messagesTotal: 0,
+        messagesUnread: 0,
+        threadsTotal: 0,
+        threadsUnread: 0,
+      }));
+      
+      // Emit initial labels immediately so UI shows folder structure
+      if (onProgress) {
+        console.log("📤 Emitting initial labels (0 counters):", initialLabels.length);
+        onProgress(initialLabels);
+      }
+      
+      // Track labels with loaded counters
+      const labelDetailsMap = new Map<string, any>();
       const failedLabels: { labelName: string; labelId: string; error: unknown }[] = [];
       
-      // Batch size of 5 as per plan
-      const DIAGNOSTIC_BATCH_SIZE = 5;
-      const totalBatches = Math.ceil(allLabels.length / DIAGNOSTIC_BATCH_SIZE);
+      // ✅ PHASE 2: Fetch system labels FIRST (priority)
+      const systemLabels = allLabels.filter((label: any) => 
+        PRIORITY_SYSTEM_LABELS.includes(label.id)
+      );
+      const customLabels = allLabels.filter((label: any) => 
+        !PRIORITY_SYSTEM_LABELS.includes(label.id)
+      );
+      
+      // Order: system labels first, then custom
+      const orderedLabels = [...systemLabels, ...customLabels];
+      
+      const totalBatches = Math.ceil(orderedLabels.length / PROGRESSIVE_BATCH_SIZE);
 
       for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
-        const start = batchIndex * DIAGNOSTIC_BATCH_SIZE;
-        const batch = allLabels.slice(start, start + DIAGNOSTIC_BATCH_SIZE);
+        const start = batchIndex * PROGRESSIVE_BATCH_SIZE;
+        const batch = orderedLabels.slice(start, start + PROGRESSIVE_BATCH_SIZE);
         
-        console.log(`\n📦 Batch ${batchIndex + 1}/${totalBatches} - Fetching ${batch.length} labels...`);
+        const isSystemBatch = batchIndex === 0 && systemLabels.length > 0;
+        console.log(`\n📦 Batch ${batchIndex + 1}/${totalBatches} - Fetching ${batch.length} ${isSystemBatch ? 'SYSTEM' : 'custom'} labels...`);
 
         const batchResults = await Promise.all(
           batch.map(async (label: any) => {
@@ -122,12 +171,47 @@ export const fetchGmailLabels = async (): Promise<GmailLabel[]> => {
           })
         );
 
-        // Collect successful results
+        // Store successful results in map
         batchResults.forEach((result) => {
           if (result) {
-            labelDetails.push(result);
+            labelDetailsMap.set(result.id, result);
           }
         });
+
+        // ✅ PROGRESSIVE UPDATE: Emit updated labels after each batch
+        if (onProgress) {
+          const progressLabels: GmailLabel[] = allLabels.map((label: any) => {
+            const detail = labelDetailsMap.get(label.id);
+            if (detail) {
+              return {
+                id: detail.id,
+                name: detail.name,
+                messageListVisibility: detail.messageListVisibility,
+                labelListVisibility: detail.labelListVisibility,
+                type: detail.type,
+                messagesTotal: detail.messagesTotal || 0,
+                messagesUnread: detail.messagesUnread || 0,
+                threadsTotal: detail.threadsTotal || 0,
+                threadsUnread: detail.threadsUnread || 0,
+              };
+            }
+            // Label not yet loaded - return with 0 counters
+            return {
+              id: label.id,
+              name: label.name,
+              messageListVisibility: label.messageListVisibility,
+              labelListVisibility: label.labelListVisibility,
+              type: label.type,
+              messagesTotal: 0,
+              messagesUnread: 0,
+              threadsTotal: 0,
+              threadsUnread: 0,
+            };
+          });
+          
+          console.log(`📤 Progress update: ${labelDetailsMap.size}/${allLabels.length} labels have counters`);
+          onProgress(progressLabels);
+        }
 
         console.log(`✅ Batch ${batchIndex + 1}/${totalBatches} complete`);
 
@@ -142,6 +226,9 @@ export const fetchGmailLabels = async (): Promise<GmailLabel[]> => {
       console.log("📊 SUMMARY TABLE - All Labels with Counts");
       console.log("📅 Timestamp:", new Date().toISOString());
       console.log("───────────────────────────────────────────────────────────────");
+      
+      // Prepare final labels array
+      const labelDetails = Array.from(labelDetailsMap.values());
       
       // Prepare data for console.table
       const tableData = labelDetails.map((label) => ({
@@ -166,17 +253,35 @@ export const fetchGmailLabels = async (): Promise<GmailLabel[]> => {
       console.log("   Gmail Inbox uses threads. Custom labels may use messages.");
       console.log("═══════════════════════════════════════════════════════════════\n");
 
-      const labels: GmailLabel[] = labelDetails.map((label: any) => ({
-        id: label.id,
-        name: label.name,
-        messageListVisibility: label.messageListVisibility,
-        labelListVisibility: label.labelListVisibility,
-        type: label.type,
-        messagesTotal: label.messagesTotal || 0,
-        messagesUnread: label.messagesUnread || 0,
-        threadsTotal: label.threadsTotal || 0,
-        threadsUnread: label.threadsUnread || 0,
-      }));
+      // Final labels - merge loaded details with any that failed (with 0 counters)
+      const labels: GmailLabel[] = allLabels.map((label: any) => {
+        const detail = labelDetailsMap.get(label.id);
+        if (detail) {
+          return {
+            id: detail.id,
+            name: detail.name,
+            messageListVisibility: detail.messageListVisibility,
+            labelListVisibility: detail.labelListVisibility,
+            type: detail.type,
+            messagesTotal: detail.messagesTotal || 0,
+            messagesUnread: detail.messagesUnread || 0,
+            threadsTotal: detail.threadsTotal || 0,
+            threadsUnread: detail.threadsUnread || 0,
+          };
+        }
+        // Label failed to load - return with 0 counters
+        return {
+          id: label.id,
+          name: label.name,
+          messageListVisibility: label.messageListVisibility,
+          labelListVisibility: label.labelListVisibility,
+          type: label.type,
+          messagesTotal: 0,
+          messagesUnread: 0,
+          threadsTotal: 0,
+          threadsUnread: 0,
+        };
+      });
 
       return labels;
     }

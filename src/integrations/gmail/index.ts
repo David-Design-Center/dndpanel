@@ -54,6 +54,7 @@ export {
   updateGmailLabel,
   deleteGmailLabel,
   applyGmailLabels,
+  type LabelProgressCallback,
 } from './operations/labels';
 
 // Message mutations

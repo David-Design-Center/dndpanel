@@ -11,7 +11,6 @@ import {
   ChevronRight,
   MoreVertical,
   Trash2,
-  Filter,
   Inbox,
   SendHorizontal,
   Trash,
@@ -21,7 +20,6 @@ import {
   Star,
   RefreshCw,
   Pen,
-  Loader2,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -109,7 +107,6 @@ function FoldersColumn({
     recentCounts,
     refreshLabels,
     labelsLastUpdated,
-    isLabelHydrated,
   } = useLabel();
   // recentCounts.inboxUnreadToday -> unread INBOX messages received since today's New York midnight
   // recentCounts.draftTotal -> total number of drafts (exact)
@@ -131,21 +128,6 @@ function FoldersColumn({
   const [selectedSystemFolder, setSelectedSystemFolder] = useState<
     string | null
   >("inbox");
-
-  // Loading spinner timeout state
-  const [spinnerTimeoutReached, setSpinnerTimeoutReached] = useState(false);
-
-  // 3-second timeout for spinners
-  useEffect(() => {
-    // Reset timeout when loading starts (if using loadingLabels from context)
-    // Or just run once on mount if the issue is initial load
-    setSpinnerTimeoutReached(false);
-    const timer = setTimeout(() => {
-      setSpinnerTimeoutReached(true);
-    }, 0);
-
-    return () => clearTimeout(timer);
-  }, [loadingLabels]); // Reset timer whenever generic loading state toggles
 
   const navigate = useNavigate();
 
@@ -548,14 +530,6 @@ function FoldersColumn({
     navigate(`/inbox?${params.toString()}`);
   };
 
-  const handleOpenFilters = (label: NestedLabel) => {
-    if (!label.isLeaf) return;
-    navigate(
-      `/settings?tab=filters&label=${encodeURIComponent(
-        label.gmailName || label.name
-      )}`
-    );
-  };
 
   const handleDeleteLabel = async (label: NestedLabel) => {
     // Determine confirmation message based on label type
@@ -607,13 +581,9 @@ function FoldersColumn({
       const getNodeLabel = () => {
         // ✅ Show threadsUnread instead of messagesUnread
         const threadsUnreadCount = node.threadsUnread ?? 0;
+        // ✅ Show counter only when > 0, nothing otherwise (progressive loading handles this)
         const showCount = threadsUnreadCount > 0;
         const countBadgeText = threadsUnreadCount.toString(); // No 99+ cap - show actual number
-        const hasRealLabelId = node.id && !node.id.startsWith("temp-");
-        // Spinner logic: Show only if not hydrated AND timeout hasn't passed
-        const showSpinner = Boolean(
-          node.labelObj && hasRealLabelId && !isLabelHydrated(node.id) && !spinnerTimeoutReached
-        );
 
         return (
           <div className="flex items-center justify-between w-full min-w-0 group">
@@ -625,14 +595,17 @@ function FoldersColumn({
             </span>
 
             <div className="flex items-center space-x-1 ml-2">
-              {showSpinner && !showCount && (
-                <Loader2 className="h-3 w-3 text-gray-400 animate-spin" />
-              )}
-              {/* Threads unread badge - show actual number if > 0, no 99+ cap */}
+              {/* Threads unread badge - show actual number if > 0, nothing if 0, with fade-in */}
               {showCount && (
-                <span className="text-xs font-medium text-gray-600 flex-shrink-0 min-w-[18px] text-right">
+                <motion.span 
+                  key={`label-${node.id}-${countBadgeText}`}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.3 }}
+                  className="text-xs font-medium text-gray-600 flex-shrink-0 min-w-[18px] text-right"
+                >
                   {countBadgeText}
-                </span>
+                </motion.span>
               )}
 
               {/* Three dots menu for all labels (both parent and child) */}
@@ -654,10 +627,6 @@ function FoldersColumn({
                   collisionPadding={12}
                   className="w-48"
                 >
-                  <DropdownMenuItem onClick={() => handleOpenFilters(node)}>
-                    <Filter size={14} className="mr-2" />
-                    Rules
-                  </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={() => handleDeleteLabel(node)}
                     className="text-red-600 focus:text-red-600"
@@ -702,7 +671,7 @@ function FoldersColumn({
 
   const treeNodes = useMemo(
     () => convertToTreeNodes(reorderedFilteredTree),
-    [reorderedFilteredTree, spinnerTimeoutReached]
+    [reorderedFilteredTree]
   );
 
   const handleNodeClick = (node: TreeNode) => {
@@ -973,20 +942,32 @@ function FoldersColumn({
                                       if (isInbox) {
                                         const displayUnread =
                                           folder.unreadCount || 0;
-                                        // ✅ Show actual number - no 99+ cap
+                                        // ✅ Show actual number - no 99+ cap, with fade-in animation
                                         return (
-                                          <div className="text-gray-700 text-xs px-1.5 py-0.5 rounded-full min-w-[18px] text-center flex-shrink-0 ml-2 font-medium">
+                                          <motion.div 
+                                            key={`inbox-${displayUnread}`}
+                                            initial={{ opacity: 0 }}
+                                            animate={{ opacity: 1 }}
+                                            transition={{ duration: 0.3 }}
+                                            className="text-gray-700 text-xs px-1.5 py-0.5 rounded-full min-w-[18px] text-center flex-shrink-0 ml-2 font-medium"
+                                          >
                                             {displayUnread}
-                                          </div>
+                                          </motion.div>
                                         );
                                       }
                                       if (isDrafts) {
                                         const total = folder.totalCount || 0;
                                         if (total <= 0) return null;
                                         return (
-                                          <div className="text-gray-700 text-xs px-1.5 py-0.5 rounded-full min-w-[20px] text-center flex-shrink-0 ml-2 font-medium">
+                                          <motion.div 
+                                            key={`drafts-${total}`}
+                                            initial={{ opacity: 0 }}
+                                            animate={{ opacity: 1 }}
+                                            transition={{ duration: 0.3 }}
+                                            className="text-gray-700 text-xs px-1.5 py-0.5 rounded-full min-w-[20px] text-center flex-shrink-0 ml-2 font-medium"
+                                          >
                                             {total}
-                                          </div>
+                                          </motion.div>
                                         );
                                       }
                                       return null; // suppress all others (Trash, Spam, Important, etc.)
@@ -1152,15 +1133,8 @@ function FoldersColumn({
                     </div>
                   </div>
 
-                  {/* Regular Folders Tree */}
-                  {loadingLabels ? (
-                    <div className="p-4 text-center">
-                      <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-blue-500 mx-auto mb-2"></div>
-                      <p className="text-xs text-gray-500">
-                        Loading folders...
-                      </p>
-                    </div>
-                  ) : filteredTree.length > 0 ? (
+                  {/* Regular Folders Tree - Always show immediately, counters load progressively */}
+                  {filteredTree.length > 0 ? (
                     <div className="p-1 pt-0">
                       <TreeView
                         data={treeNodes}
@@ -1191,7 +1165,7 @@ function FoldersColumn({
                       <p className="text-xs text-gray-500">
                         {searchTerm
                           ? "No folders match your search."
-                          : "No folders found."}
+                          : "No custom folders"}
                       </p>
                     </div>
                   )}
