@@ -41,8 +41,6 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  */
 export type LabelProgressCallback = (labels: GmailLabel[]) => void;
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 /**
  * Check if Gmail is signed in
  */

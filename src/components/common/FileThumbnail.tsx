@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { FileText, Image, Film, Music, Archive, File, Eye } from 'lucide-react';
 import { getAttachmentDownloadUrl } from '../../services/emailService';
+import { generatePdfThumbnailFromBase64, getCachedThumbnail, hasCachedThumbnail } from '../../services/pdfThumbnailService';
 
 interface FileThumbnailProps {
   attachment: {
@@ -27,6 +28,7 @@ const FileThumbnail: React.FC<FileThumbnailProps> = ({
 }) => {
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const loadingRef = useRef(false); // Prevent duplicate loads
 
   const sizeClasses = {
     small: 'w-12 h-12',
@@ -41,20 +43,35 @@ const FileThumbnail: React.FC<FileThumbnailProps> = ({
   };
 
   useEffect(() => {
+    console.log('📎 FileThumbnail: useEffect triggered for:', attachment.name, 'mimeType:', attachment.mimeType, 'attachmentId:', attachment.attachmentId?.substring(0, 20));
+    
     if (canShowThumbnail(attachment.mimeType) && attachment.attachmentId) {
+      // Check for cached PDF thumbnail first
+      if (attachment.mimeType === 'application/pdf') {
+        const cacheKey = `pdf-thumb-${attachment.attachmentId}`;
+        if (hasCachedThumbnail(cacheKey)) {
+          console.log('📎 FileThumbnail: Using cached PDF thumbnail for:', attachment.name);
+          setThumbnailUrl(getCachedThumbnail(cacheKey)!);
+          return;
+        }
+      }
       loadThumbnail();
+    } else {
+      console.log('📎 FileThumbnail: Skipping thumbnail - canShow:', canShowThumbnail(attachment.mimeType), 'hasAttachmentId:', !!attachment.attachmentId);
     }
-  }, [attachment.attachmentId, attachment.mimeType]);
+  }, [attachment.attachmentId, attachment.mimeType, emailId, userEmail]);
 
   const loadThumbnail = async () => {
-    if (!attachment.attachmentId) {
-      console.log('📎 FileThumbnail: No attachmentId for:', attachment.name);
+    if (!attachment.attachmentId || loadingRef.current) {
+      console.log('📎 FileThumbnail: No attachmentId or already loading:', attachment.name);
       return;
     }
 
+    loadingRef.current = true;
     setLoading(true);
+    
     try {
-      // Only load thumbnails for images to avoid unnecessary downloads
+      // Handle images
       if (attachment.mimeType.startsWith('image/')) {
         console.log('📎 FileThumbnail: Loading thumbnail for image:', attachment.name);
         const url = await getAttachmentDownloadUrl(
@@ -67,15 +84,43 @@ const FileThumbnail: React.FC<FileThumbnailProps> = ({
         console.log('📎 FileThumbnail: Got thumbnail URL:', url);
         setThumbnailUrl(url);
       }
+      // Handle PDFs - generate thumbnail from first page
+      else if (attachment.mimeType === 'application/pdf') {
+        console.log('📎 FileThumbnail: Loading PDF thumbnail for:', attachment.name);
+        
+        // Fetch PDF data from Gmail API
+        const response = await window.gapi.client.gmail.users.messages.attachments.get({
+          userId: 'me',
+          messageId: emailId,
+          id: attachment.attachmentId
+        });
+        
+        if (!response.result?.data) {
+          throw new Error('No PDF data returned');
+        }
+        
+        // Convert base64url to standard base64
+        let base64Data = response.result.data.replace(/-/g, '+').replace(/_/g, '/');
+        while (base64Data.length % 4 !== 0) {
+          base64Data += '=';
+        }
+        
+        // Generate thumbnail using PDF.js
+        const cacheKey = `pdf-thumb-${attachment.attachmentId}`;
+        const thumbnailDataUrl = await generatePdfThumbnailFromBase64(base64Data, cacheKey);
+        setThumbnailUrl(thumbnailDataUrl);
+        console.log('📎 FileThumbnail: PDF thumbnail generated for:', attachment.name);
+      }
     } catch (err) {
       console.error('📎 FileThumbnail: Error loading thumbnail:', err);
     } finally {
       setLoading(false);
+      loadingRef.current = false;
     }
   };
 
   const canShowThumbnail = (mimeType: string): boolean => {
-    return mimeType.startsWith('image/');
+    return mimeType.startsWith('image/') || mimeType === 'application/pdf';
   };
 
   const canPreview = (mimeType: string): boolean => {
@@ -123,7 +168,8 @@ const FileThumbnail: React.FC<FileThumbnailProps> = ({
       );
     }
 
-    if (thumbnailUrl && attachment.mimeType.startsWith('image/')) {
+    // Show thumbnail for both images and PDFs (PDF thumbnails are generated via PDF.js)
+    if (thumbnailUrl && (attachment.mimeType.startsWith('image/') || attachment.mimeType === 'application/pdf')) {
       return (
         <div className={`${sizeClasses[size]} relative group cursor-pointer`} onClick={onPreviewClick}>
           <img
@@ -132,6 +178,12 @@ const FileThumbnail: React.FC<FileThumbnailProps> = ({
             className={`${sizeClasses[size]} object-cover rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200`}
             onError={() => setThumbnailUrl(null)}
           />
+          {/* PDF indicator badge */}
+          {attachment.mimeType === 'application/pdf' && (
+            <div className="absolute bottom-1 right-1 bg-red-500 text-white text-[9px] font-bold px-1 py-0.5 rounded">
+              PDF
+            </div>
+          )}
           {showPreviewButton && canPreview(attachment.mimeType) && (
             <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-200 rounded-lg flex items-center justify-center">
               <button

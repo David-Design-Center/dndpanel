@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Download, FileText, Image, Film, Music, Archive, File } from 'lucide-react';
 import { getAttachmentDownloadUrl } from '../../services/emailService';
+import { PdfViewer } from './PdfViewer';
 
 interface FilePreviewProps {
   attachment: {
@@ -146,12 +147,7 @@ const FilePreview: React.FC<FilePreviewProps> = ({
     if (attachment.mimeType === 'application/pdf') {
       return (
         <div className="h-96">
-          <iframe
-            src={previewUrl}
-            className="w-full h-full border-0"
-            title={attachment.name}
-            onError={() => setError('Failed to load PDF')}
-          />
+          <PdfViewer url={previewUrl} className="w-full h-full" />
         </div>
       );
     }

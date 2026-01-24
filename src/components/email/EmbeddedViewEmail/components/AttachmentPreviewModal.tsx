@@ -1,6 +1,7 @@
 import { createPortal } from 'react-dom';
 import { X, Download } from 'lucide-react';
 import type { AttachmentPreview } from '../types';
+import { PdfViewer } from '../../../common/PdfViewer';
 
 interface AttachmentPreviewModalProps {
   attachment: AttachmentPreview | null;
@@ -61,10 +62,9 @@ export function AttachmentPreviewModal({ attachment, onClose }: AttachmentPrevie
               className="w-full h-full object-contain"
             />
           ) : attachment.type === 'application/pdf' ? (
-            <iframe
-              src={attachment.url}
-              className="w-full h-[calc(90vh-56px)]"
-              title={attachment.name}
+            <PdfViewer
+              url={attachment.url}
+              className="h-[calc(90vh-56px)]"
             />
           ) : attachment.type.startsWith('text/') ? (
             <iframe

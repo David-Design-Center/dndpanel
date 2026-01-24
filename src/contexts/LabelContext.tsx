@@ -25,6 +25,7 @@ import { subscribeLabelUpdateEvent } from "../utils/labelUpdateEvents";
 import { supabase } from "../lib/supabase";
 import { FEATURE_FLAGS } from "../config/server";
 import { GMAIL_SYSTEM_LABELS } from "../constants/gmailLabels";
+import { toast } from "sonner";
 
 // Static system labels with zero counters - shown immediately before API loads
 const INITIAL_SYSTEM_LABELS: GmailLabel[] = [
@@ -522,14 +523,22 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
 
       // =========================================================================
       // DIAGNOSTIC MODE: Always use direct Gmail API - Zero Supabase involvement
+      // Uses progressive loading: folders appear immediately, counters load in batches
       // =========================================================================
       if (FEATURE_FLAGS.USE_DIRECT_GMAIL_LABELS) {
-        console.log("🔬 DIAGNOSTIC MODE: Refreshing labels via direct Gmail API");
+        console.log("🔬 DIAGNOSTIC MODE: Refreshing labels via direct Gmail API (progressive)");
         setLoadingLabels(true);
         emitLoadingProgress("labels", "start");
 
         try {
-          const freshLabels = await fetchGmailLabels();
+          // Progressive callback - updates UI as each batch of counters loads
+          const handleProgress = (progressLabels: GmailLabel[]) => {
+            console.log(`📊 Progressive update: ${progressLabels.length} labels`);
+            setLabelsInternal(progressLabels);
+            setLabelsLastUpdated(Date.now());
+          };
+          
+          const freshLabels = await fetchGmailLabels(handleProgress);
           setLabelsInternal(freshLabels);
           clearLabelUnreadDeltas();
           emitLoadingProgress("labels", "success");
@@ -770,38 +779,103 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       setIsDeletingLabel(true);
       setDeleteLabelError(null);
 
-      // Find the label name before deleting (for event dispatch)
+      // Find the label to delete
       const labelToDelete = labels.find((l) => l.id === id);
       const labelName = labelToDelete?.name || "";
 
-      // ✅ WAIT for API to confirm deletion BEFORE optimistic update
-      // This prevents race conditions where we navigate away before deletion completes
-      await deleteGmailLabel(id);
+      // 🗂️ Find all child labels (Gmail uses flat naming with '/' hierarchy)
+      // e.g., deleting "Projects" should also delete "Projects/Work", "Projects/Work/Active"
+      const childLabels = labels.filter(
+        (l) => l.name.startsWith(labelName + "/")
+      );
 
-      // ✅ Track this label as recently deleted so pagination skips reload
-      recentlyDeletedLabelIdsRef.current.add(id);
+      // Sort children by depth (deepest first) for bottom-up deletion
+      // This ensures we delete "Projects/Work/Active" before "Projects/Work"
+      const sortedChildren = [...childLabels].sort((a, b) => {
+        const depthA = (a.name.match(/\//g) || []).length;
+        const depthB = (b.name.match(/\//g) || []).length;
+        return depthB - depthA; // Deepest first
+      });
+
+      const totalToDelete = sortedChildren.length + 1; // children + parent
+      const allDeletedIds: string[] = [];
+
+      // Show progress toast if deleting multiple labels
+      let toastId: string | number | undefined;
+      if (sortedChildren.length > 0) {
+        toastId = toast.loading(
+          `Deleting label and ${sortedChildren.length} sub-label${sortedChildren.length > 1 ? "s" : ""}...`
+        );
+      }
+
+      try {
+        // 🗑️ Delete children first (bottom-up)
+        for (let i = 0; i < sortedChildren.length; i++) {
+          const child = sortedChildren[i];
+          console.log(`🗑️ Deleting child label (${i + 1}/${sortedChildren.length}): ${child.name}`);
+          await deleteGmailLabel(child.id);
+          allDeletedIds.push(child.id);
+
+          // Update progress toast
+          if (toastId) {
+            toast.loading(
+              `Deleting labels... (${i + 1}/${totalToDelete})`,
+              { id: toastId }
+            );
+          }
+        }
+
+        // 🗑️ Delete parent last
+        console.log(`🗑️ Deleting parent label: ${labelName}`);
+        await deleteGmailLabel(id);
+        allDeletedIds.push(id);
+
+        // ✅ Dismiss progress toast on success
+        if (toastId) {
+          toast.success(
+            `Deleted ${totalToDelete} label${totalToDelete > 1 ? "s" : ""}`,
+            { id: toastId }
+          );
+        }
+      } catch (deleteErr) {
+        // ❌ If any deletion fails, abort and refresh to restore state
+        if (toastId) {
+          toast.error("Failed to delete some labels", { id: toastId });
+        }
+        throw deleteErr;
+      }
+
+      // ✅ Track all deleted labels so pagination skips reload
+      for (const deletedId of allDeletedIds) {
+        recentlyDeletedLabelIdsRef.current.add(deletedId);
+      }
       
       // Clear the tracking after 10 seconds
       if (clearDeletedLabelTimeout.current) {
         clearTimeout(clearDeletedLabelTimeout.current);
       }
       clearDeletedLabelTimeout.current = setTimeout(() => {
-        recentlyDeletedLabelIdsRef.current.delete(id);
+        for (const deletedId of allDeletedIds) {
+          recentlyDeletedLabelIdsRef.current.delete(deletedId);
+        }
       }, 10000);
 
-      // ✅ NOW apply optimistic update (after API success)
-      setLabels((prev) => prev.filter((label) => label.id !== id));
+      // ✅ NOW apply optimistic update (after API success) - remove ALL deleted labels
+      const deletedIdsSet = new Set(allDeletedIds);
+      setLabels((prev) => prev.filter((label) => !deletedIdsSet.has(label.id)));
 
       // ✅ Dispatch event AFTER API success to notify other components
-      // This allows them to navigate away safely
       window.dispatchEvent(
         new CustomEvent("label-deleted", {
-          detail: { labelId: id, labelName },
+          detail: { 
+            labelId: id, 
+            labelName,
+            childLabelIds: sortedChildren.map((c) => c.id),
+          },
         })
       );
 
-      // ✅ NO refreshLabels() needed - the label is already removed from state
-      // Calling refreshLabels would cause folder list to flash/reset
+      // ✅ NO refreshLabels() needed - labels are already removed from state
     } catch (err) {
       console.error("Error deleting Gmail label:", err);
       setDeleteLabelError(

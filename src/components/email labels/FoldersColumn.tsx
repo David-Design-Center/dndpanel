@@ -106,7 +106,6 @@ function FoldersColumn({
     systemCounts,
     recentCounts,
     refreshLabels,
-    labelsLastUpdated,
   } = useLabel();
   // recentCounts.inboxUnreadToday -> unread INBOX messages received since today's New York midnight
   // recentCounts.draftTotal -> total number of drafts (exact)
@@ -123,6 +122,8 @@ function FoldersColumn({
   );
   const hasInitializedFoldersRef = useRef(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshCooldown, setRefreshCooldown] = useState(0); // Seconds remaining
+  const cooldownIntervalRef = useRef<NodeJS.Timeout | null>(null);
   // Highlight selected system folder (visual state only)
   // Default to 'inbox' so the Inbox button starts in an active/disabled state
   const [selectedSystemFolder, setSelectedSystemFolder] = useState<
@@ -132,27 +133,6 @@ function FoldersColumn({
   const navigate = useNavigate();
 
   // Format the last updated timestamp
-  const formatLastUpdated = useCallback((timestamp: number | null) => {
-    if (!timestamp) return "Never";
-
-    const now = Date.now();
-    const diff = now - timestamp;
-    const seconds = Math.floor(diff / 1000);
-    const minutes = Math.floor(seconds / 60);
-    const hours = Math.floor(minutes / 60);
-
-    if (seconds < 60) return "Just now";
-    if (minutes < 60) return `${minutes}m ago`;
-    if (hours < 24) return `${hours}h ago`;
-
-    const date = new Date(timestamp);
-    return date.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  }, []);
 
   // Build hierarchical tree structure from flat labels
   const labelTree = useMemo(() => {
@@ -776,6 +756,8 @@ function FoldersColumn({
   };
 
   const handleRefreshLabels = async () => {
+    if (refreshCooldown > 0) return; // Prevent refresh during cooldown
+    
     setIsRefreshing(true);
     try {
       await refreshLabels(true); // Force refresh to bypass cache
@@ -783,6 +765,21 @@ function FoldersColumn({
         title: "Folders Refreshed",
         description: "Successfully refreshed all folders",
       });
+      
+      // Start 20-second cooldown
+      setRefreshCooldown(20);
+      cooldownIntervalRef.current = setInterval(() => {
+        setRefreshCooldown((prev) => {
+          if (prev <= 1) {
+            if (cooldownIntervalRef.current) {
+              clearInterval(cooldownIntervalRef.current);
+              cooldownIntervalRef.current = null;
+            }
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
     } catch (error) {
       console.error("Failed to refresh labels:", error);
       toast({
@@ -794,6 +791,15 @@ function FoldersColumn({
       setIsRefreshing(false);
     }
   };
+
+  // Cleanup cooldown interval on unmount
+  useEffect(() => {
+    return () => {
+      if (cooldownIntervalRef.current) {
+        clearInterval(cooldownIntervalRef.current);
+      }
+    };
+  }, []);
 
   return (
     <div
@@ -1021,7 +1027,7 @@ function FoldersColumn({
                           <TooltipTrigger asChild>
                             <button
                               onClick={handleRefreshLabels}
-                              disabled={isRefreshing || loadingLabels}
+                              disabled={isRefreshing || loadingLabels || refreshCooldown > 0}
                               className="absolute right-9 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded p-0.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               <RefreshCw
@@ -1032,11 +1038,7 @@ function FoldersColumn({
                             </button>
                           </TooltipTrigger>
                           <TooltipContent side="bottom" className="text-xs">
-                            <p>Refresh folders</p>
-                            <p className="text-gray-400 mt-1">
-                              Last updated:{" "}
-                              {formatLastUpdated(labelsLastUpdated)}
-                            </p>
+                            <p>{refreshCooldown > 0 ? `Wait ${refreshCooldown}s` : "Refresh folders"}</p>
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>

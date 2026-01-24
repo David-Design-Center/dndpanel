@@ -18,6 +18,7 @@ import {
 } from '../../integrations/gapiService';
 import { optimizedEmailService } from '../../services/optimizedEmailService';
 import { AttachmentCache } from '../../services/attachmentCache';
+import { generatePdfThumbnailFromBase64, getCachedThumbnail, hasCachedThumbnail } from '../../services/pdfThumbnailService';
 import { Email } from '../../types';
 import { useLayoutState } from '../../contexts/LayoutStateContext';
 import { useLabel } from '../../contexts/LabelContext';
@@ -1961,8 +1962,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                 )}
                 {!isSaving && lastSavedAt && (
                   <span className="flex items-center gap-1.5 text-xs font-medium text-green-600">
-                    <span>✓</span>
-                    Saved {format(lastSavedAt, 'h:mm a')}
+                    <span>Saved Draft</span>
                   </span>
                 )}
 
@@ -2627,90 +2627,122 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                         icon = 'ZIP';
                       }
 
-                      const truncatedName = att.name.length > 10
-                        ? att.name.substring(0, 10) + '...'
+                      const truncatedName = att.name.length > 20
+                        ? att.name.substring(0, 17) + '...'
                         : att.name;
+                      
+                      const fileSize = att.size ? `${Math.round(att.size / 1024)} KB` : '';
 
                       return (
                         <div
                           key={idx}
-                          className="relative group w-24 h-12 flex-shrink-0"
+                          className="relative group flex-shrink-0"
                         >
-                          <button
+                          {/* Gmail-style attachment card */}
+                          <div 
                             onClick={() => {
                               console.log(`🖱️ Clicked attachment: ${att.name}, isPdf: ${isPdf}, isPreviewable: ${isPreviewable}, attachmentId: ${att.attachmentId}`);
                               if (isPreviewable) {
                                 handlePreviewAttachment(latestMessage.id, att.attachmentId!, att.name, att.mimeType!);
                               }
                             }}
-                            className={`w-full h-full flex items-center justify-center overflow-hidden border border-gray-200 ${bgColor} ${isPreviewable ? 'cursor-pointer hover:opacity-90 hover:ring-blue-500' : 'cursor-default'}`}
-                            title={isPreviewable ? `Click to preview ${att.name}` : att.name}
+                            className={`w-48 border border-gray-200 rounded-lg overflow-hidden bg-white ${isPreviewable ? 'cursor-pointer hover:shadow-md' : 'cursor-default'} transition-shadow`}
                           >
-                            {isImage && att.attachmentId ? (
-                              <img
-                                src={`data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7`}
-                                alt={att.name}
-                                className="w-full h-full object-contain"
-                                onLoad={async (e) => {
-                                  try {
-                                    const attachmentId = att.attachmentId!;
+                            {/* Thumbnail area */}
+                            <div className={`relative h-28 ${bgColor} flex items-center justify-center overflow-hidden`}>
+                              {(isImage || isPdf) && att.attachmentId ? (
+                                <img
+                                  src={`data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7`}
+                                  alt={att.name}
+                                  className="w-full h-full object-contain"
+                                  onLoad={async (e) => {
+                                    try {
+                                      const attachmentId = att.attachmentId!;
+                                      const cacheKey = isPdf ? `pdf-thumb-${attachmentId}` : attachmentId;
 
-                                    // 1. Check Cache First
-                                    if (AttachmentCache.has(attachmentId)) {
-                                      const cachedData = AttachmentCache.get(attachmentId);
-                                      if (cachedData) {
-                                        (e.target as HTMLImageElement).src = cachedData;
-                                        return;
+                                      // 1. Check Cache First (different cache for PDF thumbnails)
+                                      if (isPdf && hasCachedThumbnail(cacheKey)) {
+                                        const cachedThumbnail = getCachedThumbnail(cacheKey);
+                                        if (cachedThumbnail) {
+                                          (e.target as HTMLImageElement).src = cachedThumbnail;
+                                          return;
+                                        }
+                                      } else if (!isPdf && AttachmentCache.has(attachmentId)) {
+                                        const cachedData = AttachmentCache.get(attachmentId);
+                                        if (cachedData) {
+                                          (e.target as HTMLImageElement).src = cachedData;
+                                          return;
+                                        }
                                       }
+
+                                      // 2. Queue the Request (Throttled)
+                                      const response = await queueGmailRequest(`fetch-attachment-${attachmentId}`, () =>
+                                        window.gapi.client.gmail.users.messages.attachments.get({
+                                          userId: 'me',
+                                          messageId: latestMessage.id,
+                                          id: attachmentId
+                                        })
+                                      );
+
+                                      if ((response as any).result?.data) {
+                                        const base64Data = (response as any).result.data.replace(/-/g, '+').replace(/_/g, '/');
+                                        const padding = '='.repeat((4 - base64Data.length % 4) % 4);
+                                        
+                                        if (isPdf) {
+                                          // Generate PDF thumbnail using PDF.js
+                                          console.log('📄 Generating PDF thumbnail for:', att.name);
+                                          const thumbnailDataUrl = await generatePdfThumbnailFromBase64(base64Data + padding, cacheKey);
+                                          (e.target as HTMLImageElement).src = thumbnailDataUrl;
+                                        } else {
+                                          // Regular image
+                                          const dataUrl = `data:${att.mimeType};base64,${base64Data}${padding}`;
+                                          AttachmentCache.set(attachmentId, dataUrl);
+                                          (e.target as HTMLImageElement).src = dataUrl;
+                                        }
+                                      }
+                                    } catch (err) {
+                                      console.error('Failed to load thumbnail:', err);
+                                      // Show fallback icon on error
+                                      (e.target as HTMLImageElement).style.display = 'none';
+                                      (e.target as HTMLImageElement).parentElement?.querySelector('.fallback-icon')?.classList.remove('hidden');
                                     }
-
-                                    // 2. Queue the Request (Throttled)
-                                    const response = await queueGmailRequest(`fetch-attachment-${attachmentId}`, () =>
-                                      window.gapi.client.gmail.users.messages.attachments.get({
-                                        userId: 'me',
-                                        messageId: latestMessage.id,
-                                        id: attachmentId
-                                      })
-                                    );
-
-                                    if ((response as any).result?.data) {
-                                      const base64Data = (response as any).result.data.replace(/-/g, '+').replace(/_/g, '/');
-                                      const padding = '='.repeat((4 - base64Data.length % 4) % 4);
-                                      const dataUrl = `data:${att.mimeType};base64,${base64Data}${padding}`;
-
-                                      // 3. Update Cache & Set Src
-                                      AttachmentCache.set(attachmentId, dataUrl);
-                                      (e.target as HTMLImageElement).src = dataUrl;
-                                    }
-                                  } catch (err) {
-                                    console.error('Failed to load thumbnail:', err);
-                                  }
-                                }}
-                              />
-                            ) : (
-                              <div className="flex flex-col items-center justify-center gap-1">
-                                <span className={`text-lg font-bold ${textColor}`}>{icon}</span>
-                                {ext !== icon && (
-                                  <span className={`text-[8px] ${textColor} opacity-70`}>{ext}</span>
+                                  }}
+                                />
+                              ) : null}
+                              {/* Fallback icon */}
+                              <div className={`flex flex-col items-center justify-center gap-1 ${(isImage || isPdf) && att.attachmentId ? 'fallback-icon hidden absolute inset-0' : ''} ${bgColor}`}>
+                                <span className={`text-2xl font-bold ${textColor}`}>{icon}</span>
+                              </div>
+                              
+                              {/* Hover overlay with actions */}
+                              <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-40 transition-all flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDownloadAttachment(latestMessage.id, att.attachmentId!, att.name);
+                                  }}
+                                  className="p-2 bg-white rounded-full shadow-lg hover:bg-gray-100 transition-colors"
+                                  title="Download"
+                                >
+                                  <Download size={16} className="text-gray-700" />
+                                </button>
+                              </div>
+                            </div>
+                            
+                            {/* File info footer */}
+                            <div className="px-3 py-2 border-t border-gray-100 flex items-center gap-2">
+                              <div className={`w-6 h-6 rounded flex items-center justify-center ${bgColor}`}>
+                                <span className={`text-[10px] font-bold ${textColor}`}>{icon}</span>
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-xs font-medium text-gray-900 truncate" title={att.name}>
+                                  {truncatedName}
+                                </div>
+                                {fileSize && (
+                                  <div className="text-[10px] text-gray-500">{fileSize}</div>
                                 )}
                               </div>
-                            )}
-                          </button>
-
-                          <div className="absolute inset-0 bg-black bg-opacity-75 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-2 pointer-events-none">
-                            <div className="text-white text-[10px] text-center break-words w-full mb-1 px-1 line-clamp-2">
-                              {truncatedName}
                             </div>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDownloadAttachment(latestMessage.id, att.attachmentId!, att.name);
-                              }}
-                              className="p-1.5 bg-white bg-opacity-20 hover:bg-opacity-30 rounded transition-colors pointer-events-auto"
-                              title="Download"
-                            >
-                              <Download size={14} className="text-white" />
-                            </button>
                           </div>
                         </div>
                       );

@@ -118,6 +118,9 @@ export function useDraftComposer(options: UseDraftComposerOptions): UseDraftComp
 
   // Timer ref for rate limiting (internal to hook - not needed externally)
   const lastSaveTimeRef = useRef<number>(0);
+  
+  // Ref to hold the latest saveDraft function (fixes stale closure in timers)
+  const saveDraftRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
   // Hash current draft state for change detection
   const hashDraftState = useCallback(() => {
@@ -296,7 +299,12 @@ export function useDraftComposer(options: UseDraftComposerOptions): UseDraftComp
     setLastSavedAt,
   ]);
 
-  // Schedule debounced save
+  // Keep saveDraftRef always pointing to the latest saveDraft
+  useEffect(() => {
+    saveDraftRef.current = saveDraft;
+  }, [saveDraft]);
+
+  // Schedule debounced save - uses ref to avoid stale closures
   const scheduleDebouncedSave = useCallback(() => {
     console.log('⏰ scheduleDebouncedSave called');
 
@@ -306,23 +314,23 @@ export function useDraftComposer(options: UseDraftComposerOptions): UseDraftComp
       console.log('⏰ Cleared existing debounce timer');
     }
 
-    // Schedule debounced save (3s after last change)
+    // Schedule debounced save (3s after last change) - use ref to get latest saveDraft
     debounceSaveTimerRef.current = window.setTimeout(() => {
-      console.log('⏰ Debounce timer fired, calling saveDraft');
-      saveDraft();
+      console.log('⏰ Debounce timer fired, calling saveDraft via ref');
+      saveDraftRef.current();
     }, 3000);
     console.log('⏰ Scheduled debounced save in 3s');
 
     // Schedule failsafe save (30s if user never idles)
     if (!failsafeSaveTimerRef.current) {
       failsafeSaveTimerRef.current = window.setTimeout(() => {
-        console.log('⏰ Failsafe timer fired, calling saveDraft');
-        saveDraft();
+        console.log('⏰ Failsafe timer fired, calling saveDraft via ref');
+        saveDraftRef.current();
         failsafeSaveTimerRef.current = null;
       }, 30000);
       console.log('⏰ Scheduled failsafe save in 30s');
     }
-  }, [saveDraft]);
+  }, [debounceSaveTimerRef, failsafeSaveTimerRef]);
 
   // Handler for draft content changes
   const handleDraftChange = useCallback(() => {
@@ -336,8 +344,8 @@ export function useDraftComposer(options: UseDraftComposerOptions): UseDraftComp
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       if (isDirty && showReplyComposer) {
-        // Attempt synchronous save
-        saveDraft();
+        // Attempt synchronous save via ref
+        saveDraftRef.current();
         e.preventDefault();
         e.returnValue = '';
       }
@@ -347,7 +355,7 @@ export function useDraftComposer(options: UseDraftComposerOptions): UseDraftComp
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [isDirty, showReplyComposer, saveDraft]);
+  }, [isDirty, showReplyComposer]);
 
   // Cleanup timers on unmount or when composer closes
   useEffect(() => {
@@ -361,9 +369,9 @@ export function useDraftComposer(options: UseDraftComposerOptions): UseDraftComp
         failsafeSaveTimerRef.current = null;
       }
 
-      // Final save when closing if dirty
+      // Final save when closing if dirty - use ref
       if (isDirty) {
-        saveDraft();
+        saveDraftRef.current();
       }
     }
 
@@ -375,7 +383,7 @@ export function useDraftComposer(options: UseDraftComposerOptions): UseDraftComp
         clearTimeout(failsafeSaveTimerRef.current);
       }
     };
-  }, [showReplyComposer, isDirty, saveDraft]);
+  }, [showReplyComposer, isDirty, debounceSaveTimerRef, failsafeSaveTimerRef]);
 
   return {
     hashDraftState,
