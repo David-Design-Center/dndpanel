@@ -431,7 +431,8 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
 
   /**
    * Move all selected emails to a folder/label
-   * Uses batch API for efficiency - single API call instead of N calls
+   * Uses Contextual Move model: remove current folder's label, add target label
+   * No label introspection needed - simple O(1) logic per move
    */
   const handleMoveSelected = useCallback(async (labelId: string, targetLabelName: string) => {
     if (selectedEmails.size === 0) return;
@@ -439,6 +440,30 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
     const emailIds = Array.from(selectedEmails);
     const emailCount = emailIds.length;
     const isMovingToInbox = labelId === 'INBOX';
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // CONTEXTUAL MOVE MODEL
+    // Rule: Remove where you are, add where you go. Nothing else changes.
+    // - From label X → Y: removeLabelIds: [X], addLabelIds: [Y]
+    // - From Inbox → Y: removeLabelIds: ['INBOX'], addLabelIds: [Y]
+    // ═══════════════════════════════════════════════════════════════════════
+    
+    // Determine source label based on current view
+    let sourceLabel: string | null = null;
+    if (labelIdParam) {
+      sourceLabel = labelIdParam;
+    } else if (pageType === 'inbox') {
+      sourceLabel = 'INBOX';
+    }
+    // For sent, drafts, trash, spam, allmail - sourceLabel stays null (immutable/virtual folders)
+    
+    // Prevent same-folder moves (would cause "Cannot both add and remove the same label" error)
+    if (sourceLabel === labelId) {
+      console.log(`📦 Skip: Already in target folder "${targetLabelName}"`);
+      toast.info(`Emails are already in ${targetLabelName}`);
+      return;
+    }
+    
     const loadingToastId = toast.loading(
       isMovingToInbox 
         ? `Moving ${emailCount} email${emailCount > 1 ? 's' : ''} back to Inbox...`
@@ -465,50 +490,23 @@ export function useEmailSelection(options: UseEmailSelectionOptions): UseEmailSe
     updateCountersForBulkMove(bulkEmails, labelId);
 
     try {
-      // System labels that should NOT be removed when moving
-      const systemLabels = ['INBOX', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'STARRED', 'IMPORTANT', 'UNREAD', 'CATEGORY_PERSONAL', 'CATEGORY_SOCIAL', 'CATEGORY_PROMOTIONS', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS'];
-      
-      // Collect all user labels from selected emails to remove them
-      const userLabelsToRemove = new Set<string>();
-      
-      // Get emails data to find their current labels
-      const emailsData = pageType === 'inbox' && !labelName 
-        ? [...allTabEmails.all, ...allTabEmails.unread, ...allTabEmails.important, ...allTabEmails.starred]
-        : emails;
-      
-      emailIds.forEach(emailId => {
-        const email = emailsData.find(e => e.id === emailId);
-        if (email?.labelIds) {
-          email.labelIds.forEach(lbl => {
-            if (!systemLabels.includes(lbl) && !lbl.startsWith('CATEGORY_')) {
-              userLabelsToRemove.add(lbl);
-            }
-          });
-        }
-      });
-      
-      // If we're viewing a label folder, include that label in the removal list
-      if (labelIdParam) {
-        userLabelsToRemove.add(labelIdParam);
-        console.log(`📁 Also removing current folder label: ${labelIdParam}`);
-      }
-      
-      // Build labels to add and remove based on target
       let labelsToAdd: string[];
       let labelsToRemove: string[];
       
       if (isMovingToInbox) {
-        // Moving to Inbox: add INBOX, remove all user labels
+        // Moving TO Inbox: add INBOX, remove current folder label (if any)
         labelsToAdd = ['INBOX'];
-        labelsToRemove = Array.from(userLabelsToRemove);
-        console.log(`📥 Moving ${emailCount} emails to Inbox. Removing user labels:`, labelsToRemove);
+        labelsToRemove = sourceLabel && sourceLabel !== 'INBOX' ? [sourceLabel] : [];
+        console.log(`📥 Moving ${emailCount} emails TO Inbox`);
       } else {
-        // Moving to folder: add the folder label, remove INBOX + current user labels
+        // Moving TO a folder: add target label, remove source (if removable)
         labelsToAdd = [labelId];
-        userLabelsToRemove.add('INBOX'); // Also remove from inbox when moving to a folder
-        labelsToRemove = Array.from(userLabelsToRemove);
-        console.log(`📦 Batch moving ${emailCount} emails to "${targetLabelName}". Removing labels:`, labelsToRemove);
+        labelsToRemove = sourceLabel ? [sourceLabel] : [];
+        console.log(`📦 Moving ${emailCount} emails to "${targetLabelName}"`);
       }
+      
+      console.log(`   Remove: [${labelsToRemove.join(', ') || 'none'}]`);
+      console.log(`   Add: [${labelsToAdd.join(', ')}]`);
       
       // Use batch API - single call instead of N calls
       await batchApplyLabelsToEmails(emailIds, labelsToAdd, labelsToRemove);

@@ -459,10 +459,37 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
   
   const getSelectedIdsForDnd = useCallback(() => selectedEmails, [selectedEmails]);
   
+  // Get source folder info for contextual move during drag-and-drop
+  // Maps activeTab to the appropriate Gmail label ID for system folders
+  const getSourceInfoForDnd = useCallback(() => {
+    // System folder tabs have specific label IDs
+    const systemTabToLabelId: Record<string, string> = {
+      'sent': 'SENT',
+      'drafts': 'DRAFT', 
+      'trash': 'TRASH',
+      'spam': 'SPAM',
+      'starred': 'STARRED',
+      'important': 'IMPORTANT',
+    };
+    
+    // If viewing a custom label folder, use that
+    if (labelIdParam) {
+      return { labelId: labelIdParam, pageType: 'label' };
+    }
+    
+    // If on a system folder tab, return its label ID
+    if (systemTabToLabelId[activeTab]) {
+      return { labelId: systemTabToLabelId[activeTab], pageType: activeTab };
+    }
+    
+    // Default: Inbox (including 'all', 'unread', 'allmail' tabs)
+    return { labelId: 'INBOX', pageType: pageType };
+  }, [labelIdParam, pageType, activeTab]);
+  
   // Register with DnD context
   useEffect(() => {
-    registerEmailSource(getEmailsForDnd, getSelectedIdsForDnd);
-  }, [registerEmailSource, getEmailsForDnd, getSelectedIdsForDnd]);
+    registerEmailSource(getEmailsForDnd, getSelectedIdsForDnd, getSourceInfoForDnd);
+  }, [registerEmailSource, getEmailsForDnd, getSelectedIdsForDnd, getSourceInfoForDnd]);
 
   const handleRefresh = async () => {
     if (!isGmailSignedIn || refreshCooldown) return;
@@ -1214,16 +1241,9 @@ function EmailPageLayout({ pageType, title }: EmailPageLayoutProps) {
       }
 
       // Show success toast
-      toast.success('Email deleted', {
+      toast.success('', {
         description: `"${emailSubject.length > 50 ? emailSubject.substring(0, 50) + '...' : emailSubject}" was moved to trash`,
-        duration: 4000,
-        action: {
-          label: 'Undo',
-          onClick: () => {
-            // TODO: Implement undo functionality if needed
-            toast.info('Undo functionality coming soon');
-          }
-        }
+        duration: 4000
       });
       
     } catch (error) {

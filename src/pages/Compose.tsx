@@ -58,6 +58,7 @@ function Compose() {
   const [ccInput, setCcInput] = useState('');
   const [bccRecipients, setBccRecipients] = useState<string[]>([]);
   const [bccInput, setBccInput] = useState('');
+  const [showCcBcc, setShowCcBcc] = useState(false);
   const [showContactDropdown, setShowContactDropdown] = useState(false);
   const [showCcContactDropdown, setShowCcContactDropdown] = useState(false);
   const [filteredContacts, setFilteredContacts] = useState<Contact[]>([]);
@@ -1289,23 +1290,23 @@ function Compose() {
             </div>
           )}
           {/* Outlook-style Header */}
-          <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
-            <div className="flex items-center gap-4">
+          <div className="px-3 py-2 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
+            <div className="flex items-center gap-2">
               {/* Send Button */}
               <div className="flex">
                 <button
                   type="button"
                   onClick={handleSubmit}
                   disabled={isSending || !toRecipients.length}
-                  className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:cursor-not-allowed text-white text-sm font-medium rounded-l transition-colors"
+                  className="flex items-center gap-1 px-3 py-1 bg-blue-600 hover:bg-blue-700 disabled:cursor-not-allowed text-white text-xs font-medium rounded transition-colors"
                 >
-                  <SendHorizontal size={14} />
+                  <SendHorizontal size={12} />
                   Send
                 </button>
               </div>
 
               {/* From selector */}
-              <div className="flex items-center gap-1 text-sm text-gray-700">
+              <div className="flex items-center gap-1 text-xs text-gray-700">
                 <span className="text-gray-500">From:</span>
                 <button
                   type="button"
@@ -1317,22 +1318,23 @@ function Compose() {
             </div>
 
             {/* Right side icons */}
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-0.5">
               <button
                 type="button"
                 onClick={handleCancel}
-                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                className="flex items-center gap-1 px-2 py-1 text-red-500 hover:text-red-700 hover:bg-red-100 rounded text-xs transition-colors"
                 title="Discard"
               >
-                <Trash2 size={18} />
+                <X size={12} />
+                Discard
               </button>
               <button
                 type="button"
                 onClick={toggleExpand}
-                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                className="flex items-center gap-1 px-2 py-1 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded text-xs transition-colors"
                 title={isExpanded ? 'Minimize' : 'Expand'}
               >
-                {isExpanded ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+                {isExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
               </button>
             </div>
           </div>
@@ -1341,27 +1343,38 @@ function Compose() {
           {(
             <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
               {/* Recipient fields section - Outlook style */}
-              <div className="flex-shrink-0 px-4 py-2 space-y-3 overflow-y-auto max-h-[280px]">
+              <div className="flex-shrink-0 px-3 py-1 space-y-1 overflow-y-auto max-h-[280px]">
                 {/* TO Section */}
                 <div className="relative">
-                  <div className="flex items-start gap-3 py-2">
-                    <button
-                      type="button"
-                      className="px-3 py-1 text-sm text-gray-700 border border-gray-300 rounded hover:bg-gray-50 flex-shrink-0"
-                    >
-                      To
-                    </button>
-                    <div className="flex-1 flex flex-wrap items-center gap-1.5 border-b border-gray-300 pb-2 min-h-[32px]">
+                  <div className="flex items-start gap-2 py-1">
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        className="px-2 py-0.5 text-xs text-gray-700 border border-gray-300 rounded hover:bg-gray-50 flex-shrink-0"
+                      >
+                        To
+                      </button>
+                      {!showCcBcc && (
+                        <button
+                          type="button"
+                          onClick={() => setShowCcBcc(true)}
+                          className="px-2 py-0.5 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-50 border border-gray-200 rounded flex-shrink-0"
+                        >
+                          Cc/Bcc
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex-1 flex flex-wrap items-center gap-1.5 border-b border-gray-300 pb-1 min-h-[28px]">
                       {/* Display existing TO recipients */}
                       {toRecipients.map((email, index) => (
-                        <div key={index} className="flex items-center bg-gray-100 text-gray-800 px-2 py-0.5 rounded text-sm">
+                        <div key={index} className="flex items-center bg-gray-100 text-gray-800 px-2 py-0.5 rounded text-xs">
                           <span>{email}</span>
                           <button
                             type="button"
                             onClick={() => setToRecipients(toRecipients.filter((_, i) => i !== index))}
-                            className="ml-1.5 text-gray-500 hover:text-gray-800"
+                            className="ml-1 text-gray-500 hover:text-gray-800"
                           >
-                            <X size={12} />
+                            <X size={10} />
                           </button>
                         </div>
                       ))}
@@ -1408,7 +1421,7 @@ function Compose() {
                             handleToInputKeyDown(e);
                           }
                         }}
-                        className="flex-1 min-w-[120px] outline-none text-sm py-0.5 bg-transparent"
+                        className="flex-1 min-w-[120px] outline-none text-xs py-0.5 bg-transparent"
                         placeholder=""
                       />
                     </div>
@@ -1457,190 +1470,194 @@ function Compose() {
                   )}
                 </div>
 
-                {/* CC Section - Always visible */}
-                <div className="relative">
-                  <div className="flex items-start gap-3 py-2">
-                    <button
-                      type="button"
-                      className="px-3 py-1 text-sm text-gray-700 border border-gray-300 rounded hover:bg-gray-50 flex-shrink-0"
-                    >
-                      Cc
-                    </button>
-                    <div className="flex-1 flex flex-wrap items-center gap-1.5 border-b border-gray-300 pb-2 min-h-[32px]">
-                      {/* Display existing CC recipients */}
-                      {ccRecipients.map((email, index) => (
-                        <div key={index} className="flex items-center bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-sm">
-                          <span className={email === 'david.v@dnddesigncenter.com' && currentProfile?.name !== 'David' ? 'text-blue-600 font-medium' : ''}>
-                            {email === 'david.v@dnddesigncenter.com' && currentProfile?.name !== 'David'
-                              ? email + ' (owner)'
-                              : email}
-                          </span>
-                          {/* Show remove button based on user permissions */}
-                          {(email !== 'david.v@dnddesigncenter.com' ||
-                            currentProfile?.name === 'David' ||
-                            currentProfile?.name === 'Marti' ||
-                            currentProfile?.userEmail === 'info@effidigi.com') && (
-                              <button
-                                type="button"
-                                onClick={() => removeCcRecipient(email)}
-                                className="ml-1.5 text-blue-600 hover:text-blue-800"
-                              >
-                                <X size={12} />
-                              </button>
-                            )}
-                        </div>
-                      ))}
-
-                      {/* CC Input field */}
-                      <input
-                        type="text"
-                        value={ccInput}
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          handleCcInputChange(e);
-
-                          // Auto-convert to badge when space or comma is detected
-                          if (value.endsWith(' ') || value.endsWith(',')) {
-                            const email = value.slice(0, -1).trim();
-                            if (email && email.includes('@') && !ccRecipients.includes(email)) {
-                              setCcRecipients([...ccRecipients, email]);
-                              setCcInput('');
-                            }
-                          }
-                        }}
-                        onFocus={handleCcInputFocus}
-                        onBlur={() => {
-                          // Convert to badge on blur if valid email
-                          const email = ccInput.trim();
-                          if (email && email.includes('@') && !ccRecipients.includes(email)) {
-                            setCcRecipients([...ccRecipients, email]);
-                            setCcInput('');
-                          }
-                          handleCcInputBlur();
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            const email = ccInput.trim();
-                            if (email && email.includes('@') && !ccRecipients.includes(email)) {
-                              setCcRecipients([...ccRecipients, email]);
-                              setCcInput('');
-                            }
-                          } else {
-                            handleCcInputKeyDown(e);
-                          }
-                        }}
-                        className="flex-1 min-w-[120px] outline-none text-sm py-0.5 bg-transparent"
-                        placeholder=""
-                      />
-                    </div>
-                  </div>
-
-                  {/* CC Contact dropdown */}
-                  {showCcContactDropdown && (
-                    <div className="absolute top-full left-14 right-0 z-[998] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
-                      {filteredCcContacts.length > 0 ? (
-                        filteredCcContacts.map((contact, index) => (
-                          <div
-                            key={`cc-${contact.email}-${index}`}
-                            onClick={() => handleCcContactSelect(contact)}
-                            className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
-                          >
-                            {contact.photoUrl ? (
-                              <img
-                                src={contact.photoUrl}
-                                alt={contact.name}
-                                className="w-7 h-7 rounded-full mr-2.5 flex-shrink-0"
-                              />
-                            ) : (
-                              <div className="w-7 h-7 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-medium mr-2.5 flex-shrink-0">
-                                {getProfileInitial(contact.name, contact.email)}
-                              </div>
-                            )}
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-1">
-                                <span className="text-sm font-medium text-gray-900 truncate">
-                                  {contact.name}
-                                </span>
-                                {contact.isFrequentlyContacted && (
-                                  <span className="px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full flex-shrink-0">
-                                    Frequent
-                                  </span>
+                {showCcBcc && (
+                  <>
+                    {/* CC Section */}
+                    <div className="relative">
+                      <div className="flex items-start gap-2 py-1">
+                        <button
+                          type="button"
+                          className="px-2 py-0.5 text-xs text-gray-700 border border-gray-300 rounded hover:bg-gray-50 flex-shrink-0"
+                        >
+                          Cc
+                        </button>
+                        <div className="flex-1 flex flex-wrap items-center gap-1.5 border-b border-gray-300 pb-1 min-h-[28px]">
+                          {/* Display existing CC recipients */}
+                          {ccRecipients.map((email, index) => (
+                            <div key={index} className="flex items-center bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-xs">
+                              <span className={email === 'david.v@dnddesigncenter.com' && currentProfile?.name !== 'David' ? 'text-blue-600 font-medium' : ''}>
+                                {email === 'david.v@dnddesigncenter.com' && currentProfile?.name !== 'David'
+                                  ? email + ' (owner)'
+                                  : email}
+                              </span>
+                              {/* Show remove button based on user permissions */}
+                              {(email !== 'david.v@dnddesigncenter.com' ||
+                                currentProfile?.name === 'David' ||
+                                currentProfile?.name === 'Marti' ||
+                                currentProfile?.userEmail === 'info@effidigi.com') && (
+                                  <button
+                                    type="button"
+                                    onClick={() => removeCcRecipient(email)}
+                                    className="ml-1 text-blue-600 hover:text-blue-800"
+                                  >
+                                    <X size={10} />
+                                  </button>
                                 )}
-                              </div>
-                              <p className="text-xs text-gray-500 truncate">{contact.email}</p>
                             </div>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="px-3 py-2 text-gray-500 text-sm">No contacts found</div>
+                          ))}
+
+                          {/* CC Input field */}
+                          <input
+                            type="text"
+                            value={ccInput}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              handleCcInputChange(e);
+
+                              // Auto-convert to badge when space or comma is detected
+                              if (value.endsWith(' ') || value.endsWith(',')) {
+                                const email = value.slice(0, -1).trim();
+                                if (email && email.includes('@') && !ccRecipients.includes(email)) {
+                                  setCcRecipients([...ccRecipients, email]);
+                                  setCcInput('');
+                                }
+                              }
+                            }}
+                            onFocus={handleCcInputFocus}
+                            onBlur={() => {
+                              // Convert to badge on blur if valid email
+                              const email = ccInput.trim();
+                              if (email && email.includes('@') && !ccRecipients.includes(email)) {
+                                setCcRecipients([...ccRecipients, email]);
+                                setCcInput('');
+                              }
+                              handleCcInputBlur();
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                const email = ccInput.trim();
+                                if (email && email.includes('@') && !ccRecipients.includes(email)) {
+                                  setCcRecipients([...ccRecipients, email]);
+                                  setCcInput('');
+                                }
+                              } else {
+                                handleCcInputKeyDown(e);
+                              }
+                            }}
+                            className="flex-1 min-w-[120px] outline-none text-xs py-0.5 bg-transparent"
+                            placeholder=""
+                          />
+                        </div>
+                      </div>
+
+                      {/* CC Contact dropdown */}
+                      {showCcContactDropdown && (
+                        <div className="absolute top-full left-14 right-0 z-[998] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
+                          {filteredCcContacts.length > 0 ? (
+                            filteredCcContacts.map((contact, index) => (
+                              <div
+                                key={`cc-${contact.email}-${index}`}
+                                onClick={() => handleCcContactSelect(contact)}
+                                className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                              >
+                                {contact.photoUrl ? (
+                                  <img
+                                    src={contact.photoUrl}
+                                    alt={contact.name}
+                                    className="w-7 h-7 rounded-full mr-2.5 flex-shrink-0"
+                                  />
+                                ) : (
+                                  <div className="w-7 h-7 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-medium mr-2.5 flex-shrink-0">
+                                    {getProfileInitial(contact.name, contact.email)}
+                                  </div>
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-sm font-medium text-gray-900 truncate">
+                                      {contact.name}
+                                    </span>
+                                    {contact.isFrequentlyContacted && (
+                                      <span className="px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full flex-shrink-0">
+                                        Frequent
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-xs text-gray-500 truncate">{contact.email}</p>
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="px-3 py-2 text-gray-500 text-sm">No contacts found</div>
+                          )}
+                        </div>
                       )}
                     </div>
-                  )}
-                </div>
 
-                {/* BCC Section - Always visible */}
-                <div className="relative">
-                  <div className="flex items-start gap-3 py-2">
-                    <button
-                      type="button"
-                      className="px-3 py-1 text-sm text-gray-700 border border-gray-300 rounded hover:bg-gray-50 flex-shrink-0"
-                    >
-                      Bcc
-                    </button>
-                    <div className="flex-1 flex flex-wrap items-center gap-1.5 border-b border-gray-300 pb-2 min-h-[32px]">
-                      {bccRecipients.map((email, index) => (
-                        <div key={index} className="flex items-center bg-purple-100 text-purple-800 px-2 py-0.5 rounded text-sm">
-                          <span>{email}</span>
-                          <button
-                            type="button"
-                            onClick={() => setBccRecipients(bccRecipients.filter((_, i) => i !== index))}
-                            className="ml-1.5 text-purple-600 hover:text-purple-800"
-                          >
-                            <X size={12} />
-                          </button>
+                    {/* BCC Section */}
+                    <div className="relative">
+                      <div className="flex items-start gap-2 py-1">
+                        <button
+                          type="button"
+                          className="px-2 py-0.5 text-xs text-gray-700 border border-gray-300 rounded hover:bg-gray-50 flex-shrink-0"
+                        >
+                          Bcc
+                        </button>
+                        <div className="flex-1 flex flex-wrap items-center gap-1.5 border-b border-gray-300 pb-1 min-h-[28px]">
+                          {bccRecipients.map((email, index) => (
+                            <div key={index} className="flex items-center bg-purple-100 text-purple-800 px-2 py-0.5 rounded text-xs">
+                              <span>{email}</span>
+                              <button
+                                type="button"
+                                onClick={() => setBccRecipients(bccRecipients.filter((_, i) => i !== index))}
+                                className="ml-1 text-purple-600 hover:text-purple-800"
+                              >
+                                <X size={10} />
+                              </button>
+                            </div>
+                          ))}
+                          <input
+                            type="text"
+                            value={bccInput}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              setBccInput(value);
+                              if (value.endsWith(' ') || value.endsWith(',')) {
+                                const email = value.slice(0, -1).trim();
+                                if (email && email.includes('@') && !bccRecipients.includes(email)) {
+                                  setBccRecipients([...bccRecipients, email]);
+                                  setBccInput('');
+                                }
+                              }
+                            }}
+                            onBlur={() => {
+                              const email = bccInput.trim();
+                              if (email && email.includes('@') && !bccRecipients.includes(email)) {
+                                setBccRecipients([...bccRecipients, email]);
+                                setBccInput('');
+                              }
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                const email = bccInput.trim();
+                                if (email && email.includes('@') && !bccRecipients.includes(email)) {
+                                  setBccRecipients([...bccRecipients, email]);
+                                  setBccInput('');
+                                }
+                              }
+                            }}
+                            className="flex-1 min-w-[120px] outline-none text-xs py-0.5 bg-transparent"
+                            placeholder=""
+                          />
                         </div>
-                      ))}
-                      <input
-                        type="text"
-                        value={bccInput}
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          setBccInput(value);
-                          if (value.endsWith(' ') || value.endsWith(',')) {
-                            const email = value.slice(0, -1).trim();
-                            if (email && email.includes('@') && !bccRecipients.includes(email)) {
-                              setBccRecipients([...bccRecipients, email]);
-                              setBccInput('');
-                            }
-                          }
-                        }}
-                        onBlur={() => {
-                          const email = bccInput.trim();
-                          if (email && email.includes('@') && !bccRecipients.includes(email)) {
-                            setBccRecipients([...bccRecipients, email]);
-                            setBccInput('');
-                          }
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            const email = bccInput.trim();
-                            if (email && email.includes('@') && !bccRecipients.includes(email)) {
-                              setBccRecipients([...bccRecipients, email]);
-                              setBccInput('');
-                            }
-                          }
-                        }}
-                        className="flex-1 min-w-[120px] outline-none text-sm py-0.5 bg-transparent"
-                        placeholder=""
-                      />
+                      </div>
                     </div>
-                  </div>
-                </div>
+                  </>
+                )}
 
                 {/* Subject field */}
-                <div className="flex items-center py-2">
+                <div className="flex items-center py-1">
                   <input
                     type="text"
                     value={subject}
@@ -1648,7 +1665,7 @@ function Compose() {
                       setSubject(e.target.value);
                       handleContentChange();
                     }}
-                    className="flex-1 outline-none text-sm py-1 border-b border-gray-300 bg-transparent"
+                    className="flex-1 outline-none text-xs py-0.5 border-b border-gray-300 bg-transparent"
                     placeholder="Add a subject"
                   />
                 </div>

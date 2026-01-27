@@ -594,9 +594,138 @@ export const applyGmailLabels = async (
   }
 };
 
+// ============================================================================
+// Thread → Message ID Resolution (for bulk operations)
+// ============================================================================
+
+// Cache for thread → message IDs mapping (clears on page refresh)
+const threadMessageCache = new Map<string, string[]>();
+
+/**
+ * Get all message IDs from a thread (with caching)
+ * This is needed because Gmail's batchModify operates on MESSAGE IDs, not thread IDs.
+ * A thread marked as "unread" if ANY message in it is unread.
+ */
+const getMessageIdsFromThread = async (threadId: string): Promise<string[]> => {
+  // Check cache first
+  if (threadMessageCache.has(threadId)) {
+    return threadMessageCache.get(threadId)!;
+  }
+
+  try {
+    const thread = await window.gapi.client.gmail.users.threads.get({
+      userId: 'me',
+      id: threadId,
+      format: 'minimal' // Only need message IDs, not full content
+    });
+
+    const messageIds = (thread.result.messages || [])
+      .map((msg: any) => msg.id)
+      .filter(Boolean);
+
+    // Cache the result
+    threadMessageCache.set(threadId, messageIds);
+
+    return messageIds;
+  } catch (error) {
+    console.warn(`Failed to get messages for thread ${threadId}:`, error);
+    return [];
+  }
+};
+
+/**
+ * Given a list of message IDs, resolve them to ALL message IDs in their threads.
+ * This ensures bulk operations affect entire threads, not just individual messages.
+ * 
+ * Example: User selects 50 emails (threads) → might expand to 150 message IDs
+ * 
+ * @param inputMessageIds - Message IDs (typically the latest message in each thread)
+ * @returns All message IDs from all threads those messages belong to
+ */
+const resolveToAllThreadMessageIds = async (inputMessageIds: string[]): Promise<string[]> => {
+  if (inputMessageIds.length === 0) return [];
+
+  console.log(`🔍 Resolving ${inputMessageIds.length} messages to full thread message IDs...`);
+
+  // First, get the thread ID for each input message ID
+  // We need to fetch message metadata to get the threadId
+  const THREAD_LOOKUP_BATCH_SIZE = 50;
+  const threadIds = new Set<string>();
+
+  // Batch the thread lookups
+  for (let i = 0; i < inputMessageIds.length; i += THREAD_LOOKUP_BATCH_SIZE) {
+    const batch = inputMessageIds.slice(i, i + THREAD_LOOKUP_BATCH_SIZE);
+    
+    const lookups = batch.map(async (msgId) => {
+      try {
+        // Check if we already have this message's thread cached
+        for (const [threadId, msgIds] of threadMessageCache.entries()) {
+          if (msgIds.includes(msgId)) {
+            return threadId;
+          }
+        }
+
+        // Fetch message metadata to get thread ID
+        const msg = await window.gapi.client.gmail.users.messages.get({
+          userId: 'me',
+          id: msgId,
+          format: 'minimal'
+        });
+        return msg.result.threadId;
+      } catch (error) {
+        console.warn(`Failed to get thread ID for message ${msgId}:`, error);
+        return null;
+      }
+    });
+
+    const results = await Promise.all(lookups);
+    results.forEach(threadId => {
+      if (threadId) threadIds.add(threadId);
+    });
+  }
+
+  console.log(`📧 Found ${threadIds.size} unique threads from ${inputMessageIds.length} messages`);
+
+  // Now get ALL message IDs from each thread
+  const allMessageIds = new Set<string>();
+
+  // Batch the thread message lookups
+  const threadIdArray = Array.from(threadIds);
+  for (let i = 0; i < threadIdArray.length; i += THREAD_LOOKUP_BATCH_SIZE) {
+    const batch = threadIdArray.slice(i, i + THREAD_LOOKUP_BATCH_SIZE);
+    
+    const lookups = batch.map(threadId => getMessageIdsFromThread(threadId));
+    const results = await Promise.all(lookups);
+    
+    results.forEach(msgIds => {
+      msgIds.forEach(id => allMessageIds.add(id));
+    });
+  }
+
+  console.log(`✅ Resolved to ${allMessageIds.size} total message IDs (from ${threadIds.size} threads)`);
+
+  return Array.from(allMessageIds);
+};
+
+/**
+ * Clear the thread message cache (call on profile switch or sign out)
+ */
+export const clearThreadMessageCache = (): void => {
+  threadMessageCache.clear();
+  console.log('🗑️ Thread message cache cleared');
+};
+
 /**
  * Batch apply labels to multiple messages at once
  * Uses Gmail's batchModify API - supports up to 1000 message IDs per request
+ * 
+ * IMPORTANT: This function accepts message IDs (email.id) and automatically
+ * resolves them to ALL messages in their threads. This ensures that marking
+ * a thread as read/unread affects the entire thread, not just one message.
+ * 
+ * @param messageIds - Message IDs to modify (typically the latest message per thread)
+ * @param addLabelIds - Labels to add
+ * @param removeLabelIds - Labels to remove
  */
 export const batchApplyGmailLabels = async (
   messageIds: string[],
@@ -611,12 +740,49 @@ export const batchApplyGmailLabels = async (
     if (messageIds.length === 0) {
       return;
     }
+    
+    // Filter out immutable/problematic labels that cannot be removed
+    // SENT and DRAFT are immutable - they're set by Gmail based on message type
+    // Also prevent adding AND removing the same label (causes API error)
+    const immutableLabels = ['SENT', 'DRAFT'];
+    const safeRemoveLabelIds = removeLabelIds.filter(label => {
+      if (immutableLabels.includes(label)) {
+        console.log(`⚠️ Skipping removal of immutable label: ${label}`);
+        return false;
+      }
+      if (addLabelIds.includes(label)) {
+        console.log(`⚠️ Skipping removal of label that's also being added: ${label}`);
+        return false;
+      }
+      return true;
+    });
+    
+    // Also filter add labels that are being removed (edge case)
+    const safeAddLabelIds = addLabelIds.filter(label => !removeLabelIds.includes(label) || safeRemoveLabelIds.includes(label) === false);
+    
+    // If no operations left, skip the API call
+    if (safeAddLabelIds.length === 0 && safeRemoveLabelIds.length === 0) {
+      console.log('📦 No label changes needed after filtering');
+      return;
+    }
+
+    // Resolve input message IDs to ALL message IDs in their threads
+    // This is critical: Gmail shows a thread as UNREAD if ANY message is unread
+    const allMessageIds = await resolveToAllThreadMessageIds(messageIds);
+
+    if (allMessageIds.length === 0) {
+      console.warn('⚠️ No message IDs to modify after thread resolution');
+      return;
+    }
+
+    console.log(`📦 Applying labels to ${allMessageIds.length} messages (from ${messageIds.length} input IDs)`);
+    console.log(`   Add: [${safeAddLabelIds.join(', ')}], Remove: [${safeRemoveLabelIds.join(', ')}]`);
 
     // Gmail API limit is 1000 IDs per request
     const BATCH_SIZE = 1000;
     const batches = [];
-    for (let i = 0; i < messageIds.length; i += BATCH_SIZE) {
-      batches.push(messageIds.slice(i, i + BATCH_SIZE));
+    for (let i = 0; i < allMessageIds.length; i += BATCH_SIZE) {
+      batches.push(allMessageIds.slice(i, i + BATCH_SIZE));
     }
 
     for (const batch of batches) {
@@ -625,11 +791,13 @@ export const batchApplyGmailLabels = async (
         userId: "me",
         resource: {
           ids: batch,
-          addLabelIds,
-          removeLabelIds,
+          addLabelIds: safeAddLabelIds,
+          removeLabelIds: safeRemoveLabelIds,
         },
       });
     }
+
+    console.log(`✅ Successfully applied labels to ${allMessageIds.length} messages`);
   } catch (error) {
     console.error("Error batch applying labels to Gmail messages:", error);
     throw error;

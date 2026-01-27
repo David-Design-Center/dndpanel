@@ -20,6 +20,7 @@ import {
   deleteGmailLabel as gmailDeleteLabel,
   applyGmailLabels as gmailApplyLabels,
   batchApplyGmailLabels as gmailBatchApplyLabels,
+  clearThreadMessageCache as gmailClearThreadMessageCache,
   type LabelProgressCallback,
 } from './gmail/operations/labels';
 
@@ -1839,6 +1840,15 @@ export const batchApplyGmailLabels = async (
   removeLabelIds: string[] = []
 ): Promise<void> => {
   return gmailBatchApplyLabels(messageIds, addLabelIds, removeLabelIds);
+};
+
+/**
+ * Clear thread message cache (used for bulk operations)
+ * Call on profile switch or sign out
+ * ⚠️ DELEGATED TO: src/integrations/gmail/operations/labels.ts
+ */
+export const clearThreadMessageCache = (): void => {
+  gmailClearThreadMessageCache();
 };
 
 /**

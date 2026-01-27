@@ -191,9 +191,7 @@ export function useEmailItemActions({
     
     // Optimistic UI update
     onEmailDelete?.(email.id);
-    
-    toast.success('Email deleted successfully!');
-    
+      
     // Run API call in background
     try {
       await deleteEmail(email.id);

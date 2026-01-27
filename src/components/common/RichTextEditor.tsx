@@ -813,7 +813,7 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
             )}
           </div>
         ) : (
-          <div className="flex items-center gap-1 p-2 border-b border-gray-200 bg-gray-50 flex-wrap rich-text-toolbar">
+          <div className="flex items-center gap-1 pl-2 border-b border-gray-200 bg-gray-50 flex-wrap rich-text-toolbar">
             {/* Text formatting */}
             <div className="flex items-center gap-1 border-r border-gray-300 pr-2 mr-2">
               <Toggle

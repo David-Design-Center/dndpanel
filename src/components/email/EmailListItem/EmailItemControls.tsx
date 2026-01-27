@@ -32,7 +32,7 @@ export function EmailItemControls({
             onToggleSelect(email.id);
           }}
           onClick={(e) => e.stopPropagation()}
-          className="mr-3 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          className="mr-3 text-blue-600 focus:ring-blue-500 w-5 h-5"
         />
       )}
 

@@ -1940,14 +1940,14 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
         {showReplyComposer && !isReplyExpanded && (
           <div ref={replyComposerRef} className="mb-6 border border-gray-200 rounded-lg shadow-lg overflow-hidden bg-white">
             {/* Outlook-style Header */}
-            <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
-              <div className="flex items-center gap-4">
+            <div className="px-3 py-2 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
+              <div className="flex items-center gap-2">
                 {/* Send Button */}
                 <button
                   type="button"
                   onClick={handleSendReply}
                   disabled={sending || !replyContent.trim() || (replyMode === 'forward' && !forwardTo.trim())}
-                  className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-medium rounded transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-medium rounded transition-colors"
                 >
                   <SendHorizontal size={14} />
                   {sending ? 'Sending...' : 'Send'}

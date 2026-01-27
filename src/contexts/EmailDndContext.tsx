@@ -23,11 +23,19 @@ interface EmailDndContextType {
   // Drop target state
   overFolderId: string | null;
   
+  // Source folder state - for contextual move
+  sourceLabelId: string | null;
+  sourcePageType: string | null;
+  
   // Actions
   setDraggedEmails: (emails: Email[], selectedIds: Set<string>) => void;
   
   // Event handlers for EmailPageLayout to register
-  registerEmailSource: (getEmails: () => Email[], getSelectedIds: () => Set<string>) => void;
+  registerEmailSource: (
+    getEmails: () => Email[], 
+    getSelectedIds: () => Set<string>,
+    getSourceInfo: () => { labelId: string | null; pageType: string }
+  ) => void;
 }
 
 const EmailDndContext = createContext<EmailDndContextType | undefined>(undefined);
@@ -42,7 +50,14 @@ export function useEmailDnd() {
 
 interface EmailDndProviderProps {
   children: ReactNode;
-  onDropOnFolder?: (emailIds: string[], folderId: string, folderName: string, unreadCount: number, emails: Email[]) => Promise<void>;
+  onDropOnFolder?: (
+    emailIds: string[], 
+    folderId: string, 
+    folderName: string, 
+    unreadCount: number, 
+    emails: Email[],
+    sourceInfo: { labelId: string | null; pageType: string | null }
+  ) => Promise<void>;
 }
 
 export function EmailDndProvider({ children, onDropOnFolder }: EmailDndProviderProps) {
@@ -53,10 +68,15 @@ export function EmailDndProvider({ children, onDropOnFolder }: EmailDndProviderP
   const [draggedUnreadCount, setDraggedUnreadCount] = useState<number>(0); // Track unread emails being dragged
   const [overFolderId, setOverFolderId] = useState<string | null>(null);
   
+  // Source folder tracking for contextual move
+  const [sourceLabelId, setSourceLabelId] = useState<string | null>(null);
+  const [sourcePageType, setSourcePageType] = useState<string | null>(null);
+  
   // Registered getters from EmailPageLayout
   const [emailSourceGetters, setEmailSourceGetters] = useState<{
     getEmails: () => Email[];
     getSelectedIds: () => Set<string>;
+    getSourceInfo: () => { labelId: string | null; pageType: string };
   } | null>(null);
 
   // DnD Sensors - allow both horizontal and vertical movement
@@ -78,9 +98,10 @@ export function EmailDndProvider({ children, onDropOnFolder }: EmailDndProviderP
 
   const registerEmailSource = useCallback((
     getEmails: () => Email[],
-    getSelectedIds: () => Set<string>
+    getSelectedIds: () => Set<string>,
+    getSourceInfo: () => { labelId: string | null; pageType: string }
   ) => {
-    setEmailSourceGetters({ getEmails, getSelectedIds });
+    setEmailSourceGetters({ getEmails, getSelectedIds, getSourceInfo });
   }, []);
 
   const setDraggedEmails = useCallback((_emails: Email[], _selectedIds: Set<string>) => {
@@ -98,6 +119,11 @@ export function EmailDndProvider({ children, onDropOnFolder }: EmailDndProviderP
     
     const emails = emailSourceGetters.getEmails();
     const selectedIds = emailSourceGetters.getSelectedIds();
+    const sourceInfo = emailSourceGetters.getSourceInfo();
+    
+    // Capture source folder info for contextual move
+    setSourceLabelId(sourceInfo.labelId);
+    setSourcePageType(sourceInfo.pageType);
     
     // Find the dragged email
     const email = emails.find(e => e.id === emailId);
@@ -125,6 +151,8 @@ export function EmailDndProvider({ children, onDropOnFolder }: EmailDndProviderP
     // Count unread emails being dragged
     const unreadCount = emailsToDrag.filter(e => !e.isRead).length;
     setDraggedUnreadCount(unreadCount);
+    
+    console.log(`📦 DnD: Started drag from ${sourceInfo.pageType}${sourceInfo.labelId ? ` (label: ${sourceInfo.labelId})` : ''}`);
   }, [emailSourceGetters]);
 
   const handleDragOver = useCallback((event: DragOverEvent) => {
@@ -164,9 +192,17 @@ export function EmailDndProvider({ children, onDropOnFolder }: EmailDndProviderP
       if (isValidFolder) {
         const folderName = over.data?.current?.name || folderId;
         console.log(`📦 DnD: Dropping ${draggedEmailIds.length} emails (${draggedUnreadCount} unread) on folder: ${folderName} (${folderId})`);
+        console.log(`📦 DnD: Source - pageType: ${sourcePageType}, labelId: ${sourceLabelId}`);
         
         try {
-          await onDropOnFolder(draggedEmailIds, folderId, folderName, draggedUnreadCount, draggedEmails);
+          await onDropOnFolder(
+            draggedEmailIds, 
+            folderId, 
+            folderName, 
+            draggedUnreadCount, 
+            draggedEmails,
+            { labelId: sourceLabelId, pageType: sourcePageType }
+          );
         } catch (error) {
           console.error('📦 DnD: Error dropping on folder:', error);
         }
@@ -179,7 +215,9 @@ export function EmailDndProvider({ children, onDropOnFolder }: EmailDndProviderP
     setDraggedEmailsState([]);
     setDraggedUnreadCount(0);
     setOverFolderId(null);
-  }, [draggedEmailIds, draggedEmails, draggedUnreadCount, onDropOnFolder]);
+    setSourceLabelId(null);
+    setSourcePageType(null);
+  }, [draggedEmailIds, draggedEmails, draggedUnreadCount, sourceLabelId, sourcePageType, onDropOnFolder]);
 
   const handleDragCancel = useCallback(() => {
     setActiveEmail(null);
@@ -187,6 +225,8 @@ export function EmailDndProvider({ children, onDropOnFolder }: EmailDndProviderP
     setDraggedEmailsState([]);
     setDraggedUnreadCount(0);
     setOverFolderId(null);
+    setSourceLabelId(null);
+    setSourcePageType(null);
   }, []);
 
   const contextValue = useMemo(() => ({
@@ -194,9 +234,11 @@ export function EmailDndProvider({ children, onDropOnFolder }: EmailDndProviderP
     draggedEmailIds,
     dragCount,
     overFolderId,
+    sourceLabelId,
+    sourcePageType,
     setDraggedEmails,
     registerEmailSource,
-  }), [activeEmail, draggedEmailIds, dragCount, overFolderId, setDraggedEmails, registerEmailSource]);
+  }), [activeEmail, draggedEmailIds, dragCount, overFolderId, sourceLabelId, sourcePageType, setDraggedEmails, registerEmailSource]);
 
   return (
     <EmailDndContext.Provider value={contextValue}>

@@ -29,6 +29,7 @@ function Layout() {
     dialogType: MoveDialogType;
     folderId: string;
     folderName: string;
+    sourceInfo: { labelId: string | null; pageType: string | null };
   } | null>(null);
 
   // Check if we're on an email-related route that should show folders column
@@ -48,10 +49,44 @@ function Layout() {
     openCompose();
   };
 
-  // Handle dropping emails on folders
-  const handleDropOnFolder = useCallback(async (emailIds: string[], folderId: string, folderName: string, unreadCount: number, emails: Email[]) => {
+  // Handle dropping emails on folders - uses Contextual Move model
+  // Rule: Remove where you are, add where you go. Nothing else changes.
+  const handleDropOnFolder = useCallback(async (
+    emailIds: string[], 
+    folderId: string, 
+    folderName: string, 
+    unreadCount: number, 
+    emails: Email[],
+    sourceInfo: { labelId: string | null; pageType: string | null }
+  ) => {
     try {
       const emailCount = emailIds.length;
+      
+      // Determine what label to remove based on source (Contextual Move)
+      const getSourceLabelToRemove = (): string[] => {
+        if (sourceInfo.labelId) {
+          // Dragging from a custom label folder
+          return [sourceInfo.labelId];
+        } else if (sourceInfo.pageType === 'inbox') {
+          // Dragging from Inbox
+          return ['INBOX'];
+        }
+        // Other views (sent, drafts, all mail) - don't remove anything
+        return [];
+      };
+      
+      const labelsToRemove = getSourceLabelToRemove();
+      
+      // Prevent same-folder moves (would cause "Cannot both add and remove the same label" error)
+      if (labelsToRemove.includes(folderId) || (sourceInfo.labelId === folderId)) {
+        console.log(`📦 Skip: Already in target folder "${folderName}"`);
+        toast.info(`Emails are already in ${folderName}`);
+        return;
+      }
+      
+      console.log(`📦 Drop: Moving ${emailCount} emails to "${folderName}"`);
+      console.log(`   Source: ${sourceInfo.pageType}${sourceInfo.labelId ? ` (label: ${sourceInfo.labelId})` : ''}`);
+      console.log(`   Remove: [${labelsToRemove.join(', ') || 'none'}], Add: [${folderId}]`);
       
       // Special handling for Trash - show dialog first to ask about blocking sender
       if (folderId === 'TRASH') {
@@ -61,7 +96,8 @@ function Layout() {
           unreadCount, 
           dialogType: 'trash',
           folderId,
-          folderName: 'Trash'
+          folderName: 'Trash',
+          sourceInfo
         });
         setMoveDialogOpen(true);
         return; // Wait for dialog confirmation
@@ -75,7 +111,8 @@ function Layout() {
           unreadCount, 
           dialogType: 'folder',
           folderId,
-          folderName
+          folderName,
+          sourceInfo
         });
         setMoveDialogOpen(true);
         return; // Wait for dialog confirmation
@@ -89,34 +126,43 @@ function Layout() {
       // Clear selection after drag
       window.dispatchEvent(new CustomEvent('clear-email-selection'));
       
-      // Special handling for Spam
+      // Special handling for Spam - always remove INBOX
       if (folderId === 'SPAM') {
-        await batchApplyLabelsToEmails(emailIds, ['SPAM'], ['INBOX']);
+        const spamRemove = labelsToRemove.length > 0 ? labelsToRemove : ['INBOX'];
+        await batchApplyLabelsToEmails(emailIds, ['SPAM'], spamRemove);
         toast.success(`${emailCount} email${emailCount > 1 ? 's' : ''} marked as Spam`);
         
-        // Locally increment Spam unread counter
+        // Locally update counters
         if (unreadCount > 0) {
           incrementLabelUnreadCount('SPAM', unreadCount);
-          // Decrement INBOX counter
-          incrementLabelUnreadCount('INBOX', -unreadCount);
+          if (sourceInfo.pageType === 'inbox') {
+            incrementLabelUnreadCount('INBOX', -unreadCount);
+          } else if (sourceInfo.labelId) {
+            incrementLabelUnreadCount(sourceInfo.labelId, -unreadCount);
+          }
         }
         return;
       }
       
-      // Moving to Inbox
+      // Moving to Inbox - Contextual move: remove source label, add INBOX
       if (folderId === 'INBOX') {
-        await batchApplyLabelsToEmails(emailIds, ['INBOX'], []);
+        // Filter out INBOX from removal if somehow present
+        const safeLabelsToRemove = labelsToRemove.filter(l => l !== 'INBOX');
+        await batchApplyLabelsToEmails(emailIds, ['INBOX'], safeLabelsToRemove);
         toast.success(`${emailCount} email${emailCount > 1 ? 's' : ''} moved to Inbox`);
         
-        // Locally increment Inbox unread counter
+        // Locally update counters
         if (unreadCount > 0) {
           incrementLabelUnreadCount('INBOX', unreadCount);
+          if (sourceInfo.labelId) {
+            incrementLabelUnreadCount(sourceInfo.labelId, -unreadCount);
+          }
         }
         return;
       }
       
-      // Other system folders (SENT, STARRED, IMPORTANT, etc.)
-      await batchApplyLabelsToEmails(emailIds, [folderId], []);
+      // Other system folders (STARRED, IMPORTANT, etc.) - just add the label
+      await batchApplyLabelsToEmails(emailIds, [folderId], labelsToRemove);
       toast.success(`${emailCount} email${emailCount > 1 ? 's' : ''} moved to ${folderName}`);
       
     } catch (error) {
@@ -134,8 +180,19 @@ function Layout() {
   const handleMoveConfirm = useCallback(async () => {
     if (!pendingMoveDrop) return;
     
-    const { emailIds, unreadCount, dialogType, folderId, folderName } = pendingMoveDrop;
+    const { emailIds, unreadCount, dialogType, folderId, folderName, sourceInfo } = pendingMoveDrop;
     const emailCount = emailIds.length;
+    
+    // Determine source label to remove (Contextual Move)
+    const getSourceLabelToRemove = (): string[] => {
+      if (sourceInfo.labelId) {
+        return [sourceInfo.labelId];
+      } else if (sourceInfo.pageType === 'inbox') {
+        return ['INBOX'];
+      }
+      return [];
+    };
+    const labelsToRemove = getSourceLabelToRemove();
     
     // Close dialog
     setMoveDialogOpen(false);
@@ -156,20 +213,29 @@ function Layout() {
         }
         toast.success(`${emailCount} email${emailCount > 1 ? 's' : ''} moved to Trash`);
         
-        // Locally increment Trash unread counter
+        // Locally update counters
         if (unreadCount > 0) {
           incrementLabelUnreadCount('TRASH', unreadCount);
-          incrementLabelUnreadCount('INBOX', -unreadCount);
+          if (sourceInfo.pageType === 'inbox') {
+            incrementLabelUnreadCount('INBOX', -unreadCount);
+          } else if (sourceInfo.labelId) {
+            incrementLabelUnreadCount(sourceInfo.labelId, -unreadCount);
+          }
         }
       } else {
-        // Moving to a custom label/folder - add label and remove from INBOX
-        await batchApplyLabelsToEmails(emailIds, [folderId], ['INBOX']);
+        // Moving to a custom label/folder - Contextual Move
+        console.log(`📦 MoveConfirm: Adding [${folderId}], Removing [${labelsToRemove.join(', ') || 'none'}]`);
+        await batchApplyLabelsToEmails(emailIds, [folderId], labelsToRemove);
         toast.success(`${emailCount} email${emailCount > 1 ? 's' : ''} moved to ${folderName}`);
         
-        // Locally increment custom folder unread counter
+        // Locally update counters
         if (unreadCount > 0) {
           incrementLabelUnreadCount(folderId, unreadCount);
-          incrementLabelUnreadCount('INBOX', -unreadCount);
+          if (sourceInfo.pageType === 'inbox') {
+            incrementLabelUnreadCount('INBOX', -unreadCount);
+          } else if (sourceInfo.labelId) {
+            incrementLabelUnreadCount(sourceInfo.labelId, -unreadCount);
+          }
         }
       }
     } catch (error) {

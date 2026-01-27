@@ -24,7 +24,8 @@ import {
   saveGmailDraft,
   deleteGmailDraft,
   emptyGmailTrash,
-  isGmailSignedIn
+  isGmailSignedIn,
+  clearThreadMessageCache
 } from '../integrations/gapiService';
 
 export const INBOX_FETCH_BATCH_SIZE = 50;
@@ -365,6 +366,7 @@ export const clearEmailCacheForProfileSwitch = (newProfileId: string): void => {
   // If switching to a different profile, clear all caches
   if (currentCacheProfileId !== newProfileId) {
     clearEmailCache();
+    clearThreadMessageCache(); // Clear thread→messages cache for bulk operations
     currentCacheProfileId = newProfileId;
   }
 };
