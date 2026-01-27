@@ -526,6 +526,40 @@ export function LabelProvider({ children }: { children: React.ReactNode }) {
       // Uses progressive loading: folders appear immediately, counters load in batches
       // =========================================================================
       if (FEATURE_FLAGS.USE_DIRECT_GMAIL_LABELS) {
+        // ✅ systemOnly mode: Only refresh system label counts (DRAFT, INBOX), preserve custom labels
+        if (systemOnly) {
+          console.log('🔄 DIAGNOSTIC MODE: Refreshing system labels only (preserving custom folders)...');
+
+          try {
+            const systemCounts = await fetchSystemLabelCountsFromGmail();
+
+            setLabelsInternal((prevLabels) =>
+              prevLabels.map((label) => {
+                const labelIdUpper = label.id?.toUpperCase() || '';
+                const isSystem = label.type === 'system' || SYSTEM_LABEL_IDS.has(labelIdUpper);
+
+                if (isSystem && systemCounts.has(label.id || '')) {
+                  const fresh = systemCounts.get(label.id || '')!;
+                  return {
+                    ...label,
+                    messagesTotal: fresh.messagesTotal,
+                    messagesUnread: fresh.messagesUnread,
+                    threadsTotal: fresh.threadsTotal,
+                    threadsUnread: fresh.threadsUnread,
+                  };
+                }
+                return label; // Custom labels: preserve as-is
+              })
+            );
+
+            console.log('✅ DIAGNOSTIC MODE: System labels refreshed, custom folders preserved');
+          } catch (e) {
+            console.error('❌ DIAGNOSTIC MODE: System label refresh failed:', e);
+          }
+          return;
+        }
+
+        // Full refresh mode (when systemOnly is false)
         console.log("🔬 DIAGNOSTIC MODE: Refreshing labels via direct Gmail API (progressive)");
         setLoadingLabels(true);
         emitLoadingProgress("labels", "start");

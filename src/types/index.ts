@@ -75,7 +75,6 @@ export interface Profile {
   gmail_access_token?: string;
   gmail_refresh_token?: string;
   gmail_token_expiry?: string;
-  signature?: string;
   out_of_office_settings?: OutOfOfficeSettings;
 }
 

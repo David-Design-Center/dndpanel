@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
-import { X, Paperclip, SendHorizontal, Maximize2, Minimize2, ChevronDown, Trash2 } from 'lucide-react';
+import { X, Paperclip, SendHorizontal, Maximize2, Minimize2, Trash2 } from 'lucide-react';
 import { sendEmail, getThreadEmails, clearEmailCache, saveDraft, deleteDraft } from '../services/emailService';
 import { emailRepository } from '../services/emailRepository';
 import { sanitizeEmailHtml } from '../utils/sanitize';
@@ -47,7 +47,7 @@ interface AttachmentItem {
 }
 
 function Compose() {
-  const { currentProfile } = useProfile();
+  const { currentProfile, gmailSignature } = useProfile();
   const { searchContacts, setShouldLoadContacts } = useContacts();
   const { closeCompose, draftId: contextDraftId, isExpanded, toggleExpand } = useCompose();
   const [searchParams] = useSearchParams();
@@ -211,16 +211,16 @@ function Compose() {
   // Initialize signature for new emails (not replies, drafts, or forwards)
   useEffect(() => {
     // Only add signature if:
-    // 1. User has a signature
+    // 1. User has a signature (from Gmail API via ProfileContext)
     // 2. This is a brand new compose (no location.state and no draft being loaded)
     // 3. Body is currently empty
     const isNewCompose = !location.state && !contextDraftId && !searchParams.get('draftId');
 
-    if (isNewCompose && currentProfile?.signature && !newBodyHtml) {
-      console.log('✍️ Initializing new email with signature');
-      setNewBodyHtml('<br><br>' + currentProfile.signature);
+    if (isNewCompose && gmailSignature && !newBodyHtml) {
+      console.log('✍️ Initializing new email with Gmail signature');
+      setNewBodyHtml('<br><br>' + gmailSignature);
     }
-  }, [currentProfile?.signature, location.state, contextDraftId, searchParams]);
+  }, [gmailSignature, location.state, contextDraftId, searchParams]);
 
   // Load draft from URL query parameter
   useEffect(() => {
@@ -464,13 +464,84 @@ function Compose() {
           console.log('📧 Processed', Object.keys(inlineImages).length, 'inline images');
         }
 
+        // Extract attachments from draft
+        const extractedAttachments: AttachmentItem[] = [];
+        
+        const extractAttachments = async (parts: any[]) => {
+          for (const part of parts) {
+            const headers = part.headers || [];
+            const contentDisposition = headers.find((h: any) => h.name.toLowerCase() === 'content-disposition')?.value || '';
+            const contentId = headers.find((h: any) => h.name.toLowerCase() === 'content-id')?.value;
+            
+            // Check if this is a real attachment (not inline image)
+            const isAttachment = contentDisposition.toLowerCase().includes('attachment') || 
+              (part.filename && !contentId && part.body?.attachmentId);
+            
+            if (isAttachment && part.filename) {
+              console.log('📎 Found attachment:', part.filename, part.mimeType);
+              
+              // Fetch the attachment data
+              if (part.body?.attachmentId) {
+                try {
+                  const attachmentResponse = await window.gapi.client.gmail.users.messages.attachments.get({
+                    userId: 'me',
+                    messageId: draftMessage.id,
+                    id: part.body.attachmentId
+                  });
+                  
+                  if (attachmentResponse.result?.data) {
+                    // Convert URL-safe base64 to regular base64
+                    const base64Data = attachmentResponse.result.data.replace(/-/g, '+').replace(/_/g, '/');
+                    
+                    extractedAttachments.push({
+                      name: part.filename,
+                      mimeType: part.mimeType || 'application/octet-stream',
+                      size: attachmentResponse.result.size || part.body.size || 0,
+                      data: base64Data,
+                      attachmentId: part.body.attachmentId
+                    });
+                    console.log('✅ Loaded attachment:', part.filename);
+                  }
+                } catch (error) {
+                  console.error('❌ Failed to fetch attachment:', part.filename, error);
+                }
+              } else if (part.body?.data) {
+                // Attachment data is inline
+                const base64Data = part.body.data.replace(/-/g, '+').replace(/_/g, '/');
+                extractedAttachments.push({
+                  name: part.filename,
+                  mimeType: part.mimeType || 'application/octet-stream',
+                  size: part.body.size || 0,
+                  data: base64Data
+                });
+                console.log('✅ Loaded inline attachment:', part.filename);
+              }
+            }
+            
+            // Recursively check nested parts
+            if (part.parts) {
+              await extractAttachments(part.parts);
+            }
+          }
+        };
+        
+        if (payload?.parts) {
+          await extractAttachments(payload.parts);
+        }
+        
+        if (extractedAttachments.length > 0) {
+          setAttachments(extractedAttachments);
+          console.log('📎 Loaded', extractedAttachments.length, 'attachments from draft');
+        }
+
         // Set body content
         if (bodyHtml) {
           setNewBodyHtml(bodyHtml);
         }
 
-        // Set draft ID
+        // Set draft ID and message ID for UI updates
         setCurrentDraftId(draftId);
+        setMessageIdForUI(draftMessage.id);
         setIsDraftDirty(false); // Start clean since we're loading existing draft
 
         console.log('✅ Draft loaded successfully');
@@ -666,6 +737,92 @@ function Compose() {
     };
   }, []);
 
+  // Save draft when browser/tab closes, visibility changes, or connection might be lost
+  useEffect(() => {
+    const saveDraftImmediately = () => {
+      // Only save if there's content worth saving
+      if (isDraftDirty && (toRecipients.length > 0 || subject.trim() || newBodyHtml.trim())) {
+        // Use synchronous beacon API for reliability when browser is closing
+        // This is a backup - autoSaveDraft handles the actual save
+        autoSaveDraft();
+      }
+    };
+
+    // Handle page unload (browser close, tab close, navigation away)
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isDraftDirty && (toRecipients.length > 0 || subject.trim() || newBodyHtml.trim())) {
+        saveDraftImmediately();
+        // Show browser confirmation dialog
+        e.preventDefault();
+        e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
+        return e.returnValue;
+      }
+    };
+
+    // Handle tab becoming hidden (user switches tabs, minimizes browser)
+    const handleVisibilityChange = () => {
+      if (document.hidden && isDraftDirty) {
+        saveDraftImmediately();
+      }
+    };
+
+    // Handle potential connection loss
+    const handleOffline = () => {
+      console.log('📡 Connection lost - attempting to save draft locally');
+      // Save to localStorage as backup
+      if (isDraftDirty && (toRecipients.length > 0 || subject.trim() || newBodyHtml.trim())) {
+        try {
+          localStorage.setItem('compose-draft-backup', JSON.stringify({
+            toRecipients,
+            ccRecipients,
+            bccRecipients,
+            subject,
+            body: newBodyHtml,
+            draftId: currentDraftId,
+            timestamp: new Date().toISOString()
+          }));
+          console.log('💾 Draft backed up to localStorage');
+        } catch (error) {
+          console.error('Failed to backup draft to localStorage:', error);
+        }
+      }
+    };
+
+    // Handle connection restored
+    const handleOnline = () => {
+      console.log('📡 Connection restored');
+      // Try to sync localStorage backup to server
+      const backup = localStorage.getItem('compose-draft-backup');
+      if (backup) {
+        try {
+          const backupData = JSON.parse(backup);
+          // If backup is recent (less than 1 hour old) and we don't have a newer draft, restore it
+          const backupTime = new Date(backupData.timestamp).getTime();
+          const isRecent = Date.now() - backupTime < 60 * 60 * 1000;
+          if (isRecent) {
+            console.log('📤 Syncing backed up draft to server');
+            autoSaveDraft();
+          }
+          localStorage.removeItem('compose-draft-backup');
+        } catch (error) {
+          console.error('Failed to sync backup:', error);
+        }
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [isDraftDirty, toRecipients, subject, newBodyHtml, ccRecipients, bccRecipients, currentDraftId]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -857,12 +1014,21 @@ function Compose() {
   };
 
   const handleCancel = async () => {
-    // Save as draft before canceling
-    if (isDraftDirty && (to || subject || newBodyHtml)) {
+    // Actually discard/delete the draft
+    if (currentDraftId) {
       try {
-        await autoSaveDraft();
+        console.log('🗑️ Discarding draft:', currentDraftId);
+        await deleteDraft(currentDraftId);
+        
+        // Dispatch event to remove draft from UI
+        if (messageIdForUI) {
+          window.dispatchEvent(new CustomEvent('draft-deleted', { 
+            detail: { messageId: messageIdForUI, draftId: currentDraftId } 
+          }));
+        }
+        console.log('✅ Draft discarded successfully');
       } catch (error) {
-        console.error('Error saving draft on cancel:', error);
+        console.error('❌ Error discarding draft:', error);
       }
     }
     closeCompose();
@@ -874,6 +1040,20 @@ function Compose() {
     } catch (error) {
       console.error('Error manually saving draft:', error);
     }
+  };
+
+  // Save draft and close compose window
+  const handleSaveAndClose = async () => {
+    if (toRecipients.length > 0 || subject.trim() || newBodyHtml.trim()) {
+      try {
+        await autoSaveDraft();
+        toast.success('Draft saved');
+      } catch (error) {
+        console.error('Error saving draft:', error);
+        toast.error('Failed to save draft');
+      }
+    }
+    closeCompose();
   };
 
 
@@ -1318,20 +1498,29 @@ function Compose() {
             </div>
 
             {/* Right side icons */}
-            <div className="flex items-center gap-0.5">
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={handleSaveAndClose}
+                className="flex items-center gap-1 px-2 py-1 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded text-xs transition-colors"
+                title="Save & Close"
+              >
+                <X size={12} />
+                Close
+              </button>
               <button
                 type="button"
                 onClick={handleCancel}
                 className="flex items-center gap-1 px-2 py-1 text-red-500 hover:text-red-700 hover:bg-red-100 rounded text-xs transition-colors"
-                title="Discard"
+                title="Discard draft permanently"
               >
-                <X size={12} />
+                <Trash2 size={12} />
                 Discard
               </button>
               <button
                 type="button"
                 onClick={toggleExpand}
-                className="flex items-center gap-1 px-2 py-1 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded text-xs transition-colors"
+                className="p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
                 title={isExpanded ? 'Minimize' : 'Expand'}
               >
                 {isExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
@@ -1343,7 +1532,7 @@ function Compose() {
           {(
             <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
               {/* Recipient fields section - Outlook style */}
-              <div className="flex-shrink-0 px-3 py-1 space-y-1 overflow-y-auto max-h-[280px]">
+              <div className="flex-shrink-0 px-3 py-1 space-y-1 overflow-visible max-h-[280px]">
                 {/* TO Section */}
                 <div className="relative">
                   <div className="flex items-start gap-2 py-1">
@@ -1429,7 +1618,7 @@ function Compose() {
 
                   {/* Contact dropdown */}
                   {showContactDropdown && (
-                    <div className="absolute top-full left-14 right-0 z-[999] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
+                    <div className="absolute top-full left-14 right-0 z-[9999] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
                       {filteredContacts.length > 0 ? (
                         filteredContacts.map((contact, index) => (
                           <div
@@ -1553,7 +1742,7 @@ function Compose() {
 
                       {/* CC Contact dropdown */}
                       {showCcContactDropdown && (
-                        <div className="absolute top-full left-14 right-0 z-[998] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
+                        <div className="absolute top-full left-14 right-0 z-[9999] bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
                           {filteredCcContacts.length > 0 ? (
                             filteredCcContacts.map((contact, index) => (
                               <div
@@ -1657,7 +1846,13 @@ function Compose() {
                 )}
 
                 {/* Subject field */}
-                <div className="flex items-center py-1">
+                <div className="flex items-start gap-2 py-1">
+                  <button
+                    type="button"
+                    className="px-2 py-0.5 text-xs text-gray-700 flex-shrink-0"
+                  >
+                    Subject
+                  </button>
                   <input
                     type="text"
                     value={subject}
@@ -1666,9 +1861,52 @@ function Compose() {
                       handleContentChange();
                     }}
                     className="flex-1 outline-none text-xs py-0.5 border-b border-gray-300 bg-transparent"
-                    placeholder="Add a subject"
+                    placeholder=""
                   />
                 </div>
+                {/* Compact Attachment thumbnails */}
+{attachments.length > 0 && (
+  <div className="py-1">
+    <div className="flex gap-1 overflow-x-auto overflow-y-hidden">
+      {attachments.map((attachment, index) => (
+        <div
+          key={index}
+          className="group flex items-center gap-2 px-2 py-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50 transition-colors cursor-pointer flex-shrink-0 min-w-[200px] max-w-[250px]"
+          onClick={() => handleAttachmentPreview(attachment)}
+        >
+          {/* File icon */}
+          <div className="flex-shrink-0 w-8 h-8 bg-red-50 rounded flex items-center justify-center">
+            <Paperclip size={16} className="text-red-600" />
+          </div>
+          
+          {/* File info */}
+          <div className="flex-1 min-w-0">
+            <p className="text-xs text-gray-900 truncate font-medium">
+              {attachment.name}
+            </p>
+            <p className="text-[10px] text-gray-500">
+              {attachment.size ? formatFileSize(attachment.size) :
+                attachment.file ? formatFileSize(attachment.file.size) : 'Unknown'}
+            </p>
+          </div>
+          
+          {/* Remove button */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              removeAttachment(index);
+            }}
+            className="flex-shrink-0 p-1 hover:bg-gray-200 rounded transition-colors"
+            title="Remove attachment"
+          >
+            <X size={14} className="text-gray-500" />
+          </button>
+        </div>
+      ))}
+    </div>
+  </div>
+)}
               </div>
 
               {/* Flex editor section - fills remaining space */}
@@ -1690,67 +1928,6 @@ function Compose() {
                   />
                 </div>
               </div>
-
-              {/* Attachment thumbnails section */}
-              {attachments.length > 0 && (
-                <div className="flex-shrink-0 bg-gray-50 border-t border-gray-200 p-2">
-                  <div className="flex items-center gap-1 mb-1">
-                    <Paperclip size={12} className="text-gray-500" />
-                    <span className="text-[10px] font-medium text-gray-600">
-                      {attachments.length} file{attachments.length > 1 ? 's' : ''}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap gap-1">
-                    {attachments.map((attachment, index) => (
-                      <div
-                        key={index}
-                        className="group relative bg-white border border-gray-200 rounded p-1 hover:border-gray-300 transition-colors cursor-pointer"
-                        onClick={() => handleAttachmentPreview(attachment)}
-                      >
-                        <div className="flex items-center gap-1">
-                          <div className="flex-shrink-0">
-                            <FileThumbnail
-                              attachment={{
-                                name: attachment.name,
-                                mimeType: attachment.mimeType,
-                                size: attachment.size || attachment.file?.size || 0,
-                                attachmentId: attachment.attachmentId,
-                                partId: attachment.partId
-                              }}
-                              emailId="compose"
-                              userEmail="me@example.com"
-                              size="small"
-                              showPreviewButton={false}
-                            />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-medium text-gray-900 truncate max-w-[80px]">
-                              {attachment.name}
-                            </p>
-                            <p className="text-xs text-gray-500">
-                              {attachment.size ? formatFileSize(attachment.size) :
-                                attachment.file ? formatFileSize(attachment.file.size) : 'Unknown'}
-                            </p>
-                          </div>
-                        </div>
-
-                        {/* Remove button - only visible on hover */}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            removeAttachment(index);
-                          }}
-                          className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center hover:bg-red-600"
-                          title="Remove attachment"
-                        >
-                          <X size={10} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </form>
           )}
         </div>

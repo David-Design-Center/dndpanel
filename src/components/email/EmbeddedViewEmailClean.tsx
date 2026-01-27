@@ -186,7 +186,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
 
   const { clearSelection } = useLayoutState();
   const { labels, addLabel } = useLabel(); // Get labels from context
-  const { currentProfile } = useProfile(); // Get current profile for From field
+  const { currentProfile, gmailSignature } = useProfile(); // Get current profile for From field and Gmail signature
   const { searchContacts, setShouldLoadContacts } = useContacts(); // For CC/BCC dropdown
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -1274,21 +1274,21 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   useEffect(() => {
     // Only initialize when composer opens for reply/replyAll (not forward, not loading draft)
     if (showReplyComposer && (replyMode === 'reply' || replyMode === 'replyAll') && !draftId) {
-      // Initialize with signature if available, otherwise empty
-      const signatureContent = currentProfile?.signature
-        ? '<br><br>' + currentProfile.signature
+      // Initialize with Gmail signature if available, otherwise empty
+      const signatureContent = gmailSignature
+        ? '<br><br>' + gmailSignature
         : '';
       setReplyContent(signatureContent);
-      console.log('✍️ Reply composer initialized with signature');
+      console.log('✍️ Reply composer initialized with Gmail signature');
     }
-  }, [showReplyComposer, replyMode, draftId, currentProfile?.signature]);
+  }, [showReplyComposer, replyMode, draftId, gmailSignature]);
 
   // Format forwarded message content (with signature)
   useEffect(() => {
     if (replyMode === 'forward' && forwardingMessage && showReplyComposer) {
-      // Add signature at top (before forwarded content)
-      const signatureContent = currentProfile?.signature
-        ? '<br><br>' + currentProfile.signature
+      // Add Gmail signature at top (before forwarded content)
+      const signatureContent = gmailSignature
+        ? '<br><br>' + gmailSignature
         : '';
 
       let forwardedContent = signatureContent;
@@ -1335,7 +1335,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
     }
     // 🎯 REMOVED: Auto-clear logic that caused race conditions
     // Content should only be cleared explicitly by user actions (close, discard, send)
-  }, [replyMode, forwardingMessage, forwardType, showReplyComposer, threadMessages, currentProfile?.signature]);
+  }, [replyMode, forwardingMessage, forwardType, showReplyComposer, threadMessages, gmailSignature]);
 
   // 🎯 Draft saving logic moved to useDraftComposer hook
   // 🎯 Inline images loading moved to useInlineImages hook

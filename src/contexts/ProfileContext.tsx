@@ -7,15 +7,13 @@ import { devLog } from '../utils/logging';
 import { configureDomainWideAuth, configureTraditionalAuth } from '../services/domainWideGmailService';
 import { clearEmailCacheForProfileSwitch } from '../services/emailService';
 import { clearCurrentAccessToken } from '../integrations/gapiService';
+import { fetchGmailSignature } from '../services/gmailSignatureService';
 
 interface ProfileContextType {
   profiles: Profile[];
   currentProfile: Profile | null;
+  gmailSignature: string;
   selectProfile: (id: string, passcode?: string, isAutoSelection?: boolean) => Promise<boolean>;
-  updateProfileSignature: (
-    profileId: string,
-    signature: string
-  ) => Promise<boolean>;
   clearProfile: () => void;
   isLoading: boolean;
   error: string | null;
@@ -29,6 +27,7 @@ export const ProfileContext = createContext<ProfileContextType | undefined>(unde
 export function ProfileProvider({ children }: { children: React.ReactNode }) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [currentProfile, setCurrentProfile] = useState<Profile | null>(null);
+  const [gmailSignature, setGmailSignature] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
@@ -247,6 +246,20 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
         startTokenRefreshScheduler();
         console.log('✅ Token refresh scheduler started for profile:', profileToSelect.name);
         
+        // CRITICAL: Clear old signature and fetch fresh from Gmail
+        setGmailSignature('');
+        if (profileToSelect.userEmail) {
+          try {
+            console.log('📝 Fetching Gmail signature for new profile:', profileToSelect.userEmail);
+            const sig = await fetchGmailSignature(profileToSelect.userEmail);
+            setGmailSignature(sig || '');
+            console.log('✅ Loaded Gmail signature, length:', sig?.length || 0);
+          } catch (sigError) {
+            console.error('⚠️ Failed to fetch Gmail signature:', sigError);
+            // Don't fail profile switch for signature error
+          }
+        }
+        
         // CRITICAL: Mark auth flow as completed after successful profile selection
         // This allows all data contexts to start fetching
         setAuthFlowCompleted(true);
@@ -265,6 +278,9 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
         setError('Gmail authentication failed. You may need to reconnect Gmail for this profile.');
         // Don't fail profile selection - user can still access the app
         
+        // Clear signature when Gmail fails
+        setGmailSignature('');
+        
         // Still mark auth flow as completed even if Gmail fails
         setAuthFlowCompleted(true);
       }
@@ -277,65 +293,11 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const updateProfileSignature = async (
-    profileId: string,
-    signature: string
-  ): Promise<boolean> => {
-    try {
-      devLog.debug('ProfileContext: Updating signature for profile:', profileId);
-      
-      const { data, error } = await supabase
-        .from('profiles')
-        .update({
-          signature: signature
-        })
-        .eq('id', profileId)
-        .select()
-
-      if (error) {
-        devLog.error('ProfileContext: Supabase error:', error);
-        throw error;
-      }
-
-      // This is a crucial check. If RLS prevents the select after update, `data` will be an empty array.
-      if (!data || data.length === 0) {
-        devLog.warn('ProfileContext: Signature update did not return data. This is likely a Row Level Security (RLS) issue where the user lacks SELECT permission on the updated row.');
-        throw new Error('Save failed due to a permission issue. The signature may have been saved, but it could not be verified. Please check the Row Level Security SELECT policy on the "profiles" table for authenticated users.');
-      }
-
-      devLog.debug('ProfileContext: Signature update successful, returned data:', data[0]);
-
-      // Update the profiles array
-      setProfiles(prevProfiles => 
-        prevProfiles.map(profile => 
-          profile.id === profileId 
-            ? {
-                ...profile,
-                signature: signature
-              }
-            : profile
-        )
-      );
-
-      // Update current profile if it's the one being updated
-      if (currentProfile?.id === profileId) {
-        setCurrentProfile(prev => prev ? {
-          ...prev,
-          signature: signature
-        } : null);
-      }
-
-      devLog.debug('ProfileContext: Successfully updated signature in state');
-      return true;
-    } catch (err) {
-      devLog.error('ProfileContext: Error updating profile signature:', err);
-      setError(err instanceof Error ? err.message : 'Unknown error updating signature');
-      return false;
-    }
-  };
-
   const clearProfile = () => {
     devLog.debug('ProfileContext: Clearing current profile');
+    
+    // CRITICAL: Clear Gmail signature
+    setGmailSignature('');
     
     // CRITICAL: Clear all cached data to prevent data leakage between profiles
     // This ensures "Log Out" behaves the same as switching profiles
@@ -493,8 +455,8 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
   const value = {
     profiles,
     currentProfile,
+    gmailSignature,
     selectProfile,
-    updateProfileSignature,
     isLoading,
     error,
     fetchProfiles,
