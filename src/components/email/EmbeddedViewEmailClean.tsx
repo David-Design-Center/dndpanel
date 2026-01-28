@@ -157,6 +157,7 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
   const [autoFilterFuture, setAutoFilterFuture] = useState(false);
 
   // CC/BCC state for reply composer
+  const [showCcBcc, setShowCcBcc] = useState(false); // Toggle for Cc/Bcc visibility
   const [showCc, setShowCc] = useState(false);
   const [ccRecipients, setCcRecipients] = useState<string[]>([]);
   const [ccInput, setCcInput] = useState('');
@@ -1935,50 +1936,59 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
       </div>
 
       {/* Email Body - Scrollable */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto min-w-0">
         {/* Reply Composer - Compose.tsx style design */}
         {showReplyComposer && !isReplyExpanded && (
-          <div ref={replyComposerRef} className="mb-6 border border-gray-200 rounded-lg shadow-lg overflow-hidden bg-white">
-            {/* Outlook-style Header */}
+          <div ref={replyComposerRef} className="mb-6 border-y border-gray-200 overflow-hidden bg-white min-w-0">
+            {/* Compact Header - matching Compose.tsx */}
             <div className="px-3 py-2 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
               <div className="flex items-center gap-2">
-                {/* Send Button */}
+                {/* Send Button - compact */}
                 <button
                   type="button"
                   onClick={handleSendReply}
                   disabled={sending || !replyContent.trim() || (replyMode === 'forward' && !forwardTo.trim())}
-                  className="flex items-center gap-1.5 px-3 py-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-medium rounded transition-colors"
+                  className="flex items-center gap-1.5 px-2 py-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-xs font-medium rounded transition-colors"
                 >
-                  <SendHorizontal size={14} />
+                  <SendHorizontal size={12} />
                   {sending ? 'Sending...' : 'Send'}
                 </button>
 
                 {/* Draft status indicator */}
                 {isSaving && (
-                  <span className="flex items-center gap-1.5 text-xs font-medium text-green-600">
+                  <span className="flex items-center gap-1 text-xs font-medium text-green-600">
                     <span className="animate-pulse">●</span>
                     Saving...
                   </span>
                 )}
                 {!isSaving && lastSavedAt && (
-                  <span className="flex items-center gap-1.5 text-xs font-medium text-green-600">
-                    <span>Saved Draft</span>
+                  <span className="flex items-center gap-1 text-xs font-medium text-green-600">
+                    <span>Saved</span>
                   </span>
                 )}
 
-                {/* From display */}
-                <div className="flex items-center gap-1 text-sm text-gray-700">
+                {/* From display - compact */}
+                <div className="flex items-center gap-1 text-xs text-gray-700">
                   <span className="text-gray-500">From:</span>
                   <span>{currentProfile?.userEmail || 'me@example.com'}</span>
                 </div>
               </div>
 
-              {/* Right side icons */}
+              {/* Right side - Close and Discard with text */}
               <div className="flex items-center gap-1">
                 <button
                   type="button"
+                  onClick={() => setShowReplyComposer(false)}
+                  className="flex items-center gap-1 px-2 py-1 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded text-xs transition-colors"
+                  title="Save & Close"
+                >
+                  <X size={12} />
+                  Close
+                </button>
+                <button
+                  type="button"
                   onClick={() => {
-                    // Close composer without saving
+                    // Discard composer without saving
                     setShowReplyComposer(false);
                     setReplyContent('');
                     setForwardTo('');
@@ -1989,39 +1999,52 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                     setBccInput('');
                     setShowCc(false);
                     setShowBcc(false);
+                    setShowCcBcc(false);
                     replyContentRef.current = '';
                     forwardToRef.current = '';
                     setIsDirty(false);
                     isDirtyRef.current = false;
                   }}
-                  className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
-                  title="Discard"
+                  className="flex items-center gap-1 px-2 py-1 text-red-500 hover:text-red-700 hover:bg-red-100 rounded text-xs transition-colors"
+                  title="Discard draft"
                 >
-                  <Trash2 size={18} />
+                  <Trash2 size={12} />
+                  Discard
                 </button>
                 <button
                   type="button"
                   onClick={() => setIsReplyExpanded(true)}
-                  className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                  className="p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
                   title="Expand"
                 >
-                  <Maximize2 size={18} />
+                  <Maximize2 size={16} />
                 </button>
               </div>
             </div>
 
-            {/* Recipient fields section - Compose.tsx style */}
-            <div className="flex-shrink-0 px-4 py-2 space-y-2">
+            {/* Recipient fields section - Compact style matching Compose.tsx */}
+            <div className="flex-shrink-0 px-3 py-1 space-y-1 overflow-x-hidden overflow-y-visible">
               {/* TO Section */}
               <div className="relative">
-                <div className="flex items-start gap-3 py-2">
-                  <button
-                    type="button"
-                    className="px-3 py-1 text-sm text-gray-700 border border-gray-300 rounded hover:bg-gray-50 flex-shrink-0"
-                  >
-                    To
-                  </button>
-                  <div className="flex-1 flex flex-wrap items-center gap-1.5 border-b border-gray-300 pb-2 min-h-[32px]">
+                <div className="flex items-start gap-2 py-1">
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      className="px-2 py-0.5 text-xs text-gray-700 border border-gray-300 rounded hover:bg-gray-50 flex-shrink-0"
+                    >
+                      To
+                    </button>
+                    {!showCcBcc && (ccRecipients.length === 0 && bccRecipients.length === 0) && replyMode !== 'replyAll' && (
+                      <button
+                        type="button"
+                        onClick={() => setShowCcBcc(true)}
+                        className="px-2 py-0.5 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-50 border border-gray-200 rounded flex-shrink-0"
+                      >
+                        Cc/Bcc
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex-1 flex flex-wrap items-center gap-1.5 border-b border-gray-300 pb-1 min-h-[28px]">
                     {replyMode === 'forward' ? (
                       /* Forward mode - editable input */
                       <input
@@ -2052,17 +2075,18 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                 </div>
               </div>
 
-              {/* CC Section - Always visible style like Compose.tsx */}
+              {/* CC Section - shown when showCcBcc is true or replyAll mode */}
+              {(showCcBcc || replyMode === 'replyAll' || ccRecipients.length > 0) && (
               <div className="relative">
-                <div className="flex items-start gap-3 py-2">
+                <div className="flex items-start gap-2 py-1">
                   <button
                     type="button"
                     onClick={() => setShowCc(!showCc)}
-                    className="px-3 py-1 text-sm text-gray-700 border border-gray-300 rounded hover:bg-gray-50 flex-shrink-0"
+                    className="px-2 py-0.5 text-xs text-gray-700 border border-gray-300 rounded hover:bg-gray-50 flex-shrink-0"
                   >
                     Cc
                   </button>
-                  <div className="flex-1 flex flex-wrap items-center gap-1.5 border-b border-gray-300 pb-2 min-h-[32px]">
+                  <div className="flex-1 flex flex-wrap items-center gap-1.5 border-b border-gray-300 pb-1 min-h-[28px]">
                     {/* Display replyAll CC recipients as read-only badges */}
                     {replyMode === 'replyAll' && (() => {
                       const { cc } = getReplyRecipients(replyToMessage, 'replyAll');
@@ -2149,18 +2173,20 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                   </div>
                 )}
               </div>
+              )}
 
-              {/* BCC Section */}
+              {/* BCC Section - shown when showCcBcc is true */}
+              {(showCcBcc || bccRecipients.length > 0) && (
               <div className="relative">
-                <div className="flex items-start gap-3 py-2">
+                <div className="flex items-start gap-2 py-1">
                   <button
                     type="button"
                     onClick={() => setShowBcc(!showBcc)}
-                    className="px-3 py-1 text-sm text-gray-700 border border-gray-300 rounded hover:bg-gray-50 flex-shrink-0"
+                    className="px-2 py-0.5 text-xs text-gray-700 border border-gray-300 rounded hover:bg-gray-50 flex-shrink-0"
                   >
                     Bcc
                   </button>
-                  <div className="flex-1 flex flex-wrap items-center gap-1.5 border-b border-gray-300 pb-2 min-h-[32px]">
+                  <div className="flex-1 flex flex-wrap items-center gap-1.5 border-b border-gray-300 pb-1 min-h-[28px]">
                     {bccRecipients.map((email, index) => (
                       <div key={index} className="flex items-center bg-purple-100 text-purple-800 px-2 py-0.5 rounded text-sm">
                         <span>{email}</span>
@@ -2234,7 +2260,59 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                   </div>
                 )}
               </div>
+              )}
             </div>
+
+            {/* Compact Attachment thumbnails - below recipient fields, matching Compose.tsx */}
+            {replyAttachments.length > 0 && (
+              <div className="px-3 py-1 w-full overflow-hidden">
+                <div className="flex gap-1 pb-1 overflow-x-auto overflow-y-hidden min-w-0" style={{ scrollbarWidth: 'thin' }}>
+                  {replyAttachments.map((file, index) => (
+                    <div
+                      key={index}
+                      className="group flex items-center gap-2 px-2 py-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50 transition-colors cursor-pointer flex-shrink-0 min-w-[200px] max-w-[250px]"
+                      onClick={() => {
+                        // Preview local File attachment using blob URL
+                        const blobUrl = URL.createObjectURL(file);
+                        setPreviewAttachment({
+                          url: blobUrl,
+                          name: file.name,
+                          type: file.type
+                        });
+                      }}
+                    >
+                      {/* File icon */}
+                      <div className="flex-shrink-0 w-8 h-8 bg-red-50 rounded flex items-center justify-center">
+                        <Paperclip size={16} className="text-red-600" />
+                      </div>
+                      
+                      {/* File info */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-gray-900 truncate font-medium">
+                          {file.name}
+                        </p>
+                        <p className="text-[10px] text-gray-500">
+                          {(file.size / 1024).toFixed(1)} KB
+                        </p>
+                      </div>
+                      
+                      {/* Remove button */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation(); // Prevent triggering preview
+                          removeReplyAttachment(index);
+                        }}
+                        className="flex-shrink-0 p-1 hover:bg-gray-200 rounded transition-colors"
+                        title="Remove attachment"
+                      >
+                        <X size={14} className="text-gray-500" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Rich Text Editor */}
             <div className="border-t border-gray-200" style={{ minHeight: '350px' }}>
@@ -2251,39 +2329,6 @@ function EmbeddedViewEmailClean({ emailId, onEmailUpdate, onEmailDelete }: Embed
                 onFileAttachment={handleReplyFileAttachment}
               />
             </div>
-
-            {/* Attachment thumbnails section */}
-            {replyAttachments.length > 0 && (
-              <div className="flex-shrink-0 bg-gray-50 border-t border-gray-200 p-2">
-                <div className="flex items-center gap-1 mb-1">
-                  <Paperclip size={12} className="text-gray-500" />
-                  <span className="text-[10px] font-medium text-gray-600">
-                    {replyAttachments.length} file{replyAttachments.length > 1 ? 's' : ''}
-                  </span>
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {replyAttachments.map((file, index) => (
-                    <div key={index} className="group relative bg-white border border-gray-200 rounded p-1.5 hover:border-gray-300 transition-colors">
-                      <div className="flex items-center gap-1.5">
-                        <Paperclip size={12} className="text-gray-400" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium text-gray-900 truncate max-w-[100px]">{file.name}</p>
-                          <p className="text-xs text-gray-500">{(file.size / 1024).toFixed(1)} KB</p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => removeReplyAttachment(index)}
-                          className="w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600"
-                          title="Remove attachment"
-                        >
-                          <X size={10} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         )}
 

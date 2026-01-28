@@ -1465,10 +1465,16 @@ div[class*="bg-black"][class*="fixed"] {
 [data-panel] .overflow-y-auto *,
 [data-panel] .flex-1.overflow-y-auto *,
 [data-panel] [class*="overflow-y-auto"] * {
-  overflow: visible !important;
   text-overflow: clip !important;
   white-space: normal !important;
   /* Children of scrollable containers should not be truncated */
+}
+
+/* Exception: Allow horizontal scrolling for attachment containers while preserving vertical behavior */
+[data-panel] .overflow-x-auto,
+[data-panel] [class*="overflow-x-auto"] {
+  overflow-x: auto !important;
+  overflow-y: visible !important;
 }
 
 /* Exception fix: Email list table rows must stay single-line and truncate */
